@@ -6,7 +6,8 @@ minimal_requirements = [
     'python-socketio==5.6.0',
     'psutil==5.9.1',
     'rich==12.4.4',
-    'requests==2.27.1'
+    'requests==2.27.1',
+    'sshkeyboard==2.3.1'
 ]
 
 extra_requirements = [
