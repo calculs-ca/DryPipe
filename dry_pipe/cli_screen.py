@@ -62,7 +62,7 @@ class CliScreen:
     def start_and_wait(self):
 
         def refresher():
-            with Live(auto_refresh=False) as live:
+            with Live(refresh_per_second=2) as live:
                 while not self.quit:
                     self.update_screen(live)
                     time.sleep(1)
@@ -194,5 +194,4 @@ class CliScreen:
             l = self._errors_screen()
 
         live.update(Panel(l, border_style="blue"))
-        live.refresh()
 
