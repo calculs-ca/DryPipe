@@ -16,5 +16,5 @@ __pycache__
 /ui/node_modules/
 /ui/dist
 tests/containers/*.sif
-/todo.md
+/tests/sandboxes/bak/todo.md
 /tests/sandboxes/

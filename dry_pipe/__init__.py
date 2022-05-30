@@ -438,9 +438,9 @@ class TaskConf:
         return RemoteSSH(ssh_username, ssh_host, remote_base_dir, key_filename, command_before_launch_container)
 
     def create_executer(self):
-        from dry_pipe.ssh_executer import RemoteSSH
 
         def remote_ssh():
+            from dry_pipe.ssh_executer import RemoteSSH
 
             if self.remote_base_dir is None:
                 raise Exception("A task_conf with ssh must have remote_base_dir not None")
