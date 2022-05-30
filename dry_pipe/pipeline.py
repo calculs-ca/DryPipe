@@ -265,7 +265,7 @@ class PipelineInstance:
         hint_file = PipelineInstance._hint_file(instance_dir)
 
         if not os.path.exists(hint_file):
-            pathlib.Path(os.path.dirname(hint_file)).mkdir(exist_ok=True)
+            pathlib.Path(os.path.dirname(hint_file)).mkdir(exist_ok=True, parents=True)
             with open(hint_file, "w") as _f:
                 _f.write(f"pipeline={module_func_pipeline}\n")
 

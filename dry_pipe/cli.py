@@ -234,7 +234,7 @@ def run(pipeline, instance_dir, web_mon, port, bind, clean, single, restart_fail
         max_sleep=5
     )
 
-    janitor.start()
+    janitor.start(stay_alive_when_no_more_work=True)
     janitor.start_remote_janitors()
 
     if web_mon:

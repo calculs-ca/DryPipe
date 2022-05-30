@@ -22,9 +22,10 @@ class CliScreen:
         self.pipeline_hints = PipelineInstance.load_hints(pipeline_instance_dir)
         self.quit = False
         self.screen = 'summary'
-        self.nav_idx = 0
         self.failed_task_states = []
         self.failed_task_states_iter_count = 0
+        self.selected_failed_task = None
+        self.prompt = None
 
         class ShallowPipelineInstance:
             def __init__(self):
@@ -38,26 +39,85 @@ class CliScreen:
                 task_state for task_state in TaskState.failed_task_states(self.pipeline_instance)
             ]
             self.failed_task_states = sorted(ts, key=lambda s: s.task_key)
+            if self.selected_failed_task is None and len(self.failed_task_states) > 0:
+                self._set_selected_failed_task(0)
+
+        self.failed_task_states_iter_count += 1
+
+    def _set_selected_failed_task(self, idx):
+        self.selected_failed_task = self.failed_task_states[idx]
+
+    def _selected_failed_task_index(self):
+        if self.selected_failed_task is None:
+            return None
+
+        for i in range(0, len(self.failed_task_states)):
+            if self.failed_task_states[i].task_key == self.selected_failed_task.task_key:
+                return i
+
+    def restart_failed_task(self):
+        self.selected_failed_task.transition_to_queued()
 
     def task_up(self):
-        if self.nav_idx > 0:
-            self.nav_idx -= 1
+        c = len(self.failed_task_states)
+        if c == 0:
+            return
+        idx = self._selected_failed_task_index()
+        if idx is None or idx == 0:
+            self._set_selected_failed_task(0)
+        else:
+            idx -= 1
+            if idx < c:
+                self._set_selected_failed_task(idx)
 
     def task_down(self):
-        self.nav_idx += 1
+        c = len(self.failed_task_states)
+        if c == 0:
+            return
+        idx = self._selected_failed_task_index()
+        if idx is None:
+            self._set_selected_failed_task(0)
+        else:
+            idx += 1
+            if idx < c:
+                self._set_selected_failed_task(idx)
+            else:
+                self._set_selected_failed_task(c - 1)
+
 
     def press(self, key):
         if key == "q":
             self.quit = True
             stop_listening()
         elif key == "f":
+            self.cancel_prompt()
             self.screen = "errors"
         elif key == "s":
+            self.cancel_prompt()
             self.screen = "summary"
+        elif key == "r":
+            if self.selected_failed_task is not None:
+                self.set_prompt_restart_task()
+        elif key == "n":
+            self.cancel_prompt()
+        elif key == "y":
+            if self.is_prompt_restart_task():
+                self.restart_failed_task()
         elif key == "up":
+            self.cancel_prompt()
             self.task_up()
         elif key == "down":
+            self.cancel_prompt()
             self.task_down()
+
+    def is_prompt_restart_task(self):
+        return self.prompt == "restart-task"
+
+    def set_prompt_restart_task(self):
+        self.prompt = "restart-task"
+
+    def cancel_prompt(self):
+        self.prompt = None
 
     def start_and_wait(self):
 
@@ -73,8 +133,6 @@ class CliScreen:
 
     def _errors_screen(self):
 
-        self.fetch_failed_task_states()
-
         failed_cnt = len(self.failed_task_states)
 
         layout = self._main_screen()
@@ -82,23 +140,26 @@ class CliScreen:
         if failed_cnt == 0:
             layout["header3"].update("Failed Tasks")
             layout["body"].update("...there are no failed tasks")
+            self.cancel_prompt()
             return layout
 
-        if self.nav_idx >= failed_cnt:
-            self.nav_idx = failed_cnt - 1
-
-        displayed_task = self.failed_task_states[self.nav_idx]
-
         def get_header_text():
-            t = Text()
-            t.append(f"Task({displayed_task.task_key}) -> ", style="bold magenta")
-            err_file = os.path.join(displayed_task.control_dir(), "err.log")
-            t.append(f"tail -50 {err_file}\n", style="bold magenta")
-            return t
+
+            if not self.is_prompt_restart_task():
+                t = Text()
+                t.append(f"Task({self.selected_failed_task.task_key}) -> ", style="bold magenta")
+                err_file = os.path.join(self.selected_failed_task.control_dir(), "err.log")
+                t.append(f"tail -50 {err_file}\n", style="bold magenta")
+                t.append(f"key r to restart", style="bold gree1")
+                return t
+            else:
+                t = Text()
+                t.append(f"Restart task {self.selected_failed_task.task_key} ? y/N/a (a=all failed tasks)", style="bold green1")
+                return t
 
         def get_tail_text():
             t = Text()
-            t.append(displayed_task.tail_err_if_failed(50), style="red")
+            t.append(self.selected_failed_task.tail_err_if_failed(50), style="red")
             return t
 
         layout["header3"].update(get_header_text())
@@ -191,6 +252,9 @@ class CliScreen:
         if self.screen == 'summary':
             l = self._status_table()
         elif self.screen == "errors":
+            self.fetch_failed_task_states()
+            l = self._errors_screen()
+        elif self.screen == "restart-task":
             l = self._errors_screen()
 
         live.update(Panel(l, border_style="blue"))

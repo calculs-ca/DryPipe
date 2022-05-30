@@ -121,7 +121,7 @@ class Janitor:
     def is_shutdown(self):
         return self._shutdown
 
-    def iterate_main_work(self, sync_mode=False, fail_silently=False):
+    def iterate_main_work(self, sync_mode=False, fail_silently=False, stay_alive_when_no_more_work=False):
 
         daemon_thread_helper = DaemonThreadHelper(
             janitor_sub_logger("main_d"), self.min_sleep, self.max_sleep, self.pipelines, sync_mode
@@ -159,7 +159,7 @@ class Janitor:
                         daemon_thread_helper.register_work()
                     else:
 
-                        if no_more_work:
+                        if no_more_work and not stay_alive_when_no_more_work:
                             daemon_thread_helper.logger.debug("no more work")
                             yield False
                         else:
@@ -184,10 +184,10 @@ class Janitor:
                     raise ex
                 daemon_thread_helper.handle_exception_in_daemon_loop(ex)
 
-    def start(self):
+    def start(self, stay_alive_when_no_more_work=False):
 
         def work():
-            work_iterator = self.iterate_main_work(sync_mode=False)
+            work_iterator = self.iterate_main_work(sync_mode=False, stay_alive_when_no_more_work=stay_alive_when_no_more_work)
 
             has_work = next(work_iterator)
             while has_work:
