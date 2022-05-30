@@ -2,7 +2,7 @@ from setuptools import setup
 
 setup(
     name='dry_pipe',
-    version='0.0.4',
+    version='0.0.7',
     packages=['dry_pipe'],
     install_requires=[
         'click==8.1.3',
@@ -17,6 +17,6 @@ setup(
     #package_data={'': ['ui/dist/main.js']},
     entry_points='''
         [console_scripts]
-        drypipe=dry_pipe.cli:run
+        drypipe=dry_pipe.cli:run_cli
     ''',
 )

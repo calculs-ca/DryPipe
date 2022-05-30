@@ -546,7 +546,9 @@ def _register_commands():
     cli_group.add_command(reset)
     cli_group.add_command(requeue)
 
-
-if __name__ == '__main__':
+def run_cli():
     _register_commands()
     cli_group()
+
+if __name__ == '__main__':
+    run_cli()
