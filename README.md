@@ -33,7 +33,7 @@
 ```
 
 #### 3 Run it
-
+(assuming the above code is in module my_module.py)
 ```shell
     drypipe run --pipeline='my_module:my_pipeline'
 ```

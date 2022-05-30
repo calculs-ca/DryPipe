@@ -7,7 +7,6 @@ import sys
 import getpass
 import logging.config
 
-import yaml
 import psutil
 from psutil import AccessDenied
 
@@ -69,6 +68,7 @@ def setup_debug_log_config(drypype_level="INFO", root_level="INFO", main_level="
     logging.config.dictConfig(conf)
 
 if log_conf_file is not None:
+    import yaml
     if log_conf_file == "DEBUG_CONFIG":
         setup_debug_log_config()
     else:
