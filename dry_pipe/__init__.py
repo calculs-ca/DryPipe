@@ -1,0 +1,466 @@
+import inspect
+import os
+import re
+import subprocess
+import sys
+import textwrap
+
+from dry_pipe.bash import bash_shebang
+from dry_pipe.internals import \
+    Executor, Local, PreExistingFile, IndeterminateFile, ProducedFile, \
+    Slurm, IncompleteVar, Val, OutputVar, \
+    ValidationError, FileSet, TaskMatcher, PythonTask, Wait, SubPipeline
+
+from dry_pipe.task import Task, TaskStep
+
+
+
+class DryPipe:
+
+    annotated_python_task_by_name = {}
+
+    @staticmethod
+    def python_task(func):
+        return PythonTask(func)
+
+    @staticmethod
+    def create_pipeline(
+            generator_of_tasks,
+            pipeline_code_dir=None,
+            task_conf=None,
+            containers_dir=None,
+            env_vars=None
+    ):
+
+        from dry_pipe.pipeline import Pipeline
+
+        return Pipeline(generator_of_tasks, pipeline_code_dir, task_conf, containers_dir, env_vars)
+
+    @staticmethod
+    def pipeline_code_dir_for(task_generator_func):
+        return os.path.dirname(os.path.abspath(inspect.getmodule(task_generator_func).__file__))
+
+
+class DryPipeDsl:
+
+    def __init__(self, task_conf=None, pipeline_instance=None, task_namespance_prefix=""):
+
+        self.pipeline_instance = pipeline_instance
+        self.task_conf = task_conf or TaskConf("process")
+        self.task_namespance_prefix = task_namespance_prefix
+
+        self.annotated_python_task_by_name = {}
+
+    def sub_pipeline(self, pipeline, namespace_prefix):
+        return SubPipeline(pipeline, namespace_prefix, self)
+
+    def with_completed_tasks(self, *args):
+
+        def it_completed_tasks():
+            for a in args:
+                if isinstance(a, str):
+                    key = a
+                elif isinstance(a, Task):
+                    key = a.key
+                else:
+                    raise ValidationError(
+                        f"illegal argument {type(a)} given to with_tasks, must be Task or a string Task key"
+                    )
+
+                self.pipeline_instance.dag_determining_tasks_ids.add(key)
+
+                if getattr(self.pipeline_instance, "tasks", None) is None:
+                    break
+
+                t = self.pipeline_instance.tasks.get(key)
+
+                if t is None:
+                    break
+                else:
+                    state = t.get_state()
+                    if state.is_completed():
+                        yield t
+                    else:
+                        break
+
+        number_of_tasks = len(args)
+
+        if number_of_tasks == 0:
+            raise ValidationError(f"must supply at least one task key")
+
+        completed_tasks = list(it_completed_tasks())
+
+        if number_of_tasks == len(completed_tasks):
+            if number_of_tasks == 1:
+                yield completed_tasks[0]
+            else:
+                yield tuple(completed_tasks)
+
+    def wait_for(self, tasks):
+        return Wait(tasks)
+
+    def var(self, type=str, may_be_none=False):
+        return IncompleteVar(type, may_be_none)
+
+    def val(self, v):
+        return Val(v)
+
+    def file(self, name, manage_signature=None):
+
+        if type(name) != str:
+            raise ValidationError(f"invalid file name, must be a string {name}")
+
+        return IndeterminateFile(name, manage_signature)
+
+    def fileset(self, glob_pattern):
+
+        return FileSet(glob_pattern)
+
+    def matching_tasks(self, task_keys_glob_pattern):
+
+        return TaskMatcher(task_keys_glob_pattern)
+
+    def task(self,
+             key,
+             task_conf=None):
+
+        if task_conf is None:
+            task_conf = self.task_conf
+
+        if key is None or key == "":
+            raise Exception(f"invalid key given to task(...): '{key}'")
+
+        key = f"{self.task_namespance_prefix}{key}"
+
+        return TaskBuilder(
+            key=key,
+            executer=task_conf.create_executer(),
+            _produces={},
+            _consumes={},
+            dsl=self,
+            task_conf=task_conf,
+            pipeline_instance=self.pipeline_instance
+        )
+
+
+class TaskBuilder:
+
+    def __init__(self, key, executer, _consumes={}, _produces={},
+                 dsl=None, task_steps=[], dependent_scripts=[],
+                 _upstream_task_completion_dependencies=None, _props=None, task_conf=None, pipeline_instance=None):
+
+        self.key = key
+        self.dsl = dsl
+        self.executer = executer
+        self._props = _props or {}
+        self._consumes = _consumes
+        self._upstream_task_completion_dependencies = _upstream_task_completion_dependencies or []
+        self._produces = _produces
+        self.task_steps = task_steps
+        self.dependent_scripts = dependent_scripts
+        self.task_conf = task_conf
+        self.pipeline_instance = pipeline_instance
+
+    def _deps_from_kwargs(self, kwargs):
+
+        def deps():
+            for k, v in kwargs.items():
+                if isinstance(v, IndeterminateFile):
+                    yield k, v
+                elif isinstance(v, ProducedFile) or isinstance(v, Val) or isinstance(v, OutputVar):
+                    yield k, v
+                elif isinstance(v, TaskMatcher):
+                    yield k, v
+                else:
+                    raise ValidationError(
+                        f"_consumes can only take DryPipe.file() or _consumes(a_file=other_task.out.name_of_file()" +
+                        f"task(key={self.key}) was given {type(v)}",
+                        ValidationError.consumes_has_invalid_kwarg_type
+                    )
+        return {
+            ** self._consumes,
+            ** dict(deps())
+        }
+
+    def consumes(self, *args, **kwargs):
+
+        def upstream_task_completion_dependencies():
+            for o in args:
+                if isinstance(o, Task):
+                    yield o
+                else:
+                    raise ValidationError(
+                        f"{self}._consumes(...) must be a list of key=value, or a task, whose completion is depended upon"
+                    )
+
+        return TaskBuilder(** {
+            ** vars(self),
+            ** {"_upstream_task_completion_dependencies": list(upstream_task_completion_dependencies())},
+            ** {"_consumes": {
+                ** self._consumes,
+                ** dict(self._deps_from_kwargs(kwargs))
+                }
+            }
+        })
+
+    def props(self, **kwargs):
+        return TaskBuilder(** {
+            ** vars(self),
+            ** {"_props": kwargs}
+        })
+
+    def produces(self, *args, **kwargs):
+
+        if len(args) > 0:
+            raise ValidationError(
+                f"DryPipe.produces(...) can't take positional args, use the form produce(var_name=...)",
+                ValidationError.produces_cant_take_positional_args
+            )
+
+        def outputs():
+            for k, v in kwargs.items():
+                if isinstance(v, IndeterminateFile):
+                    yield k, v
+                elif isinstance(v, IncompleteVar):
+                    yield k, v
+                elif isinstance(v, FileSet):
+                    yield k, v
+                else:
+                    raise ValidationError(
+                        f"produces takes only DryPipe.file or DryPipe.vars, ex:\n " +
+                        "1:    task(...).produces(var_name=DryPipe.file('abc.tsv'))\n"
+                        " 2:    task(...).produces(vars=DryPipe.vars(x=123,s='a'))",
+                        ValidationError.produces_only_takes_files
+                    )
+
+        return TaskBuilder(** {
+            ** vars(self),
+            ** {"_produces": dict(list(outputs()))}
+        })
+
+    def calls(self, *args, **kwargs):
+
+        task_conf = self.task_conf
+        container = kwargs.get("container")
+        if container is not None:
+            task_conf = task_conf.override_container(container)
+
+        executer_type = kwargs.get("executer_type")
+        if executer_type is not None:
+            task_conf = task_conf.override_executer(executer_type)
+
+        task_step = None
+
+        if len(args) == 1:
+            a = args[0]
+            if type(a) == str:
+                if a.endswith(".sh"):
+                    task_step = TaskStep(task_conf, shell_script=a)
+                else:
+                    script_text = textwrap.dedent(a)
+                    if re.match("\\n(\\w*)#!/.*", script_text):
+                        start_idx = script_text.find("#!")
+                        task_step = TaskStep(task_conf, shell_snippet=script_text[start_idx:-1])
+                    else:
+                        raise ValidationError(
+                            f"invalid arg to clause:\n ...calls({a})\nvalid arg is a script file (.sh suffix), " +
+                            "or a code block with shebang (ex):\n" +
+                            f"{bash_shebang}"
+                            "echo '...something...'"
+                        )
+            elif isinstance(a, PythonTask):
+                python_bin = kwargs.get("python_bin") or self.dsl.task_conf.python_bin or sys.executable
+                task_conf = task_conf.override_python_bin(python_bin)
+                task_step = TaskStep(task_conf, python_task=a)
+
+        if task_step is None:
+            raise ValidationError(
+                f"invalid args, task.calls(...) can take a sigle a single positional argument, was given: {args}",
+                ValidationError.call_has_bad_arg
+            )
+
+        return TaskBuilder(** {
+            ** vars(self),
+            "task_steps": self.task_steps + [task_step]
+        })
+
+    def __call__(self):
+        return Task(self)
+
+
+def host_has_sbatch():
+
+    with subprocess.Popen(
+            ["which", "sbatch"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
+    ) as p:
+
+        p.wait()
+
+        if p.returncode != 0:
+            return False
+
+        out = p.stdout.read().strip()
+
+        if out == "":
+            return False
+
+        if out.endswith("/sbatch"):
+            return True
+
+        raise Exception(f"Funny return from which sbatch: {out}")
+
+
+class TaskConf:
+
+    @staticmethod
+    def default():
+        return TaskConf("process")
+
+    def __init__(
+            self,
+            executer_type=None,
+            ssh_specs=None,
+            slurm_account=None,
+            sbatch_options=[],
+            container=None,
+            command_before_launch_container=None,
+            remote_pipeline_code_dir=None,
+            python_bin=None,
+            remote_base_dir=None,
+            remote_code_dir=None,
+            remote_containers_dir=None,
+            init_bash_command=None,
+            python_interpreter_switches=["-u"]
+    ):
+
+        if executer_type is None:
+            executer_type = "process"
+
+        if executer_type not in ["slurm", "process"]:
+            raise Exception(f"invalid executer_type: {executer_type}")
+
+        if executer_type == "slurm":
+            if slurm_account is None:
+                raise Exception("slurm_account must be specified when executer_type is slurm")
+            if slurm_account == "":
+                raise Exception("slurm_account can't be ''")
+
+        if executer_type == "process" and slurm_account is not None:
+            raise Exception(f"can't specify slurm_account when executer_type is not 'slurm'")
+
+        self.executer_type = executer_type
+        self.ssh_specs = ssh_specs
+        self.slurm_account = slurm_account
+        self.sbatch_options = sbatch_options
+        self.container = container
+        self.command_before_launch_container = command_before_launch_container
+        self.remote_pipeline_code_dir = remote_pipeline_code_dir
+        self.python_bin = python_bin
+        self.remote_base_dir = remote_base_dir
+        self.remote_code_dir = remote_code_dir
+        self.remote_containers_dir = remote_containers_dir
+        self.init_bash_command = init_bash_command
+        self.python_interpreter_switches = python_interpreter_switches
+
+    def is_remote(self):
+        return self.ssh_specs is not None
+
+    def has_container(self):
+        return self.container is not None
+
+    def _ensure_is_remote(self):
+        if not self.is_remote():
+            raise Exception(f"can't call this on this non remote TaskConf")
+
+    def uses_singularity(self):
+        return self.container is not None
+
+    def override_container(self, container):
+        return TaskConf(
+            self.executer_type,
+            self.ssh_specs,
+            self.slurm_account,
+            self.sbatch_options,
+            container,
+            self.command_before_launch_container,
+            self.remote_pipeline_code_dir,
+            self.python_bin,
+            self.remote_base_dir,
+            self.remote_code_dir,
+            self.remote_containers_dir,
+            self.init_bash_command,
+            self.python_interpreter_switches
+        )
+
+    def override_python_bin(self, python_bin):
+        return TaskConf(
+            self.executer_type,
+            self.ssh_specs,
+            self.slurm_account,
+            self.sbatch_options,
+            self.container,
+            self.command_before_launch_container,
+            self.remote_pipeline_code_dir,
+            python_bin,
+            self.remote_base_dir,
+            self.remote_code_dir,
+            self.remote_containers_dir,
+            self.init_bash_command,
+            self.python_interpreter_switches
+        )
+
+    def override_executer(self, executer_type):
+        return TaskConf(
+            executer_type,
+            self.ssh_specs,
+            self.slurm_account,
+            self.sbatch_options,
+            self.container,
+            self.command_before_launch_container,
+            self.remote_pipeline_code_dir,
+            self.python_bin,
+            self.remote_base_dir,
+            self.remote_code_dir,
+            self.remote_containers_dir,
+            self.init_bash_command,
+            self.python_interpreter_switches
+        )
+
+    _remote_ssh_executers = {}
+
+    @staticmethod
+    def _get_or_create_remote_ssh(ssh_username, ssh_host, remote_base_dir, key_filename, command_before_launch_container):
+        from dry_pipe.ssh_executer import RemoteSSH
+
+        return RemoteSSH(ssh_username, ssh_host, remote_base_dir, key_filename, command_before_launch_container)
+
+    def create_executer(self):
+        from dry_pipe.ssh_executer import RemoteSSH
+
+        def remote_ssh():
+
+            if self.remote_base_dir is None:
+                raise Exception("A task_conf with ssh must have remote_base_dir not None")
+
+            ssh_username_ssh_host, key_filename = self.ssh_specs.split(":")
+
+            ssh_username, ssh_host = ssh_username_ssh_host.split("@")
+
+            return RemoteSSH(ssh_username, ssh_host, self.remote_base_dir, key_filename,
+                             self.command_before_launch_container)
+
+        if self.executer_type == "process":
+            if self.is_remote():
+                return remote_ssh()
+            else:
+                return Local(self.command_before_launch_container)
+        else:
+            if self.is_remote():
+                e = remote_ssh()
+                e.slurm = Slurm(self.slurm_account, self.sbatch_options)
+                return e
+            else:
+                return Slurm(self.slurm_account, self.sbatch_options)

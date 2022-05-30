@@ -1,0 +1,26 @@
+BootStrap: localimage
+From: ./singularity-base-test-container.sif
+
+
+%setup
+    #mkdir ${SINGULARITY_ROOTFS}/tmp/drypipe
+    rm -Rf /tmp/drypipe
+    mkdir /tmp/drypipe
+    cp /home/maxou/dev/dry_pipe/setup.py /tmp/drypipe
+    cp -R /home/maxou/dev/dry_pipe/dry_pipe /tmp/drypipe/dry_pipe
+
+    #cp /home/maxou/dev/dry_pipe/setup.py ${SINGULARITY_ROOTFS}/tmp/drypipe
+    #cp -R /home/maxou/dev/dry_pipe/dry_pipe ${SINGULARITY_ROOTFS}/tmp/drypipe/dry_pipe
+
+%files
+   /tmp/drypipe /tmp/drypipe
+
+%post
+
+#    /usr/bin/python3 -m venv /drypipe_venv
+#    . /drypipe_venv/bin/activate
+#    /drypipe_venv/bin/python3 /drypipe/setup.py install
+
+    cd /tmp/drypipe
+    python3.9 setup.py install
+    rm -Rf /tmp/drypipe
