@@ -222,11 +222,17 @@ def run(pipeline, instance_dir, web_mon, port, bind, clean, single, restart_fail
         launch_single(pipeline_instance, single)
         return
 
+    pipeline_instance.regen_tasks_if_stale(force=True)
+
     for task in pipeline_instance.tasks:
         task_state = task.get_state()
-        if task_state is not None and  task_state.is_failed():
-            if restart_failed:
-                task.re_queue()
+        if task_state is not None:
+
+            if task_state.is_failed():
+                task.prepare()
+
+                if restart_failed:
+                    task.re_queue()
 
     janitor = Janitor(
         pipeline_instance=pipeline_instance,

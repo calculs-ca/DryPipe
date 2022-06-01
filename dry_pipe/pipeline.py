@@ -49,17 +49,10 @@ class TaskSet:
             f() for f in self._change_tracking_functions
         ]
 
-    def regen_if_stale_else_self(self):
+    def regen_if_stale_else_self(self, force=False):
         sig = self._calculate_tasks_signature()
 
-        if len(sig) != len(self._tasks_signature):
-            raise ValidationError(
-                "task generating function yielded different number of change tracking functions " +
-                f" {len(sig)}" != f"{len(self._tasks_signature)}, the number of change tracking " +
-                "functions must be constant"
-            )
-
-        if sig != self._tasks_signature:
+        if sig != self._tasks_signature or force:
             return TaskSet(self.pipeline_instance)
         else:
             return self
@@ -351,9 +344,8 @@ class PipelineInstance:
 
         return dict(gen()).values()
 
-    def regen_tasks_if_stale(self):
-        # TODO: get rid of mutation !
-        self.tasks = self.tasks.regen_if_stale_else_self()
+    def regen_tasks_if_stale(self, force=False):
+        self.tasks = self.tasks.regen_if_stale_else_self(force)
 
     def instance_dir_base_name(self):
         return os.path.basename(self.pipeline_instance_dir)
