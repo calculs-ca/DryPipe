@@ -78,7 +78,7 @@ class DryPipeDsl:
                     break
                 else:
                     state = t.get_state()
-                    if state.is_completed():
+                    if state is not None and state.is_completed():
                         yield t
                     else:
                         break
