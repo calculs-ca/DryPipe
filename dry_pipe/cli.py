@@ -185,7 +185,10 @@ def mon(pipeline, instance_dir):
 
     screen_state = CliScreen(instance_dir, is_monitor_mode=True)
 
-    screen_state.start_and_wait()
+    err_msg = screen_state.start_and_wait()
+
+    if err_msg is not None:
+        click.echo(err_msg, err=True)
 
 
 @click.command()
@@ -256,7 +259,9 @@ def run(pipeline, instance_dir, web_mon, port, bind, clean, single, restart_fail
     else:
         from dry_pipe.cli_screen import CliScreen
         rich_screen = CliScreen(pipeline_instance.pipeline_instance_dir, is_monitor_mode=False)
-        rich_screen.start_and_wait()
+        err_msg = rich_screen.start_and_wait()
+        if err_msg is not None:
+            click.echo(err_msg, err=True)
 
     os._exit(0)
 

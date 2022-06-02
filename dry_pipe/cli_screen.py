@@ -1,5 +1,6 @@
 import os
 import time
+import traceback
 from threading import Thread
 from sshkeyboard import listen_keyboard, stop_listening
 from rich.columns import Columns
@@ -26,6 +27,7 @@ class CliScreen:
         self.failed_task_states_iter_count = 0
         self.selected_failed_task = None
         self.prompt = None
+        self.error_msg = []
 
         class ShallowPipelineInstance:
             def __init__(self):
@@ -86,29 +88,33 @@ class CliScreen:
 
 
     def press(self, key):
-        if key == "q":
-            self.quit = True
+        try:
+            if key == "q":
+                self.quit = True
+                stop_listening()
+            elif key == "f":
+                self.cancel_prompt()
+                self.screen = "errors"
+            elif key == "s":
+                self.cancel_prompt()
+                self.screen = "summary"
+            elif key == "r":
+                if self.selected_failed_task is not None:
+                    self.set_prompt_restart_task()
+            elif key == "n":
+                self.cancel_prompt()
+            elif key == "y":
+                if self.is_prompt_restart_task():
+                    self.restart_failed_task()
+            elif key == "up":
+                self.cancel_prompt()
+                self.task_up()
+            elif key == "down":
+                self.cancel_prompt()
+                self.task_down()
+        except Exception:
+            self.error_msg.append(traceback.format_exc())
             stop_listening()
-        elif key == "f":
-            self.cancel_prompt()
-            self.screen = "errors"
-        elif key == "s":
-            self.cancel_prompt()
-            self.screen = "summary"
-        elif key == "r":
-            if self.selected_failed_task is not None:
-                self.set_prompt_restart_task()
-        elif key == "n":
-            self.cancel_prompt()
-        elif key == "y":
-            if self.is_prompt_restart_task():
-                self.restart_failed_task()
-        elif key == "up":
-            self.cancel_prompt()
-            self.task_up()
-        elif key == "down":
-            self.cancel_prompt()
-            self.task_down()
 
     def is_prompt_restart_task(self):
         return self.prompt == "restart-task"
@@ -120,16 +126,24 @@ class CliScreen:
         self.prompt = None
 
     def start_and_wait(self):
-
         def refresher():
             with Live(refresh_per_second=2) as live:
-                while not self.quit:
-                    self.update_screen(live)
-                    time.sleep(1)
+                try:
+                    while not self.quit:
+                        self.update_screen(live)
+                        time.sleep(1)
+                except Exception:
+                    self.error_msg.append(traceback.format_exc())
+                    stop_listening()
 
         Thread(target=refresher).start()
 
         listen_keyboard(on_press=lambda key: self.press(key))
+
+        if len(self.error_msg) > 0:
+            return self.error_msg[0]
+        else:
+            return None
 
     def _errors_screen(self):
 
