@@ -5,19 +5,20 @@ def bash_shebang():
 
 BASH_TASK_FUNCS_AND_TRAPS = """
 
-__bash_version_fail="This script requires bash version >= 4.3.x"
 
-if [ -z "${BASH_VERSINFO}" ] || [ -z "${BASH_VERSINFO[0]}" ]; then
-    echo $__bash_version_fail >&2
-    exit 1; 
-fi
+function __check_bash_version () {
+    __bash_version_fail="DryPipe requires bash version >= 4.3.x, current version is: $BASH_VERSION"
     
-__bash_version_fail="$__bash_version_fail, current version is: ${BASH_VERSINFO[0]}.${BASH_VERSINFO[1]}.${BASH_VERSINFO[2]}"
-    
-if [[ ${BASH_VERSINFO[0]} -lt 4  || ( ${BASH_VERSINFO[0]} -eq 4  && ${BASH_VERSINFO[1]} -lt 3 ) ]]; then 
-    echo $__bash_version_fail >&2
-    exit 1;                     
-fi
+    if [ -z "${BASH_VERSINFO}" ] || [ -z "${BASH_VERSINFO[0]}" ]; then
+        echo $__bash_version_fail >&2         
+        __transition_to_failed "" ""
+    fi
+                
+    if [[ ${BASH_VERSINFO[0]} -lt 4  || ( ${BASH_VERSINFO[0]} -eq 4  && ${BASH_VERSINFO[1]} -lt 3 ) ]]; then 
+        echo $__bash_version_fail >&2
+        __transition_to_failed        
+    fi
+}    
                 
 function __read_task_state () {
 
@@ -180,10 +181,6 @@ function __add_binding_for_singularity_if_required () {
         export ____singularity_bindings_done=True
     fi    
 }    
-
-trap  "__transition_to_timed_out"  USR1
-
-trap '__transition_to_failed ${LINENO}' ERR
 
 """
 

@@ -18,6 +18,18 @@ from test_regressions import RegressionTests
 from test_remote_tasks import RemoteTaskTests1, RemoteTaskTests2, RemoteTaskTestsWithSlurm
 
 
+def low_level_tests():
+    return [
+        BaseFuncTests,
+        NonTrivialPipelineTests,
+        NonTrivialPipelineLocalContainerlessTests,
+        TaskSignatureTests,
+        GroundLevelTests,
+        AggregateTaskTests,
+        InOutHashingTests,
+        PipelineCompositionTests
+    ]
+
 def quick_sanity_tests():
     return [
         DaemonModeTests,
@@ -73,6 +85,7 @@ if __name__ == '__main__':
         suite_to_test = sys.argv[1]
 
     suite_funcs = {
+        "low_level_tests": low_level_tests,
         "quick_sanity_tests": quick_sanity_tests,
         "remote_tests": remote_tests,
         "slurm_client": slurm_client,

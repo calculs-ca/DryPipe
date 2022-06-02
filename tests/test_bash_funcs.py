@@ -246,6 +246,9 @@ class BaseFuncTests(unittest.TestCase):
             "test_clean_timeout",
             """
                 __read_task_state
+                __check_bash_version                
+                trap  "__transition_to_timed_out"  USR1                
+                trap '__transition_to_failed ${LINENO}' ERR                
                 while true; do 
                     echo "z"; 
                     sleep 1; 

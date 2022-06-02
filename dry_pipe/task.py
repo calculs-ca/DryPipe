@@ -633,12 +633,14 @@ class Task:
                 fi
                 
                 . $__script_location/task-env.sh
+                . $__pipeline_instance_dir/.drypipe/drypipe-bash-lib.sh                
+                __read_task_state
+                __check_bash_version                
+                trap  "__transition_to_timed_out"  USR1                
+                trap '__transition_to_failed ${LINENO}' ERR                                
             """))
 
-            f.write(". $__pipeline_instance_dir/.drypipe/drypipe-bash-lib.sh\n\n")
-            f.write("__read_task_state\n\n")
-
-            f.write("for __v in 0; do\n\n")
+            f.write("\nfor __v in 0; do\n\n")
 
             def write_before_first_step(indent):
                 #f.write(f"{indent}mkdir -p $__work_dir\n")
