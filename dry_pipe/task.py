@@ -715,7 +715,7 @@ class Task:
                 for step in self.task_steps:
                     if step.shell_snippet is not None:
                         f.write(self.step_script_file(step_number))
-                        f.write("\n")
+                        f.write("\n\n")
                     step_number += 1
 
                 for df in self.executer.dependent_files:
