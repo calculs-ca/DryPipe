@@ -254,6 +254,7 @@ class Task:
 
             yield "__control_dir", abs_from_pipeline_instance_dir(f"{self.control_dir()}")
             yield "__work_dir", abs_from_pipeline_instance_dir(f"{self.work_dir()}")
+            yield "__pipeline_instance_name", os.path.basename(self.pipeline_instance.pipeline_instance_dir)
 
             #if isinstance(self.executer, Slurm):
             #    yield "__is_slurm", "True"
