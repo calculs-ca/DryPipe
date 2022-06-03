@@ -231,7 +231,7 @@ def run(pipeline, instance_dir, web_mon, port, bind, clean, single, restart_fail
         task_state = task.get_state()
         if task_state is not None:
 
-            if task_state.is_failed():
+            if task_state.is_failed() and not task.has_unsatisfied_deps():
                 task.prepare()
 
                 if restart_failed:
