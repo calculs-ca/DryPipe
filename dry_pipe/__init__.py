@@ -44,12 +44,12 @@ class DryPipe:
 
 class DryPipeDsl:
 
-    def __init__(self, task_conf=None, pipeline_instance=None, task_namespance_prefix=""):
+    def __init__(self, task_by_keys={}, task_conf=None, pipeline_instance=None, task_namespance_prefix=""):
 
         self.pipeline_instance = pipeline_instance
         self.task_conf = task_conf or TaskConf("process")
         self.task_namespance_prefix = task_namespance_prefix
-        self.task_by_keys = {}
+        self.task_by_keys = task_by_keys
 
     def sub_pipeline(self, pipeline, namespace_prefix):
         return SubPipeline(pipeline, namespace_prefix, self)

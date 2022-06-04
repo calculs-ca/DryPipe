@@ -264,21 +264,21 @@ class Janitor:
         self._shutdown = True
 
 
-def _janitor(pipeline, wait_for_completion=False, fail_silently=False, logger=None):
+def _janitor(pipeline_instance, wait_for_completion=False, fail_silently=False, logger=None):
 
     if logger is None:
         logger = module_logger
 
-    logger.debug("launching janitor on %s", pipeline.pipeline_instance_dir)
+    logger.debug("launching janitor on %s", pipeline_instance.pipeline_instance_dir)
 
-    pipeline.regen_tasks_if_stale()
+    pipeline_instance.regen_tasks_if_stale()
 
     work_done = 0
     tasks_total = 0
     tasks_completed = 0
     tasks_in_non_terminal_states = 0
 
-    for task in pipeline.tasks:
+    for task in pipeline_instance.tasks:
 
         tasks_total += 1
 
@@ -308,30 +308,30 @@ def _janitor(pipeline, wait_for_completion=False, fail_silently=False, logger=No
                     tasks_completed += 1
 
     if tasks_total == tasks_completed:
-        pipeline_state = pipeline.get_state()
+        pipeline_state = pipeline_instance.get_state()
         if not pipeline_state.is_completed():
             pipeline_state.transition_to_completed()
 
     if tasks_total == tasks_completed or tasks_in_non_terminal_states == 0:
         return work_done, True
 
-    for task_state in TaskState.prepared_task_states(pipeline):
+    for task_state in TaskState.prepared_task_states(pipeline_instance):
         logger.debug("will queue %s", task_state.control_dir())
         task_state.transition_to_queued()
         work_done += 1
 
-    currently_running = TaskState.count_running_local(pipeline)
+    currently_running = TaskState.count_running_local(pipeline_instance)
     cpu_count = len(psutil.Process().cpu_affinity())
 
     launched_count = 0
     throttled_count = 0
     queued_count = 0
 
-    for task_state in TaskState.queued_task_states(pipeline):
+    for task_state in TaskState.queued_task_states(pipeline_instance):
 
         queued_count += 1
 
-        task = pipeline.tasks[task_state.task_key]
+        task = pipeline_instance.tasks[task_state.task_key]
 
         executer = task.executer
 
@@ -355,15 +355,15 @@ def _janitor(pipeline, wait_for_completion=False, fail_silently=False, logger=No
         queued_count, throttled_count, launched_count
     )
 
-    for task_state in TaskState.completed_unsigned_task_states(pipeline):
+    for task_state in TaskState.completed_unsigned_task_states(pipeline_instance):
 
-        task = pipeline.tasks[task_state.task_key]
+        task = pipeline_instance.tasks[task_state.task_key]
 
         logger.debug("will transition %s to complete", task_state.control_dir())
         task_state.transition_to_completed(task)
 
-    for task_action in TaskAction.fetch_all_actions(pipeline.pipeline_instance_dir):
-        task_action.do_it(pipeline)
+    for task_action in TaskAction.fetch_all_actions(pipeline_instance.pipeline_instance_dir):
+        task_action.do_it(pipeline_instance)
 
     return work_done, False
 

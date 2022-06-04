@@ -8,7 +8,7 @@ from itertools import groupby
 
 from dry_pipe import TaskConf, DryPipeDsl, TaskBuilder
 from dry_pipe.bash import BASH_SIGN_FILES_IF_NEWER, BASH_TASK_FUNCS_AND_TRAPS, BASH_SIGN_FILES, bash_shebang
-from dry_pipe.internals import ValidationError, Wait, SubPipeline
+from dry_pipe.internals import ValidationError, SubPipeline
 from dry_pipe.janitors import Janitor
 from dry_pipe.pipeline_state import PipelineState
 from dry_pipe.task import Task
@@ -67,40 +67,29 @@ class Pipeline:
             task_conf = TaskConf("process")
 
         def gen_task_set(pipeline_instance):
-            from dry_pipe.task import Task
-
-            dsl = DryPipeDsl(task_conf=task_conf, pipeline_instance=pipeline_instance)
 
             try:
-                iter(generator_of_tasks(dsl))
+                iter(generator_of_tasks(None))
             except TypeError:
                 raise ValidationError(f"function {generator_of_tasks} must return an iterable of Task (ex, via yield)")
 
-            def _convert_non_tasks_to_tasks_and_lambdas(dsl, g):
+            task_by_keys = {}
+
+            def _populate_task_by_keys_with_task_generator(dsl, g):
 
                 for t_i in g(dsl):
                     if isinstance(t_i, Task):
+                        # all tasks point to root pipeline_instance, even tasks of sub pipelines
                         t_i.pipeline_instance = pipeline_instance
-                        dsl.task_by_keys[t_i.key] = t_i
-                        yield t_i
+                        task_by_keys[t_i.key] = t_i
                     elif isinstance(t_i, SubPipeline):
                         dsl2 = DryPipeDsl(
+                            task_by_keys,
                             task_conf=task_conf,
                             pipeline_instance=pipeline_instance,
                             task_namespance_prefix=t_i.task_namespance_prefix
                         )
-
-                        for t in _convert_non_tasks_to_tasks_and_lambdas(dsl2, t_i.pipeline.generator_of_tasks):
-                            dsl.task_by_keys[t.key] = t
-                            yield t
-
-                    elif isinstance(t_i, Wait):
-                        for t_i in t_i.tasks:
-                            yield t_i
-                            yield lambda: t_i.has_completed()
-
-                        if not t_i.is_ready():
-                            break
+                        _populate_task_by_keys_with_task_generator(dsl2, t_i.pipeline.generator_of_tasks)
                     elif isinstance(t_i, TaskBuilder):
                         raise ValidationError(
                             f" task(key='{t_i.key}') is incomplete, you should probably call .calls(...) on it.")
@@ -109,51 +98,50 @@ class Pipeline:
                             f"iterator has yielded an invalid type: {type(t_i)}: '{t_i}'"
                         )
 
-            tasks = [
-                task
-                for task in _convert_non_tasks_to_tasks_and_lambdas(dsl, generator_of_tasks)
-            ]
+            _populate_task_by_keys_with_task_generator(
+                DryPipeDsl(task_by_keys, task_conf=task_conf, pipeline_instance=pipeline_instance),
+                generator_of_tasks
+            )
 
-            # Mystery: creating lambda: task.has_completed() directly in the comprehension, doesn't work
-            def check_compl(task):
-                return lambda: task.has_completed()
+            tasks = task_by_keys.values()
 
-            change_tracking_functions = [
-                check_compl(task)
-                for task in tasks
-                if task.key in pipeline_instance.dag_determining_tasks_ids
-            ]
+            def validate():
+                dup_keys = [
+                    k for k, task_group in groupby(tasks, lambda t: t.key) if len(list(task_group)) > 1
+                ]
 
-            dup_keys = [
-                k for k, task_group in groupby(tasks, lambda t: t.key) if len(list(task_group)) > 1
-            ]
+                if len(tasks) == 0:
+                    f = os.path.abspath(inspect.getmodule(generator_of_tasks).__file__)
+                    msg = f"pipeline {generator_of_tasks.__name__} defined in {f} yielded zero tasks"
+                    raise Exception(msg)
 
-            if len(tasks) == 0:
-                f = os.path.abspath(inspect.getmodule(generator_of_tasks).__file__)
-                msg = f"pipeline {generator_of_tasks.__name__} defined in {f} yielded zero tasks"
-                raise Exception(msg)
+                if len(dup_keys) > 0:
+                    raise ValidationError(f"duplicate keys in definition: {dup_keys} value of task(key=) must be unique")
 
-            if len(dup_keys) > 0:
-                raise ValidationError(f"duplicate keys in definition: {dup_keys} value of task(key=) must be unique")
+                def all_produced_files():
+                    for task in tasks:
+                        for file in task.all_produced_files():
+                            yield task, file
 
-            def all_produced_files():
-                for task in tasks:
-                    for file in task.all_produced_files():
-                        yield task, file
+                def z(task, file):
+                    return file.absolute_path(task)
 
-            def z(task, file):
-                return file.absolute_path(task)
+                for path, task_group in groupby(all_produced_files(), lambda t: z(*t)):
+                    task_group = list(task_group)
+                    if len(task_group) > 1:
+                        task_group = ",".join(list(map(lambda t: str(t[0]), task_group)))
+                        raise ValidationError(f"Tasks {task_group} have colliding output to file {path}."+
+                                              " All files specified in Task(produces=) must be distinct")
 
-            for path, task_group in groupby(all_produced_files(), lambda t: z(*t)):
-                task_group = list(task_group)
-                if len(task_group) > 1:
-                    task_group = ",".join(list(map(lambda t: str(t[0]), task_group)))
-                    raise ValidationError(f"Tasks {task_group} have colliding output to file {path}."+
-                                          " All files specified in Task(produces=) must be distinct")
+            validate()
 
             return TaskSet(
-                dsl.task_by_keys,
-                lambda: [f() for f in change_tracking_functions]
+                task_by_keys,
+                lambda: [
+                    task.has_completed() for task in tasks
+                    # optimization: we only need to trask the states of DAG changing tasks
+                    if task.key in pipeline_instance.dag_determining_tasks_ids
+                ]
             )
 
         self.task_set_generator = gen_task_set

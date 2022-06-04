@@ -28,7 +28,11 @@ def single_task_pipeline_with_inline_script(dsl):
         #!/usr/bin/env bash            
         if [[ "${PLEASE_CRASH}" == "$__task_key" ]]; then
           exit 1
-        fi                    
+        fi
+        echo mul\\
+             ti\\
+             line \\
+             message                    
         cat $fasta_file > $inflated_output            
         cat $fasta_file >> $inflated_output            
         echo "huge_variable=123" >> $__output_var_file                
