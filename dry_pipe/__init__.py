@@ -48,7 +48,7 @@ class DryPipeDsl:
         self.pipeline_instance = pipeline_instance
         self.task_conf = task_conf or TaskConf("process")
         self.task_namespance_prefix = task_namespance_prefix
-
+        self.task_by_keys = {}
         self.annotated_python_task_by_name = {}
 
     def sub_pipeline(self, pipeline, namespace_prefix):
@@ -69,10 +69,7 @@ class DryPipeDsl:
 
                 self.pipeline_instance.dag_determining_tasks_ids.add(key)
 
-                if getattr(self.pipeline_instance, "tasks", None) is None:
-                    break
-
-                t = self.pipeline_instance.tasks.get(key)
+                t = self.task_by_keys.get(key)
 
                 if t is None:
                     break

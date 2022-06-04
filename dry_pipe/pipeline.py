@@ -17,10 +17,9 @@ logger = logging.getLogger(__name__)
 
 class TaskSet:
 
-    def __init__(self, pipeline_instance):
-
-        self.pipeline_instance = pipeline_instance
-        self._tasks, self._change_tracking_functions = pipeline_instance.pipeline.validated_tasks_gen(pipeline_instance)
+    def __init__(self, tasks, change_tracking_functions):
+        self._tasks = tasks
+        self._change_tracking_functions = change_tracking_functions
         self._tasks_signature = self._calculate_tasks_signature()
 
     def __iter__(self):
@@ -49,13 +48,9 @@ class TaskSet:
             f() for f in self._change_tracking_functions
         ]
 
-    def regen_if_stale_else_self(self, force=False):
+    def is_stale(self):
         sig = self._calculate_tasks_signature()
-
-        if sig != self._tasks_signature or force:
-            return TaskSet(self.pipeline_instance)
-        else:
-            return self
+        return sig != self._tasks_signature
 
 
 class Pipeline:
@@ -93,6 +88,7 @@ class Pipeline:
                 for t_i in g(dsl):
                     if isinstance(t_i, Task):
                         t_i.pipeline_instance = pipeline_instance
+                        dsl.task_by_keys[t_i.key] = t_i
                         yield t_i
                     elif isinstance(t_i, SubPipeline):
                         dsl2 = DryPipeDsl(
@@ -102,6 +98,7 @@ class Pipeline:
                         )
 
                         for t in _convert_non_tasks_to_tasks_and_lambdas(dsl2, t_i.pipeline.generator_of_tasks):
+                            dsl.task_by_keys[t.key] = t
                             yield t
 
                     elif isinstance(t_i, Wait):
@@ -243,7 +240,8 @@ class PipelineInstance:
         self._work_dir = os.path.join(pipeline_instance_dir, ".drypipe")
         self._publish_dir = os.path.join(pipeline_instance_dir, "publish")
         self.dag_determining_tasks_ids = set()
-        self.tasks = TaskSet(self)
+        tasks, change_tracking_functions = self.pipeline.validated_tasks_gen(self)
+        self.tasks = TaskSet(tasks, change_tracking_functions)
 
     @staticmethod
     def _hint_file(instance_dir):
@@ -345,7 +343,9 @@ class PipelineInstance:
         return dict(gen()).values()
 
     def regen_tasks_if_stale(self, force=False):
-        self.tasks = self.tasks.regen_if_stale_else_self(force)
+        if self.tasks.is_stale() or force:
+            tasks, change_tracking_functions = self.pipeline.validated_tasks_gen(self)
+            self.tasks = TaskSet(tasks, change_tracking_functions)
 
     def instance_dir_base_name(self):
         return os.path.basename(self.pipeline_instance_dir)
