@@ -21,8 +21,8 @@ class DryPipe:
     annotated_python_task_by_name = {}
 
     @staticmethod
-    def python_task(tests):
-        return lambda function: PythonTask(function, tests)
+    def python_task(function):
+        return PythonTask(function)
 
     @staticmethod
     def create_pipeline(
