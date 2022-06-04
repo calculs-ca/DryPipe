@@ -4,7 +4,7 @@ import os
 from dry_pipe import DryPipe, cli
 
 
-@DryPipe.python_task
+@DryPipe.python_task()
 def prepare_tasks(__work_dir):
 
     list_of_tasks_file = os.path.join(
@@ -28,7 +28,7 @@ def prepare_tasks(__work_dir):
             with open(work_chunk_file, "w") as w:
                 w.write(str(very_special_number))
 
-@DryPipe.python_task
+@DryPipe.python_task()
 def work_chunk_func(work_file):
 
     with open(work_file) as f:
@@ -40,7 +40,7 @@ def work_chunk_func(work_file):
         }
 
 
-@DryPipe.python_task
+@DryPipe.python_task()
 def aggregate_func(__work_dir, grandiose_report, all_work_chunk_tasks_outputs):
 
     def test_unimplemented_feature():

@@ -402,7 +402,6 @@ def _func_from_mod_func(mod_func):
         module = importlib.import_module(mod[1:])
 
     python_task = getattr(module, func_name, None)
-
     if python_task is None:
         raise Exception(f"function {func_name} not found in module {mod}")
 

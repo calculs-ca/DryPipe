@@ -119,7 +119,7 @@ def validate_pipeline_execution(pipeline, test_case):
     )
 
 
-@DryPipe.python_task
+@DryPipe.python_task()
 def much_fancier_report_func(much_fancier_report, fancy_int):
 
     print("got args:")
@@ -136,7 +136,7 @@ def much_fancier_report_func(much_fancier_report, fancy_int):
     }
 
 
-@DryPipe.python_task
+@DryPipe.python_task()
 def much_fancier_super_report_func(much_fancier_report):
 
     with open(much_fancier_report, "w") as f:

@@ -21,8 +21,8 @@ class DryPipe:
     annotated_python_task_by_name = {}
 
     @staticmethod
-    def python_task(function):
-        return PythonTask(function)
+    def python_task(tests=[]):
+        return lambda func: PythonTask(func, tests)
 
     @staticmethod
     def create_pipeline(
@@ -265,7 +265,7 @@ class TaskBuilder:
                             f"{bash_shebang}"
                             "echo '...something...'"
                         )
-            elif isinstance(a, PythonTask):
+            if isinstance(a, PythonTask):
                 python_bin = kwargs.get("python_bin") or self.dsl.task_conf.python_bin or sys.executable
                 task_conf = task_conf.override_python_bin(python_bin)
                 task_step = TaskStep(task_conf, python_task=a)
