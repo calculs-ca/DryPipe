@@ -392,11 +392,7 @@ def hub(ctx, bind, port):
     WebsocketServer.start(bind, port)
 
 
-@click.command()
-@click.pass_context
-@click.argument('mod-func', type=click.STRING)
-@click.option('--task-env', type=click.Path(exists=True, dir_okay=False))
-def call(ctx, mod_func, task_env):
+def _func_from_mod_func(mod_func):
 
     mod, func_name = mod_func.split(":")
 
@@ -405,16 +401,35 @@ def call(ctx, mod_func, task_env):
     else:
         module = importlib.import_module(mod[1:])
 
-    func_to_call = getattr(module, func_name, None)
+    python_task = getattr(module, func_name, None)
 
-    if func_to_call is None:
+    if python_task is None:
         raise Exception(f"function {func_name} not found in module {mod}")
 
-    #if func_to_call is None:
-    #    raise Exception(
-    #        f"function {func_name} not found in module {mod}.\n A function must exist and be" +
-    #        "annotated with @DryPipe.python_task to be callable as a DryPipe task."
-    #    )
+    return python_task
+
+
+@click.command()
+@click.pass_context
+@click.argument('mod-func', type=click.STRING)
+def test(ctx, mod_func):
+    python_task = _func_from_mod_func(mod_func)
+
+    if len(python_task.tests) == 0:
+        click.echo(f"No tests for python_task {mod_func}")
+        return
+
+    for test in python_task.tests:
+        python_task.func(*test["args"], test=test)
+
+
+@click.command()
+@click.pass_context
+@click.argument('mod-func', type=click.STRING)
+@click.option('--task-env', type=click.Path(exists=True, dir_okay=False))
+def call(ctx, mod_func, task_env):
+
+    python_task = _func_from_mod_func(mod_func)
 
     env = os.environ
 
@@ -425,13 +440,13 @@ def call(ctx, mod_func, task_env):
     #TODO: Validate missing args
     args = [
         env.get(k)
-        for k, v in func_to_call.signature.parameters.items()
+        for k, v in python_task.signature.parameters.items()
     ]
 
     out_vars = None
 
     try:
-        out_vars = func_to_call.func(* args)
+        out_vars = python_task.func(* args)
     except Exception as ex:
         traceback.print_exc()
         exit(1)
@@ -548,6 +563,7 @@ def _register_commands():
     cli_group.add_command(mon)
     cli_group.add_command(prepare)
     cli_group.add_command(call)
+    cli_group.add_command(test)
     cli_group.add_command(status)
     cli_group.add_command(watch)
     cli_group.add_command(serve_ui)

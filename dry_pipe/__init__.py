@@ -4,6 +4,7 @@ import re
 import subprocess
 import sys
 import textwrap
+from functools import wraps
 
 from dry_pipe.bash import bash_shebang
 from dry_pipe.internals import \
@@ -20,8 +21,8 @@ class DryPipe:
     annotated_python_task_by_name = {}
 
     @staticmethod
-    def python_task(func):
-        return PythonTask(func)
+    def python_task(function):
+        return PythonTask(function)
 
     @staticmethod
     def create_pipeline(
