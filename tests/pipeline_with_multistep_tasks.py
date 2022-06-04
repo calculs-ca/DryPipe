@@ -38,12 +38,12 @@ def three_steps_pipeline(dsl):
     yield three_phase_task
 
 
-@DryPipe.python_task()
+@DryPipe.python_call()
 def step2_in_python(out_file):
     with open(out_file, "a") as f:
         f.write("s2\n")
 
-@DryPipe.python_task()
+@DryPipe.python_call()
 def step4_in_python(out_file):
     with open(out_file, "a") as f:
         f.write("s4\n")

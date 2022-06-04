@@ -113,7 +113,7 @@ def load_int_from_file(f):
 test_args_for_pipeline_exerciser_func1 = {
 
 }
-@DryPipe.python_task(tests=[])
+@DryPipe.python_call(tests=[])
 def pipeline_exerciser_func1(v1, f1, t1_out_f, test=None):
 
     #TODO: format variables so that they so that they survive the bash export :
@@ -129,7 +129,7 @@ def pipeline_exerciser_func1(v1, f1, t1_out_f, test=None):
     }
 
 
-@DryPipe.python_task()
+@DryPipe.python_call()
 def pipeline_exerciser_func2(t1_out_v, t1_out_f, v2, f2, t2_out_f):
 
     v2 = int(v2)

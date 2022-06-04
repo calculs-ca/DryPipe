@@ -2,21 +2,21 @@
 from dry_pipe import DryPipe
 
 
-@DryPipe.python_task()
+@DryPipe.python_call()
 def parse_and_compute_sum(series):
     return {
         "result": sum([int(n) for n in series.split(",")])
     }
 
 
-@DryPipe.python_task()
+@DryPipe.python_call()
 def multiply_by_x(x, n):
     return {
         "result": int(n) * int(x)
     }
 
 
-@DryPipe.python_task()
+@DryPipe.python_call()
 def add_n(r, n):
     return {
         "final_result": int(r) + int(n)

@@ -501,7 +501,7 @@ def env_from_sourcing(env_file):
         return json.loads(out)
 
 
-class PythonTask:
+class PythonCall:
 
     def __init__(self, func, tests=[]):
         self.func = func

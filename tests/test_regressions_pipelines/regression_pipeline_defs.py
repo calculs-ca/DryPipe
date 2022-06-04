@@ -35,13 +35,13 @@ def pipeline_consuming_upstream_vars_with_same_name(dsl):
     )()
 
 
-@DryPipe.python_task()
+@DryPipe.python_call()
 def produce_a(v):
     return {
         "a": int(v)
     }
 
-@DryPipe.python_task()
+@DryPipe.python_call()
 def validate_output_from_t1_and_t2(a_t1, a_t2):
 
     if int(a_t1) != 1:
@@ -62,15 +62,15 @@ def __sleep(i):
         f"end_t_{i}": end_t.strftime('%Y-%m-%dT%H:%M:%S.%f')
     }
 
-@DryPipe.python_task()
+@DryPipe.python_call()
 def do_sleep1():
     return __sleep(1)
 
-@DryPipe.python_task()
+@DryPipe.python_call()
 def do_sleep2():
     return __sleep(2)
 
-@DryPipe.python_task()
+@DryPipe.python_call()
 def do_sleep3():
     return __sleep(3)
 

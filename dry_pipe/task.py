@@ -45,7 +45,7 @@ class Task:
         self.has_python_step = False
 
         for s in self.task_steps:
-            if s.python_task is not None:
+            if s.python_call is not None:
                 self.has_python_step = True
                 break
 
@@ -1172,11 +1172,11 @@ class Task:
 
 class TaskStep:
 
-    def __init__(self, task_conf, shell_script=None, python_task=None, shell_snippet=None):
+    def __init__(self, task_conf, shell_script=None, python_call=None, shell_snippet=None):
         self.executer = task_conf.create_executer()
         self.task_conf = task_conf
         self.shell_script = shell_script
-        self.python_task = python_task
+        self.python_call = python_call
         self.shell_snippet = shell_snippet
 
     def write_invocation(self, file_writer, task, step_number, exit_after_step, write_before_first_step):
@@ -1195,7 +1195,7 @@ class TaskStep:
         elif python_bin is not None:
 
             switches = " ".join(self.task_conf.python_interpreter_switches)
-            invocation_line = f"{python_bin} {switches} -m dry_pipe.cli call {self.python_task.mod_func()}"
+            invocation_line = f"{python_bin} {switches} -m dry_pipe.cli call {self.python_call.mod_func()}"
         else:
             raise Exception("shouldn't have got here")
 

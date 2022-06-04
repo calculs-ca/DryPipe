@@ -10,7 +10,7 @@ from dry_pipe.bash import bash_shebang
 from dry_pipe.internals import \
     Executor, Local, PreExistingFile, IndeterminateFile, ProducedFile, \
     Slurm, IncompleteVar, Val, OutputVar, \
-    ValidationError, FileSet, TaskMatcher, PythonTask, Wait, SubPipeline
+    ValidationError, FileSet, TaskMatcher, PythonCall, Wait, SubPipeline
 
 from dry_pipe.task import Task, TaskStep
 
@@ -21,8 +21,8 @@ class DryPipe:
     annotated_python_task_by_name = {}
 
     @staticmethod
-    def python_task(tests=[]):
-        return lambda func: PythonTask(func, tests)
+    def python_call(tests=[]):
+        return lambda func: PythonCall(func, tests)
 
     @staticmethod
     def create_pipeline(
@@ -265,10 +265,10 @@ class TaskBuilder:
                             f"{bash_shebang}"
                             "echo '...something...'"
                         )
-            if isinstance(a, PythonTask):
+            if isinstance(a, PythonCall):
                 python_bin = kwargs.get("python_bin") or self.dsl.task_conf.python_bin or sys.executable
                 task_conf = task_conf.override_python_bin(python_bin)
-                task_step = TaskStep(task_conf, python_task=a)
+                task_step = TaskStep(task_conf, python_call=a)
 
         if task_step is None:
             raise ValidationError(
