@@ -50,7 +50,6 @@ class DryPipeDsl:
         self.task_conf = task_conf or TaskConf("process")
         self.task_namespance_prefix = task_namespance_prefix
         self.task_by_keys = {}
-        self.annotated_python_task_by_name = {}
 
     def sub_pipeline(self, pipeline, namespace_prefix):
         return SubPipeline(pipeline, namespace_prefix, self)

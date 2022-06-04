@@ -15,23 +15,24 @@ from dry_pipe.task import Task
 
 logger = logging.getLogger(__name__)
 
+
 class TaskSet:
 
-    def __init__(self, tasks, change_tracking_functions):
-        self._tasks = tasks
-        self._change_tracking_functions = change_tracking_functions
-        self._tasks_signature = self._calculate_tasks_signature()
+    def __init__(self, tasks_by_keys, task_states_signature_func):
+        self._tasks_by_keys = tasks_by_keys
+        self._task_states_signature_func = task_states_signature_func
+        self._task_states_signature = self._task_states_signature_func()
 
     def __iter__(self):
-        for t in self._tasks:
+        for t in self._tasks_by_keys.values():
             yield t
 
     def __len__(self):
-        return len(self._tasks)
+        return len(self._tasks_by_keys)
 
     def __getitem__(self, task_key):
 
-        task = self.get(task_key)
+        task = self._tasks_by_keys.get(task_key)
 
         if task is not None:
             return task
@@ -39,18 +40,10 @@ class TaskSet:
         raise KeyError(f"pipeline has no task {task_key}")
 
     def get(self, task_key):
-        for task in self._tasks:
-            if task.key == task_key:
-                return task
-
-    def _calculate_tasks_signature(self):
-        return [
-            f() for f in self._change_tracking_functions
-        ]
+        return self._tasks_by_keys.get(task_key)
 
     def is_stale(self):
-        sig = self._calculate_tasks_signature()
-        return sig != self._tasks_signature
+        return self._task_states_signature_func() != self._task_states_signature
 
 
 class Pipeline:
@@ -73,7 +66,7 @@ class Pipeline:
         if task_conf is None:
             task_conf = TaskConf("process")
 
-        def gen_and_validate_tasks(pipeline_instance):
+        def gen_task_set(pipeline_instance):
             from dry_pipe.task import Task
 
             dsl = DryPipeDsl(task_conf=task_conf, pipeline_instance=pipeline_instance)
@@ -158,9 +151,12 @@ class Pipeline:
                     raise ValidationError(f"Tasks {task_group} have colliding output to file {path}."+
                                           " All files specified in Task(produces=) must be distinct")
 
-            return tasks, change_tracking_functions
+            return TaskSet(
+                dsl.task_by_keys,
+                lambda: [f() for f in change_tracking_functions]
+            )
 
-        self.validated_tasks_gen = gen_and_validate_tasks
+        self.task_set_generator = gen_task_set
 
         self.pipeline_code_dir = pipeline_code_dir
         self.task_conf = task_conf
@@ -240,8 +236,7 @@ class PipelineInstance:
         self._work_dir = os.path.join(pipeline_instance_dir, ".drypipe")
         self._publish_dir = os.path.join(pipeline_instance_dir, "publish")
         self.dag_determining_tasks_ids = set()
-        tasks, change_tracking_functions = self.pipeline.validated_tasks_gen(self)
-        self.tasks = TaskSet(tasks, change_tracking_functions)
+        self.tasks = self.pipeline.task_set_generator(self)
 
     @staticmethod
     def _hint_file(instance_dir):
@@ -344,8 +339,7 @@ class PipelineInstance:
 
     def regen_tasks_if_stale(self, force=False):
         if self.tasks.is_stale() or force:
-            tasks, change_tracking_functions = self.pipeline.validated_tasks_gen(self)
-            self.tasks = TaskSet(tasks, change_tracking_functions)
+            self.tasks = self.pipeline.task_set_generator(self)
 
     def instance_dir_base_name(self):
         return os.path.basename(self.pipeline_instance_dir)
