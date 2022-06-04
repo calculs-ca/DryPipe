@@ -503,7 +503,7 @@ def env_from_sourcing(env_file):
 
 class PythonTask:
 
-    def __init__(self, func, tests):
+    def __init__(self, func, tests=[]):
         self.func = func
         self.signature = inspect.signature(self.func)
         self.tests = tests
