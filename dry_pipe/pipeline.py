@@ -71,9 +71,12 @@ class Pipeline:
             try:
                 iter(generator_of_tasks(None))
             except TypeError:
-                raise ValidationError(f"function {generator_of_tasks} must return an iterable of Task (ex, via yield)")
+                raise ValidationError(f"function {generator_of_tasks} must return an iterator of Task (ex, via yield)")
 
             task_by_keys = {}
+
+            def class_name(klass):
+                return klass.__module__ + '.' + klass.__qualname__
 
             def _populate_task_by_keys_with_task_generator(dsl, g):
 
@@ -92,10 +95,12 @@ class Pipeline:
                         _populate_task_by_keys_with_task_generator(dsl2, t_i.pipeline.generator_of_tasks)
                     elif isinstance(t_i, TaskBuilder):
                         raise ValidationError(
-                            f" task(key='{t_i.key}') is incomplete, you should probably call .calls(...) on it.")
+                            f" task(key='{t_i.key}') declaration is incomplete, " +
+                            "you probably need to invoke .calls(...) on it.")
                     else:
                         raise ValidationError(
-                            f"iterator has yielded an invalid type: {type(t_i)}: '{t_i}'"
+                            f"iterator has yielded an invalid type: {type(t_i)}: '{t_i}', " +
+                            f"valid types are {class_name(Task)} and {class_name(SubPipeline)}"
                         )
 
             _populate_task_by_keys_with_task_generator(
