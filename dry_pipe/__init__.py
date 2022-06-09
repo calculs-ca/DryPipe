@@ -1,9 +1,11 @@
+import glob
 import inspect
 import os
 import re
 import subprocess
 import sys
 import textwrap
+from fnmatch import fnmatch
 from functools import wraps
 
 from dry_pipe.bash import bash_shebang
@@ -13,7 +15,7 @@ from dry_pipe.internals import \
     ValidationError, FileSet, TaskMatcher, PythonCall, Wait, SubPipeline
 
 from dry_pipe.task import Task, TaskStep
-
+from dry_pipe.task_state import TaskState
 
 
 class DryPipe:
@@ -53,6 +55,21 @@ class DryPipeDsl:
 
     def sub_pipeline(self, pipeline, namespace_prefix):
         return SubPipeline(pipeline, namespace_prefix, self)
+
+    def with_completed_matching_tasks(self, pattern):
+
+        res = []
+
+        for key, task in self.task_by_keys.items():
+            if fnmatch(key, pattern):
+                self.pipeline_instance.dag_determining_tasks_ids.add(key)
+                if not task.has_completed():
+                    return []
+                else:
+                    res.append(task)
+
+        return res
+
 
     def with_completed_tasks(self, *args):
 

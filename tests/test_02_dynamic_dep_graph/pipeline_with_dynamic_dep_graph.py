@@ -41,13 +41,7 @@ def work_chunk_func(work_file):
 
 
 @DryPipe.python_call()
-def aggregate_func(__work_dir, grandiose_report, all_work_chunk_tasks_outputs):
-
-    def test_unimplemented_feature():
-        for task_handle in all_work_chunk_tasks_outputs:
-            n = task_handle.out.inflated_number
-            work_file = task_handle.out.work_file
-            k = task_handle.key
+def aggregate_func(__work_dir, grandiose_report):
 
     d = os.path.dirname(os.path.dirname(__work_dir))
 
@@ -122,6 +116,45 @@ def all_pipeline_tasks(dsl):
     )()
 
     yield aggregate_task
+
+
+def all_pipeline_tasks_with_wait_for_completion(dsl):
+
+    preparation_task = dsl.task(
+        key="preparation_task"
+    ).produces(
+        work_files=dsl.fileset("work_chunk.*.txt")
+    ).calls(prepare_tasks)()
+
+    yield preparation_task
+
+    for pt in dsl.with_completed_tasks(preparation_task):
+        for work_file_handle in pt.out.work_files.fetch():
+            chunk_number = work_file_handle.file_path.split(".")[-2]
+
+            yield dsl.task(
+                key=f"work_chunk.{chunk_number}"
+            ).consumes(
+                work_file=work_file_handle
+            ).produces(
+                inflated_number=dsl.var(int),
+                insane_string=dsl.var(str)
+            ).calls(
+                work_chunk_func
+            )()
+
+    for _ in dsl.with_completed_matching_tasks("work_chunk.*"):
+
+        yield dsl.task(
+            key="aggregate_all"
+        ).consumes(
+            all_work_chunk_tasks_outputs=dsl.matching_tasks("work_chunk.*")
+        ).produces(
+            grandiose_report=dsl.file("grandiose_report.txt")
+        ).calls(
+            aggregate_func
+        )()
+
 
 
 def get_expected_agg_result(agg_task):
