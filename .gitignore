@@ -5,6 +5,8 @@ build
 /tests/*/.drypipe
 /tests/*/publish
 
+tests/single.py
+
 /tests/.drypipe
 /tests/publish
 
