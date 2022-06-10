@@ -68,7 +68,7 @@ class DryPipeDsl:
                 else:
                     res.append(task)
 
-        return res
+        return [res]
 
 
     def with_completed_tasks(self, *args):

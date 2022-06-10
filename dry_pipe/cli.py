@@ -202,7 +202,8 @@ def mon(pipeline, instance_dir):
               help="launches a single task, specified by the task key, in foreground, ex.: launch --single=TASK_KEY")
 @click.option('--restart-failed', is_flag=True)
 @click.option('--reset-failed', is_flag=True)
-def run(pipeline, instance_dir, web_mon, port, bind, clean, single, restart_failed, reset_failed):
+@click.option('--no-confirm', is_flag=True)
+def run(pipeline, instance_dir, web_mon, port, bind, clean, single, restart_failed, reset_failed, no_confirm):
 
     pipeline_mod_func = pipeline
 
@@ -210,9 +211,10 @@ def run(pipeline, instance_dir, web_mon, port, bind, clean, single, restart_fail
         instance_dir = os.getcwd()
 
     if PipelineState.from_pipeline_instance_dir(instance_dir, none_if_not_exists=True) is None:
-        if not click.confirm(f"no pipeline instance exists in {instance_dir}, do you want to create one ?"):
-            click.echo("no pipeline instance created, exiting.")
-            return
+        if not no_confirm:
+            if not click.confirm(f"no pipeline instance exists in {instance_dir}, do you want to create one ?"):
+                click.echo("no pipeline instance created, exiting.")
+                return
 
     pipeline_instance = _pipeline_instance_creater(instance_dir, pipeline_mod_func)()
 
