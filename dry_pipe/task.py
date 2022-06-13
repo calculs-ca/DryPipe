@@ -57,9 +57,6 @@ class Task:
                 elif isinstance(v, IndeterminateFile):
                     yield k, v.produced_file(k, self)
                 elif isinstance(v, FileSet):
-                    fileset_count += 1
-                    if fileset_count > 1:
-                        raise Exception(f"More than 1 fileset per task not currently supported {self} {k}")
                     yield k, v.out_file_set(self, k)
                 else:
                     raise Exception(f"produced type {v}")
@@ -353,7 +350,8 @@ class Task:
         sha1sum = hashlib.sha1()
 
         def add_sig(s):
-            sha1sum.update(s.encode('utf-8'))
+            if s is not None:
+                sha1sum.update(s.encode('utf-8'))
 
         hash_els = list(
             sorted(self.iterate_input_signature_elements(), key=lambda t: (t[3], t[0]))
@@ -451,14 +449,7 @@ class Task:
                     input_file.produced_file.absolute_path(self)
                 )
 
-                def fail():
-                    raise MissingUpstreamDeps(
-                        f"{self} can't calc input hash, missing dependence " +
-                        f"{input_file.var_name_in_consuming_task}={produce_file_abs_path} " +
-                        f"from upstream task {upstream_task}"
-                    )
-
-                sig = upstream_task.signature_of_produced_file(produce_file_abs_path, fail)
+                sig = upstream_task.signature_of_produced_file(produce_file_abs_path)
 
                 yield input_file.var_name_in_consuming_task, sig, produce_file_abs_path, 1
 
