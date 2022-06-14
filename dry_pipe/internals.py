@@ -147,22 +147,29 @@ class OutputVar:
         self.producing_task = producing_task
         self.may_be_none = may_be_none
 
-    def parse(self, v):
+    def format_for_python(self, v):
 
-        if self.type == str:
+        if self.type == int:
+            return str(v)
+        elif self.type == str:
+            return f'"{v}"'
+        elif self.type == float:
+            return str(v)
+
+        raise Exception(f"unsupported type {self.type}")
+
+    def unformat_for_python(self, v):
+
+        if self.type == int:
+            return int(v)
+        elif self.type == str:
             s = v.rstrip('\"\'')
             s = s.lstrip('\"\'')
             return s
-        return v
+        elif self.type == float:
+            return float(v)
 
-    def format_for_python(self, v):
-
-        if self.type == "int":
-            return str(v)
-        elif self.type == "str":
-            return f'"{v}"'
-        elif self.type == "float":
-            return str(v)
+        raise Exception(f"unsupported type {self.type}")
 
     def input_var(self, var_name_in_consuming_task):
         return InputVar(self, var_name_in_consuming_task)
@@ -170,7 +177,7 @@ class OutputVar:
     def fetch(self):
         varz = self.producing_task.out_vars_by_name()
         v = varz.get(self.name)
-        return v
+        return self.unformat_for_python(v)
 
 
 class InputVar:

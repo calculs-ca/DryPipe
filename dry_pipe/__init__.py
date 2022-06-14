@@ -44,6 +44,36 @@ class DryPipe:
         return os.path.dirname(os.path.abspath(inspect.getmodule(task_generator_func).__file__))
 
 
+class TaskMatchOutList:
+    def __init__(self, task_match_out, product_var_name):
+        self.task_match_out = task_match_out
+        self.product_var_name = product_var_name
+
+    def fetch(self):
+        return [
+            task.out.__getattr__(self.product_var_name).fetch()
+            for task in self.task_match_out.task_match.tasks
+        ]
+
+class TaskMatchOut:
+    def __init__(self, task_match):
+        self.task_match = task_match
+
+    def __getattr__(self, name):
+        task = self.task_match.tasks[0]
+        product_var_name = task.out.__getattr__(name)
+        if product_var_name is None:
+            raise Exception(f"task {task}, does not produce '{product_var_name}'")
+        return TaskMatchOutList(self, name)
+
+
+class TaskMatch:
+    def __init__(self, pattern, tasks):
+        self.pattern = pattern
+        self.tasks = tasks
+        self.out = TaskMatchOut(self)
+
+
 class DryPipeDsl:
 
     def __init__(self, task_by_keys={}, task_conf=None, pipeline_instance=None, task_namespance_prefix=""):
@@ -56,20 +86,31 @@ class DryPipeDsl:
     def sub_pipeline(self, pipeline, namespace_prefix):
         return SubPipeline(pipeline, namespace_prefix, self)
 
-    def with_completed_matching_tasks(self, pattern):
+    def with_completed_matching_tasks(self, *patterns):
 
-        res = []
+        task_matchers = []
 
-        for key, task in self.task_by_keys.items():
-            if fnmatch(key, pattern):
-                self.pipeline_instance.dag_determining_tasks_ids.add(key)
-                if not task.has_completed():
-                    return []
-                else:
-                    res.append(task)
+        for pattern in patterns:
 
-        return [res]
+            tasks = []
 
+            for key, task in self.task_by_keys.items():
+                if fnmatch(key, pattern):
+                    self.pipeline_instance.dag_determining_tasks_ids.add(key)
+                    if not task.has_completed():
+                        return []
+                    else:
+                        tasks.append(task)
+
+            if len(tasks) == 0:
+                raise Exception(f"with_completed_matching_tasks({pattern}) matched zero tasks")
+
+            task_matchers.append(TaskMatch(pattern, tasks))
+
+        if len(task_matchers) == 1:
+            yield task_matchers[0]
+        else:
+            yield tuple(task_matchers)
 
     def with_completed_tasks(self, *args):
 

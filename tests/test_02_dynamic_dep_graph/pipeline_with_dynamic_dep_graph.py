@@ -80,6 +80,19 @@ def aggregate_func(__work_dir, grandiose_report):
     }
 
 
+@DryPipe.python_call()
+def aggregate_func_2(inflated_numbers, insane_strings):
+
+    aggregate_inflated_number = sum([
+         int(n) for n in inflated_numbers.split(",")
+    ])
+
+    return {
+        "aggregate_inflated_number": aggregate_inflated_number,
+        "insane_strings_passed_through": insane_strings
+    }
+
+
 def all_pipeline_tasks(dsl):
 
     preparation_task = dsl.task(
@@ -143,17 +156,21 @@ def all_pipeline_tasks_with_wait_for_completion(dsl):
                 work_chunk_func
             )()
 
-    for _ in dsl.with_completed_matching_tasks("work_chunk.*"):
+        for work_chunk_task_matcher in dsl.with_completed_matching_tasks("work_chunk.*"):
 
-        yield dsl.task(
-            key="aggregate_all"
-        ).consumes(
-            all_work_chunk_tasks_outputs=dsl.matching_tasks("work_chunk.*")
-        ).produces(
-            grandiose_report=dsl.file("grandiose_report.txt")
-        ).calls(
-            aggregate_func
-        )()
+            yield dsl.task(
+                key="aggregate_all"
+            ).consumes(
+                inflated_numbers=dsl.val(",".join(
+                    map(str, work_chunk_task_matcher.out.inflated_number.fetch())
+                )),
+                insane_strings=dsl.val(",".join(work_chunk_task_matcher.out.insane_string.fetch()))
+            ).produces(
+                aggregate_inflated_number=dsl.var(int),
+                insane_strings_passed_through=dsl.var(str)
+            ).calls(
+                aggregate_func_2
+            )()
 
 
 

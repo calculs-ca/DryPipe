@@ -556,7 +556,7 @@ class Task:
 
             if v is not None:
                 name = consuming_input_var.var_name_in_consuming_task
-                yield name, consuming_input_var.output_var.parse(v)
+                yield name, consuming_input_var.output_var.unformat_for_python(v)
                 if self.has_python_step:
                     yield f"{name}_python", consuming_input_var.output_var.format_for_python(v)
 

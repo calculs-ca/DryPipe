@@ -6,20 +6,41 @@ import unittest
 import test_helpers
 
 from test_02_dynamic_dep_graph import pipeline_with_dynamic_dep_graph
-from test_02_dynamic_dep_graph.pipeline_with_dynamic_dep_graph import get_expected_agg_result
+from test_02_dynamic_dep_graph.pipeline_with_dynamic_dep_graph import get_expected_agg_result, \
+    all_pipeline_tasks_with_wait_for_completion, all_pipeline_tasks
 from test_utils import TestSandboxDir
 
 
 
 class AggregateTaskTests(unittest.TestCase):
 
+    def test_agg_task_with_matching_tasks_pipeline(self):
+        self._validate_agg_task_pipeline(all_pipeline_tasks)
 
-    def test_agg_task_pipeline(self):
+    def test_agg_task_with_completed_matching_tasks_pipeline(self):
 
         d = TestSandboxDir(self)
 
         pipeline_instance = d.pipeline_instance_from_generator(
-            pipeline_with_dynamic_dep_graph.all_pipeline_tasks, completed=True
+            all_pipeline_tasks_with_wait_for_completion, completed=True
+        )
+
+        agg_task = pipeline_instance.tasks["aggregate_all"]
+
+        self.assertEqual(agg_task.out.aggregate_inflated_number.fetch(), 20)
+
+        self.assertEqual(
+            {s for s in agg_task.out.insane_strings_passed_through.fetch().split(",")},
+            {s for s in "abc1,abc2,abc4,abc3".split(",")}
+        )
+
+
+    def _validate_agg_task_pipeline(self, agg_pipeline_generator):
+
+        d = TestSandboxDir(self)
+
+        pipeline_instance = d.pipeline_instance_from_generator(
+            agg_pipeline_generator, completed=True
         )
 
         agg_task = pipeline_instance.tasks["aggregate_all"]
