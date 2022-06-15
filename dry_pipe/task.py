@@ -988,6 +988,8 @@ class Task:
 
         if cnt == 1:
             return TaskState(os.path.abspath(f[0]))
+        elif cnt == 0:
+            return None
 
         raise Exception(f"expected one task state file (state.*) in {self}, got {len(f)}")
 
