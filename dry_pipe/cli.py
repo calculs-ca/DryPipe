@@ -321,27 +321,22 @@ def requeue_single(pipeline, single):
 
 @click.command()
 @click.pass_context
+@click.option('-p', '--pipeline', help="a_module:a_func, a function that returns a pipeline.")
 @click.option('--env', type=click.STRING, default=None)
 @click.option('--instances-dir', type=click.STRING)
-def watch(ctx, env, instances_dir):
+def watch(ctx, pipeline, env, instances_dir):
 
     if instances_dir is None:
         raise Exception(
             f"serve-multi requires mandatory option --instances-dir=<directory of pipeline instances>"
         )
 
+    pipeline = _pipeline_from_modul_func(None, pipeline, write_hint_file_if_not_exists=False)
+
     if not os.path.exists(instances_dir):
         pathlib.Path(instances_dir).mkdir(parents=True)
 
-    pipeline_func = ctx.obj["pipeline_func"]
-
-    pipeline_code_dir = os.path.dirname(os.path.abspath(inspect.getmodule(pipeline_func).__file__))
-
-    janitor = Janitor(
-        pipeline_instances_dir=instances_dir,
-        task_generator=pipeline_func,
-        dsl=DryPipe.dsl(pipeline_code_dir=pipeline_code_dir),
-    )
+    janitor = Janitor(pipeline, pipeline_instances_dir=instances_dir)
 
     thread = janitor.start()
 
@@ -384,15 +379,6 @@ def serve_ui(ctx, instances_dir, bind, port):
     WebsocketServer.start(bind, port, instances_dir)
 
     os._exit(0)
-
-
-@click.command()
-@click.pass_context
-@click.option('--bind', default="0.0.0.0", help="bind address for --web-mon")
-@click.option('--port', default=5000)
-def hub(ctx, bind, port):
-    from dry_pipe.websocket_server import WebsocketServer
-    WebsocketServer.start(bind, port)
 
 
 def _func_from_mod_func(mod_func):
@@ -586,7 +572,6 @@ def _register_commands():
     cli_group.add_command(watch)
     cli_group.add_command(serve_ui)
     cli_group.add_command(clean)
-    cli_group.add_command(hub)
     cli_group.add_command(stats)
     cli_group.add_command(reset)
     cli_group.add_command(requeue)

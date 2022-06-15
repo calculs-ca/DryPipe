@@ -1,0 +1,4 @@
+
+include dry_pipe/ui/index.html
+include dry_pipe/ui/main.js
+include dry_pipe/ui/main.js.map

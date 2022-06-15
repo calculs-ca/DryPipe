@@ -359,9 +359,6 @@ class RemoteSSH(Executor):
             _f.writelines(remote_overrides)
             _f.write("\n")
 
-        #if not os.path.exists(overrides_file_for_host):
-        #    return
-
         with perf_logger_timer("RemoteSSH.upload_overrides") as t:
 
             r_work_dir = os.path.join(self.remote_base_dir, remote_pid_basename, ".drypipe")
@@ -372,11 +369,13 @@ class RemoteSSH(Executor):
 
             self.ensure_connected()
 
+            # sftp.put broken, Paramiko bug:  https://github.com/paramiko/paramiko/issues/149
             def upload_overrides_broken_by_paramiko_bug():
                 self.invoke_remote(f"mkdir -p {r_work_dir}")
                 with self.ssh_client().open_sftp() as sftp:
                     sftp.put(overrides_file_for_host, r_override_file, confirm=False)
 
+            # as a work around
             def upload_overrides():
 
                 def lines_in_overrides_file():

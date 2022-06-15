@@ -294,13 +294,19 @@ def text_response(func):
 
 def map_static_file(static_file):
 
-    src_root = os.path.abspath(os.path.dirname(os.path.dirname(__file__)))
-
     the_static_file = os.path.join(
-        src_root,
+        os.path.abspath(os.path.dirname(__file__)),
         "ui",
         static_file
     )
+
+    if not os.path.exists(the_static_file):
+        the_static_file = os.path.join(
+            os.path.abspath(os.path.dirname(os.path.dirname(__file__))),
+            "ui",
+            "dist",
+            static_file
+        )
 
     return the_static_file
 

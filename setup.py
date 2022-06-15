@@ -17,11 +17,11 @@ extra_requirements = [
 
 setup(
     name='dry_pipe',
-    version='0.2.2',
+    version='0.2.3',
     packages=['dry_pipe'],
     install_requires=minimal_requirements,
     extras_require={"full": extra_requirements},
-    #package_data={'': ['ui/dist/main.js']},
+    include_package_data=True,
     entry_points='''
         [console_scripts]
         drypipe=dry_pipe.cli:run_cli

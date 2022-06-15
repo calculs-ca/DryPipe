@@ -93,6 +93,7 @@ class WebsocketServer(AsyncNamespace):
             self.ui_janitor = UIJanitor(instances_dir_if_has_local_janitor)
         else:
             self.ui_janitor = None
+            raise Exception(f"not supported")
 
     def janitor(self):
 
