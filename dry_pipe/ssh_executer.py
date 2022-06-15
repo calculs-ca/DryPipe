@@ -327,6 +327,8 @@ class RemoteSSH(Executor):
 
     def upload_overrides(self, pipeline, task_conf):
 
+        self.ensure_connected()
+
         if self.is_remote_overrides_uploaded():
             return
 
@@ -366,8 +368,6 @@ class RemoteSSH(Executor):
                 r_work_dir,
                 "pipeline-env.sh"
             )
-
-            self.ensure_connected()
 
             # sftp.put broken, Paramiko bug:  https://github.com/paramiko/paramiko/issues/149
             def upload_overrides_broken_by_paramiko_bug():

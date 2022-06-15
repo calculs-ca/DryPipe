@@ -506,7 +506,14 @@ class TaskConf:
             if self.remote_base_dir is None:
                 raise Exception("A task_conf with ssh must have remote_base_dir not None")
 
-            ssh_username_ssh_host, key_filename = self.ssh_specs.split(":")
+            ssh_specs_parts = self.ssh_specs.split(":")
+            if len(ssh_specs_parts) == 2:
+                ssh_username_ssh_host, key_filename = ssh_specs_parts
+            elif len(ssh_specs_parts) == 1:
+                ssh_username_ssh_host = ssh_specs_parts[0]
+                key_filename = "~/.ssh/id_rsa"
+            else:
+                raise Exception(f"bad ssh_specs format: {self.ssh_specs}")
 
             ssh_username, ssh_host = ssh_username_ssh_host.split("@")
 
