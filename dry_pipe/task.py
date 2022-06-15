@@ -999,13 +999,13 @@ class Task:
             self.v_abs_control_dir(),
             os.path.join(self.v_abs_control_dir(), "out_sigs"),
         ]:
-            pathlib.Path(d).mkdir(parents=True, exist_ok=False)
+            pathlib.Path(d).mkdir(parents=True, exist_ok=True)
 
         if not os.path.exists(self.v_abs_work_dir()):
-            pathlib.Path(self.v_abs_work_dir()).mkdir(parents=True, exist_ok=False)
+            pathlib.Path(self.v_abs_work_dir()).mkdir(parents=True, exist_ok=True)
 
         if self.v_abs_scratch_dir() is not None:
-            pathlib.Path(self.v_abs_scratch_dir()).mkdir(parents=True, exist_ok=False)
+            pathlib.Path(self.v_abs_scratch_dir()).mkdir(parents=True, exist_ok=True)
 
         return TaskState.create_non_existing(self.v_abs_control_dir())
 
