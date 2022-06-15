@@ -343,6 +343,9 @@ class RemoteSSH(Executor):
         remote_pipeline_code_dir = task_conf.remote_pipeline_code_dir
         remote_containers_dir = task_conf.remote_containers_dir
 
+        if remote_containers_dir is None:
+            remote_containers_dir = os.path.join(remote_pipeline_code_dir, "containers")
+
         def gen_remote_overrides():
             yield "__pipeline_code_dir", remote_pipeline_code_dir
             yield "__containers_dir", remote_containers_dir
