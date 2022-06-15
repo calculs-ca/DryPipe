@@ -54,9 +54,9 @@ class Pipeline:
             pipeline_code_dir=None,
             task_conf=None,
             containers_dir=None,
-            env_vars=None
+            env_vars=None,
+            remote_task_confs=None
     ):
-
         if pipeline_code_dir is None:
             pipeline_code_dir = os.path.dirname(os.path.abspath(inspect.getmodule(generator_of_tasks).__file__))
 
@@ -156,6 +156,7 @@ class Pipeline:
         self.containers_dir = containers_dir
         self.generator_of_tasks = generator_of_tasks
         self.env_vars = env_vars
+        self.remote_task_confs = remote_task_confs
 
     def create_pipeline_instance(self, pipeline_instance_dir=None, task_conf=None, containers_dir=None, env_vars=None):
 
@@ -219,6 +220,18 @@ class Pipeline:
                     yield pipeline
 
         return PipelineInstancesDirIterator(self)
+
+    def prepare_remote_sites(self, printer=None):
+        if self.remote_task_confs is None:
+            raise Exception(f"no remote_task_confs have been assigned for this pipeline")
+        for task_conf in self.remote_task_confs:
+            ssh_remote = task_conf.create_executer()
+            if printer is not None:
+                printer(
+                    f"Will rsync {self.pipeline_code_dir} to \n {ssh_remote.user_at_host()}:{task_conf.remote_pipeline_code_dir}"
+                )
+            ssh_remote.ensure_connected()
+            ssh_remote.rsync_remote_code_dir_if_applies(self, task_conf)
 
 
 class PipelineInstance:
@@ -315,7 +328,7 @@ class PipelineInstance:
                     unicity_key = (
                         e.server_connection_key(),
                         task_conf.remote_base_dir,
-                        task_conf.remote_code_dir,
+                        task_conf.remote_pipeline_code_dir,
                         task_conf.remote_containers_dir
                     )
 

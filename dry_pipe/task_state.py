@@ -471,13 +471,13 @@ class TaskState:
         self._transition("completed")
 
     def transition_to_upload_completed(self):
-        return TaskState(self._transition("upload-completed"), 0, 0, 1)
+        return TaskState(self._transition("upload-completed"), 0)
 
     def transition_to_upload_started(self):
         return TaskState(self._transition("upload-started"))
 
     def transition_to_download_completed(self):
-        return TaskState(self._transition("download-completed"), 0, 0, 1)
+        return TaskState(self._transition("download-completed"), 0)
 
     def transition_to_download_started(self):
         return TaskState(self._transition("download-started"))

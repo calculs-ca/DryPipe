@@ -43,6 +43,8 @@ class RemoteTaskTests1(unittest.TestCase):
 
         ensure_remote_dirs_dont_exist(pipeline_instance)
 
+        pipeline_instance.pipeline.prepare_remote_sites()
+
         complete_and_validate_pipeline_instance(pipeline_instance, self)
 
 

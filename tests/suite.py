@@ -103,7 +103,12 @@ if __name__ == '__main__':
 
     chosen_suite_func = suite_funcs[suite_to_test]()
 
-    result = TextTestRunner(verbosity=2).run(
+    failfast = False
+
+    if suite_to_test == "remote_tests":
+        failfast = True
+
+    result = TextTestRunner(verbosity=2, failfast=failfast).run(
         build_suite(chosen_suite_func)
     )
 

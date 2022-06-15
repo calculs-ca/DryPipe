@@ -372,8 +372,7 @@ def _upload_janitor(pipeline, logger):
 
     for remote_executor, task_conf in pipeline.remote_executors_with_task_confs():
         remote_executor.upload_overrides(pipeline, task_conf)
-
-        remote_executor.rsync_remote_code_dir_if_applies(pipeline, task_conf)
+        #remote_executor.rsync_remote_code_dir_if_applies(pipeline, task_conf)
 
     work_done = 0
 

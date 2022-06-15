@@ -16,6 +16,7 @@ tests/single.py
 
 /tests/test-scripts/
 /ui/node_modules/
+dist
 /ui/dist
 tests/containers/*.sif
 /tests/sandboxes/bak/todo.md

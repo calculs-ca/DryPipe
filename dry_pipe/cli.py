@@ -135,7 +135,7 @@ def prepare(ctx, clean, instance_dir):
             pipeline_state.transition_to_completed()
 
 
-def _pipeline_from_modul_func(instance_dir, module_func_pipeline):
+def _pipeline_from_modul_func(instance_dir, module_func_pipeline, write_hint_file_if_not_exists=True):
 
     mod, func_name = module_func_pipeline.split(":")
 
@@ -151,7 +151,8 @@ def _pipeline_from_modul_func(instance_dir, module_func_pipeline):
     if not isinstance(pipeline, Pipeline):
         raise Exception(f"function {func_name} in {mod} should return a Pipeline, not {type(pipeline).__name__}")
 
-    PipelineInstance.write_hint_file_if_not_exists(instance_dir, module_func_pipeline)
+    if write_hint_file_if_not_exists:
+        PipelineInstance.write_hint_file_if_not_exists(instance_dir, module_func_pipeline)
 
     return pipeline
 
@@ -541,6 +542,22 @@ def stats(ctx, instance_dir):
 
     for stat_row in the_stats:
         print("\t".join([str(v) for v in stat_row]))
+
+
+@click.command()
+@click.pass_context
+@click.option('-p', '--pipeline', help="a_module:a_func, a function that returns a pipeline.")
+def prepare_remote_sites(pipeline):
+
+    pipeline_spec = pipeline
+
+    if pipeline_spec is None:
+        click.echo("must specify pipeline, ex: -p <aModule>:<aPipelineFunction>")
+        return
+
+    pipeline = _pipeline_from_modul_func(None, pipeline_spec, write_hint_file_if_not_exists=False)
+
+    pipeline.prepare_remote_sites()
 
 
 @click.command()

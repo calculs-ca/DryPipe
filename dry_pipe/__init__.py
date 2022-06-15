@@ -32,12 +32,23 @@ class DryPipe:
             pipeline_code_dir=None,
             task_conf=None,
             containers_dir=None,
-            env_vars=None
+            env_vars=None,
+            remote_task_confs=None
     ):
+        """
+
+        :param generator_of_tasks:
+        :param pipeline_code_dir:
+        :param task_conf:
+        :param containers_dir:
+        :param env_vars:
+        :param remote_task_confs: when a list of TaskConf is given, drypipe prepare-remote-sites will
+               upload (rsync) $containers_dir and $pipeline_code_dir to all remote sites
+        """
 
         from dry_pipe.pipeline import Pipeline
 
-        return Pipeline(generator_of_tasks, pipeline_code_dir, task_conf, containers_dir, env_vars)
+        return Pipeline(generator_of_tasks, pipeline_code_dir, task_conf, containers_dir, env_vars, remote_task_confs)
 
     @staticmethod
     def pipeline_code_dir_for(task_generator_func):
@@ -385,7 +396,6 @@ class TaskConf:
             remote_pipeline_code_dir=None,
             python_bin=None,
             remote_base_dir=None,
-            remote_code_dir=None,
             remote_containers_dir=None,
             init_bash_command=None,
             python_interpreter_switches=["-u"]
@@ -415,7 +425,6 @@ class TaskConf:
         self.remote_pipeline_code_dir = remote_pipeline_code_dir
         self.python_bin = python_bin
         self.remote_base_dir = remote_base_dir
-        self.remote_code_dir = remote_code_dir
         self.remote_containers_dir = remote_containers_dir
         self.init_bash_command = init_bash_command
         self.python_interpreter_switches = python_interpreter_switches
@@ -444,7 +453,6 @@ class TaskConf:
             self.remote_pipeline_code_dir,
             self.python_bin,
             self.remote_base_dir,
-            self.remote_code_dir,
             self.remote_containers_dir,
             self.init_bash_command,
             self.python_interpreter_switches
@@ -461,7 +469,6 @@ class TaskConf:
             self.remote_pipeline_code_dir,
             python_bin,
             self.remote_base_dir,
-            self.remote_code_dir,
             self.remote_containers_dir,
             self.init_bash_command,
             self.python_interpreter_switches
@@ -478,7 +485,6 @@ class TaskConf:
             self.remote_pipeline_code_dir,
             self.python_bin,
             self.remote_base_dir,
-            self.remote_code_dir,
             self.remote_containers_dir,
             self.init_bash_command,
             self.python_interpreter_switches

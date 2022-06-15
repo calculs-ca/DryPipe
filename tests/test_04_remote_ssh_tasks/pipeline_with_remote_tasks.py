@@ -51,7 +51,8 @@ def create_pipeline_with_remote_tasks(remote_task_conf):
         pipeline_code_dir=os.path.join(
             os.path.dirname(__file__), "src"
         ),
-        containers_dir=test_containers_dir()
+        containers_dir=test_containers_dir(),
+        remote_task_confs=[remote_task_conf]
     )
 
     p.create_pipeline_instance(pipeline_instance_dir=os.path.dirname(__file__))

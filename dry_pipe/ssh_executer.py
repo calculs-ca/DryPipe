@@ -1,5 +1,6 @@
 import os
 import subprocess
+import time
 from paramiko import SSHClient, AutoAddPolicy
 import logging.config
 
@@ -50,6 +51,9 @@ class RemoteSSH(Executor):
     def __str__(self):
 
         return f"{self.ssh_username}@{self.ssh_host}:{self.remote_base_dir}"
+
+    def user_at_host(self):
+        return f"{self.ssh_username}@{self.ssh_host}"
 
     def is_remote_overrides_uploaded(self):
         return self.thread_local_ssh_client.h.is_remote_overrides_uploaded()
@@ -255,7 +259,7 @@ class RemoteSSH(Executor):
 
     def rsync_remote_code_dir_if_applies(self, pipeline, task_conf):
 
-        remote_pipeline_code_dir = task_conf.remote_code_dir
+        remote_pipeline_code_dir = task_conf.remote_pipeline_code_dir
 
         if remote_pipeline_code_dir is None:
             return
@@ -313,12 +317,13 @@ class RemoteSSH(Executor):
             cmd = f"{rsync_call} --dirs -aR --partial --files-from={task_control_dir}/remote-outputs.txt " + \
                   f"{remote_dir}/{remote_pid_basename} {pipeline_instance_dir}"
 
-            self._launch_command(
-                cmd,
-                lambda err: Exception(
-                    f"downloading of task results {task_control_dir} from {self.ssh_host} failed:\n{cmd}\n{err}"
+            def error_msg(err):
+                r = f"{task_control_dir}/remote-outputs.txt"
+                return Exception(
+                    f"downloading of task results {r} from {self.ssh_host} failed:\n{cmd}\n{err}"
                 )
-            )
+
+            self._launch_command(cmd, error_msg)
 
     def upload_overrides(self, pipeline, task_conf):
 
@@ -366,26 +371,40 @@ class RemoteSSH(Executor):
             )
 
             self.ensure_connected()
-            self.invoke_remote(f"mkdir -p {r_work_dir}")
-            with self.ssh_client().open_sftp() as sftp:
-                sftp.put(overrides_file_for_host, r_override_file, confirm=False)
 
-                """
-                retries = 0
-                while True:
+            def upload_overrides_broken_by_paramiko_bug():
+                self.invoke_remote(f"mkdir -p {r_work_dir}")
+                with self.ssh_client().open_sftp() as sftp:
+                    sftp.put(overrides_file_for_host, r_override_file, confirm=False)
+
+            def upload_overrides():
+
+                def lines_in_overrides_file():
+                    yield f"mkdir -p {r_work_dir}"
+                    yield f"echo '{bash_shebang()}' > {r_override_file}"
+                    if remote_pipeline_code_dir is not None:
+                        yield f'echo "export __pipeline_code_dir={remote_pipeline_code_dir}" >> {r_override_file}'
+                    if remote_containers_dir is not None:
+                        yield f'echo "export __containers_dir={remote_containers_dir}" >> {r_override_file}'
+
+                    yield f"chmod u+x {r_override_file}"
+
+                for i in range(1, 3):
                     try:
-                        sftp.put(overrides_file_for_host, r_override_file, confirm=False)
+                        self.invoke_remote("pwd")
                         break
-                    except IOError as ex:
-                        time.sleep(3)
-                        retries += 1
-                        logger.warning(f"ssh channel problem {ex}")
-                        if retries >= 3:
+                    except Exception as ex:
+                        if i >= 3:
                             raise ex
-                """
+                        else:
+                            time.sleep(2)
 
-                self.set_remote_overrides_uploaded()
+                remote_cmd = " && ".join(lines_in_overrides_file())
+                self.invoke_remote(remote_cmd)
 
+            upload_overrides()
+
+            self.set_remote_overrides_uploaded()
 
     """
         Fetches log lines and history.txt for all tasks, done once every janitor run, instead of before each task
