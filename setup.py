@@ -17,7 +17,7 @@ extra_requirements = [
 
 setup(
     name='dry_pipe',
-    version='0.2.3',
+    version='0.2.4',
     packages=['dry_pipe'],
     install_requires=minimal_requirements,
     extras_require={"full": extra_requirements},
