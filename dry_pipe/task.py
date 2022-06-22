@@ -244,78 +244,70 @@ class Task:
             #    return self.container.prefix_env_var(name)
             return name
 
-        def _gen_task_env_vars():
+        def abs_from_pipeline_instance_dir(p):
+            return f"$__pipeline_instance_dir/{p}"
 
-            def abs_from_pipeline_instance_dir(p):
-                return f"$__pipeline_instance_dir/{p}"
+        yield "__control_dir", abs_from_pipeline_instance_dir(f"{self.control_dir()}")
+        yield "__work_dir", abs_from_pipeline_instance_dir(f"{self.work_dir()}")
+        yield "__pipeline_instance_name", os.path.basename(self.pipeline_instance.pipeline_instance_dir)
 
-            yield "__control_dir", abs_from_pipeline_instance_dir(f"{self.control_dir()}")
-            yield "__work_dir", abs_from_pipeline_instance_dir(f"{self.work_dir()}")
-            yield "__pipeline_instance_name", os.path.basename(self.pipeline_instance.pipeline_instance_dir)
+        #if isinstance(self.executer, Slurm):
+        #    yield "__is_slurm", "True"
 
-            #if isinstance(self.executer, Slurm):
-            #    yield "__is_slurm", "True"
+        if self.task_conf.uses_singularity():
+            yield "__is_singularity", "True"
+            #yield "__container_image", self.container.image_path
 
-            if self.task_conf.uses_singularity():
-                yield "__is_singularity", "True"
-                #yield "__container_image", self.container.image_path
+            #if self.container.binds:
+            #    binds = ",".join([
+            #        f"{in_dir}={out_dir}"
+            #        for in_dir, out_dir in self.container.binds.items()
+            #    ])
+            #    yield "SINGULARITY_BIND", binds
 
-                #if self.container.binds:
-                #    binds = ",".join([
-                #        f"{in_dir}={out_dir}"
-                #        for in_dir, out_dir in self.container.binds.items()
-                #    ])
-                #    yield "SINGULARITY_BIND", binds
+        yield "__task_key", self.key
+        yield "__scratch_dir", self.v_exp_scratch_dir()
+        yield "__output_var_file", self.v_exp_output_var_file()
+        yield "__sig_dir", "out_sigs",
+        yield "__out_log", self.v_exp_out_log()
+        yield "__err_log", self.v_exp_err_log()
+        yield "__pid_file_glob_matcher", self.v_exp_pid_file_glob_matcher()
 
-            yield "__task_key", self.key
-            yield "__scratch_dir", self.v_exp_scratch_dir()
-            yield "__output_var_file", self.v_exp_output_var_file()
-            yield "__sig_dir", "out_sigs",
-            yield "__out_log", self.v_exp_out_log()
-            yield "__err_log", self.v_exp_err_log()
-            yield "__pid_file_glob_matcher", self.v_exp_pid_file_glob_matcher()
+        out_files = []
 
-            out_files = []
+        for k, v in self.out.produces.items():
+            if isinstance(v, ProducedFile):
+                out_files.append(abs_from_pipeline_instance_dir(v.absolute_path(self)))
+                if collect_deps_and_outputs_func is not None:
+                    collect_deps_and_outputs_func(None, v.absolute_path(self))
+            elif isinstance(v, OutFileSet):
+                if collect_deps_and_outputs_func is not None:
+                    collect_deps_and_outputs_func(None, os.path.join(self.work_dir(), v.file_set.glob_pattern))
+                yield "__fileset_to_sign", f"$__work_dir/{v.file_set.glob_pattern}"
 
-            for k, v in self.out.produces.items():
-                if isinstance(v, ProducedFile):
-                    out_files.append(abs_from_pipeline_instance_dir(v.absolute_path(self)))
-                    if collect_deps_and_outputs_func is not None:
-                        collect_deps_and_outputs_func(None, v.absolute_path(self))
-                elif isinstance(v, OutFileSet):
-                    if collect_deps_and_outputs_func is not None:
-                        collect_deps_and_outputs_func(None, os.path.join(self.work_dir(), v.file_set.glob_pattern))
-                    yield "__fileset_to_sign", f"$__work_dir/{v.file_set.glob_pattern}"
+        yield "__file_list_to_sign", ",".join(out_files)
 
-            yield "__file_list_to_sign", ",".join(out_files)
+        for k, v in self.vals.items():
+            yield mangle_var_name(k), v.serialized_value()
 
-            for k, v in self.vals.items():
-                yield mangle_var_name(k), v.serialized_value()
+        for k, v in self.pre_existing_files.items():
+            yield mangle_var_name(k), abs_from_pipeline_instance_dir(v.absolute_path(self))
 
-            for k, v in self.pre_existing_files.items():
+        for k, v in self.out.produces.items():
+            if isinstance(v, ProducedFile):
                 yield mangle_var_name(k), abs_from_pipeline_instance_dir(v.absolute_path(self))
 
-            for k, v in self.out.produces.items():
-                if isinstance(v, ProducedFile):
-                    yield mangle_var_name(k), abs_from_pipeline_instance_dir(v.absolute_path(self))
+        for upstream_task, upstream_input_files, upstream_input_vars in self.upstream_deps_iterator():
+            for input_file in upstream_input_files:
 
-            for upstream_task, upstream_input_files, upstream_input_vars in self.upstream_deps_iterator():
-                for input_file in upstream_input_files:
+                if collect_deps_and_outputs_func is not None:
+                    collect_deps_and_outputs_func(input_file.produced_file.absolute_path(upstream_task), None)
 
-                    if collect_deps_and_outputs_func is not None:
-                        collect_deps_and_outputs_func(input_file.produced_file.absolute_path(upstream_task), None)
+                yield mangle_var_name(input_file.var_name_in_consuming_task), \
+                      abs_from_pipeline_instance_dir(input_file.produced_file.absolute_path(upstream_task))
 
-                    yield mangle_var_name(input_file.var_name_in_consuming_task), \
-                          abs_from_pipeline_instance_dir(input_file.produced_file.absolute_path(upstream_task))
-
-                for k, v in upstream_task.resolve_output_vars_for_consuming_task(self):
-                    yield mangle_var_name(k), v
-
-            for k, m in self.task_matchers.items():
-                yield k, abs_from_pipeline_instance_dir(f"publish/{m.task_keys_glob_pattern}")
-                yield f"__task_matcher_{k}", abs_from_pipeline_instance_dir(f".drypipe/*/{m.task_keys_glob_pattern}")
-
-        return _gen_task_env_vars()
+            for k, v in upstream_task.resolve_output_vars_for_consuming_task(self):
+                yield mangle_var_name(k), v
 
     def read_out_signatures_file_into_dict(self):
         def d():

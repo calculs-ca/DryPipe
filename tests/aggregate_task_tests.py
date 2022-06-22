@@ -48,12 +48,6 @@ class AggregateTaskTests(unittest.TestCase):
 
         self.assertEqual(expected_agg_result, 20)
 
-        self.assertEqual(1, sum([
-            1
-            for line in test_helpers.load_file_as_string(agg_task.v_abs_task_env_file()).split("\n")
-            if line.startswith("export all_work_chunk_tasks_outputs=$__pipeline_instance_dir/publish/work_chunk.*")
-        ]))
-
 
     def test_launch_watch_and_launch_agg_task(self):
 

@@ -87,17 +87,17 @@ def correct_timestamps_in_task_history(dsl):
 
     yield s1
 
-    yield dsl.task(
-        "sleep2_3"
-    ).consumes(
-        s1
-    ).produces(
-        start_t_2=dsl.var(int),
-        end_t_2=dsl.var(int),
-        start_t_3=dsl.var(int),
-        end_t_3=dsl.var(int)
-    ).calls(
-        do_sleep2
-    ).calls(
-        do_sleep3
-    )()
+    for _ in dsl.with_completed_tasks(s1):
+
+        yield dsl.task(
+            "sleep2_3"
+        ).produces(
+            start_t_2=dsl.var(int),
+            end_t_2=dsl.var(int),
+            start_t_3=dsl.var(int),
+            end_t_3=dsl.var(int)
+        ).calls(
+            do_sleep2
+        ).calls(
+            do_sleep3
+        )()
