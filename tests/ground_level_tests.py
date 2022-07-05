@@ -122,6 +122,35 @@ class GroundLevelTests(unittest.TestCase):
 
         self.assertTrue(pipeline_instance.tasks["single-task"].get_state().is_failed())
 
+    def test_restart_action(self):
+
+        sandbox = TestSandboxDir(self)
+        pipeline_instance = sandbox.pipeline_instance_from_generator(
+            single_task_pipeline_with_inline_script,
+            env_vars={"PLEASE_CRASH": "single-task"},
+            completed=True,
+            fail_silently=True
+        )
+
+        t = pipeline_instance.tasks["single-task"]
+
+        self.assertTrue(t.get_state().is_failed())
+
+        TaskAction.submit(
+            pipeline_instance.pipeline_instance_dir,
+            t.key,
+            "restart"
+        )
+
+        sandbox.pipeline_instance_from_generator(
+            single_task_pipeline_with_inline_script,
+            env_vars={},
+            completed=True
+        )
+
+        self.assertTrue(t.get_state().is_completed())
+
+
 
 class TaskSignatureTests(unittest.TestCase):
 

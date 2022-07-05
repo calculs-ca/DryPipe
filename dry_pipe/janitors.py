@@ -307,13 +307,19 @@ def _janitor(pipeline_instance, wait_for_completion=False, fail_silently=False, 
                 if task_state.action_if_exists() is None:
                     tasks_completed += 1
 
+    actions_performed = 0
+    for task_action in TaskAction.fetch_all_actions(pipeline_instance.pipeline_instance_dir):
+        actions_performed += 1
+        task_action.do_it(pipeline_instance)
+
     if tasks_total == tasks_completed:
         pipeline_state = pipeline_instance.get_state()
         if not pipeline_state.is_completed():
             pipeline_state.transition_to_completed()
 
     if tasks_total == tasks_completed or tasks_in_non_terminal_states == 0:
-        return work_done, True
+        if actions_performed == 0:
+            return work_done, True
 
     for task_state in TaskState.prepared_task_states(pipeline_instance):
         logger.debug("will queue %s", task_state.control_dir())
@@ -361,9 +367,6 @@ def _janitor(pipeline_instance, wait_for_completion=False, fail_silently=False, 
 
         logger.debug("will transition %s to complete", task_state.control_dir())
         task_state.transition_to_completed(task)
-
-    for task_action in TaskAction.fetch_all_actions(pipeline_instance.pipeline_instance_dir):
-        task_action.do_it(pipeline_instance)
 
     return work_done, False
 
