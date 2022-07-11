@@ -63,7 +63,6 @@ class Task:
 
         self.produces = dict(gen_produced_items_dict())
 
-        self.is_dummy = False
         vals = {}
         pre_existing_files = {}
         input_vars = {}
@@ -78,8 +77,6 @@ class Task:
                     input_vars[k] = iv
                     yield k, iv
                 elif isinstance(v, ProducedFile):
-                    if v.is_dummy:
-                        self.is_dummy = True
                     yield k, v.input_file(k)
                 elif isinstance(v, Val):
                     vals[k] = v
@@ -237,12 +234,42 @@ class Task:
     def uses_singularity(self):
         return self.executer
 
-    def get_env_vars(self, collect_deps_and_outputs_func=None):
+    def _input_meta_data(self):
+        # export __meta_<var-name>="(int|str|float):<producing-task-key>:<name_in_producing_task>"
+        # export __meta_<file-name>="file:<producing-task-key>:<name_in_producing_task>"
+        for _, upstream_input_files, upstream_input_vars in self.upstream_deps_iterator():
 
-        def mangle_var_name(name):
-            #if self.container is not None:
-            #    return self.container.prefix_env_var(name)
-            return name
+            for input_file in upstream_input_files:
+                produced_file = input_file.produced_file
+                yield (
+                    f"__meta_{input_file.var_name_in_consuming_task}",
+                    ":".join([
+                        "file",
+                        produced_file.producing_task.key
+                    ])
+                )
+
+            for input_var in upstream_input_vars:
+                output_var = input_var.output_var
+                yield (
+                    f"__meta_{input_var.var_name_in_consuming_task}",
+                    ":".join([
+                        output_var.type_str(),
+                        output_var.producing_task.key,
+                        output_var.name
+                    ])
+                )
+
+        yield "END_META", "END_META"
+
+    def get_env_vars(self, writer, collect_deps_and_outputs_func=None):
+
+        yield "__task_key", self.key
+
+        for k, v in self._input_meta_data():
+            yield k, v
+
+        writer.write(f". {self.task_conf.python_bin or 'python'} -m dry_pipe.cli import-vars\n")
 
         def abs_from_pipeline_instance_dir(p):
             return f"$__pipeline_instance_dir/{p}"
@@ -265,7 +292,6 @@ class Task:
             #    ])
             #    yield "SINGULARITY_BIND", binds
 
-        yield "__task_key", self.key
         yield "__scratch_dir", self.v_exp_scratch_dir()
         yield "__output_var_file", self.v_exp_output_var_file()
         yield "__sig_dir", "out_sigs",
@@ -277,6 +303,7 @@ class Task:
 
         for k, v in self.out.produces.items():
             if isinstance(v, ProducedFile):
+                yield k, abs_from_pipeline_instance_dir(v.absolute_path(self))
                 out_files.append(abs_from_pipeline_instance_dir(v.absolute_path(self)))
                 if collect_deps_and_outputs_func is not None:
                     collect_deps_and_outputs_func(None, v.absolute_path(self))
@@ -288,14 +315,10 @@ class Task:
         yield "__file_list_to_sign", ",".join(out_files)
 
         for k, v in self.vals.items():
-            yield mangle_var_name(k), v.serialized_value()
+            yield k, v.serialized_value()
 
         for k, v in self.pre_existing_files.items():
-            yield mangle_var_name(k), abs_from_pipeline_instance_dir(v.absolute_path(self))
-
-        for k, v in self.out.produces.items():
-            if isinstance(v, ProducedFile):
-                yield mangle_var_name(k), abs_from_pipeline_instance_dir(v.absolute_path(self))
+            yield k, abs_from_pipeline_instance_dir(v.absolute_path(self))
 
         for upstream_task, upstream_input_files, upstream_input_vars in self.upstream_deps_iterator():
             for input_file in upstream_input_files:
@@ -303,11 +326,11 @@ class Task:
                 if collect_deps_and_outputs_func is not None:
                     collect_deps_and_outputs_func(input_file.produced_file.absolute_path(upstream_task), None)
 
-                yield mangle_var_name(input_file.var_name_in_consuming_task), \
+                yield input_file.var_name_in_consuming_task, \
                       abs_from_pipeline_instance_dir(input_file.produced_file.absolute_path(upstream_task))
 
-            for k, v in upstream_task.resolve_output_vars_for_consuming_task(self):
-                yield mangle_var_name(k), v
+            #for k, v in upstream_task.resolve_output_vars_for_consuming_task(self):
+            #    yield k, v
 
     def read_out_signatures_file_into_dict(self):
         def d():
@@ -516,13 +539,17 @@ class Task:
         sig, write_file_func = self._calc_output_signature()
         write_file_func()
 
+    @staticmethod
+    def iterate_out_vars_from(file):
+        with open(file) as f:
+            for line in f.readlines():
+                var_name, value = line.split("=")
+                yield var_name.strip(), value.strip()
+
     def iterate_out_vars(self):
         of = self.v_abs_output_var_file()
         if os.path.exists(of):
-            with open(of) as f:
-                for line in f.readlines():
-                    var_name, value = line.split("=")
-                    yield var_name.strip(), value.strip()
+            yield from Task.iterate_out_vars_from(of)
 
     def out_vars_by_name(self):
         return dict(self.iterate_out_vars())
@@ -549,8 +576,8 @@ class Task:
             if v is not None:
                 name = consuming_input_var.var_name_in_consuming_task
                 yield name, consuming_input_var.output_var.unformat_for_python(v)
-                if self.has_python_step:
-                    yield f"{name}_python", consuming_input_var.output_var.format_for_python(v)
+                #if self.has_python_step:
+                #    yield f"{name}_python", consuming_input_var.output_var.format_for_python(v)
 
             elif not consuming_input_var.output_var.may_be_none:
                 print("")
@@ -575,8 +602,6 @@ class Task:
             else:
                 raise Exception("collect_deps_and_outputs(None, None)")
 
-        env_vars = list(self.get_env_vars(collect_deps_and_outputs if is_remote else None))
-
         self.write_input_signature()
 
         setenv_file = self.v_abs_task_env_file()
@@ -594,7 +619,7 @@ class Task:
                 f.write(self.task_conf.init_bash_command)
                 f.write("\n")
 
-            for k, v in env_vars:
+            for k, v in self.get_env_vars(f, collect_deps_and_outputs if is_remote else None):
                 f.write(f'export {k}={v}\n')
 
         os.chmod(setenv_file, 0o764)

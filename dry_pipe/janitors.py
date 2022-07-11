@@ -264,6 +264,21 @@ class Janitor:
         self._shutdown = True
 
 
+def _janitor_ng(pipeline_instance):
+
+    pipeline_instance.regen_tasks_if_stale()
+
+    for task in pipeline_instance.tasks:
+
+        task_state = task.get_state()
+
+        if task_state is None:
+            task.create_state_file_and_control_dir()
+            task.serialize()
+
+
+
+
 def _janitor(pipeline_instance, wait_for_completion=False, fail_silently=False, logger=None):
 
     if logger is None:

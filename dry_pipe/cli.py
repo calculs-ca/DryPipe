@@ -7,15 +7,16 @@ import re
 import sys
 import os
 import traceback
+from itertools import groupby
+
 import click
-from dry_pipe import DryPipe
+from dry_pipe import DryPipe, Task
 from dry_pipe.internals import env_from_sourcing
 from dry_pipe.janitors import Janitor
 from dry_pipe.monitoring import fetch_task_groups_stats
 from dry_pipe.pipeline import Pipeline, PipelineInstance
 from dry_pipe.pipeline_state import PipelineState
-from dry_pipe.task_state import NON_TERMINAL_STATES
-
+from dry_pipe.task_state import NON_TERMINAL_STATES, TaskState
 
 
 @click.group()
@@ -411,6 +412,70 @@ def test(ctx, mod_func):
         python_task.func(*test["args"], test=test)
 
 
+def _parse_vars_meta(name_to_meta_dict):
+
+    # export __meta_<var-name>="(int|str|float):<producing-task-key>:<name_in_producing_task>"
+    # export __meta_<file-name>="file:<producing-task-key>:<name_in_producing_task>"
+
+    def gen():
+        for k, v in name_to_meta_dict.items():
+            var_name = k[7:]
+            typez, task_key, name_in_producing_task = v.split(":")
+
+            yield task_key, name_in_producing_task, var_name, typez
+
+    def k(task_key, name_in_producing_task, var_name, typez):
+        return task_key
+
+    for producing_task_key, produced_files_or_vars_meta in groupby(sorted(gen(), key=k), key=k):
+
+        def filter_and_map(condition_on_typez):
+            return [
+                (name_in_producing_task, var_name, typez)
+                for task_key, name_in_producing_task, var_name, typez
+                in produced_files_or_vars_meta
+                if condition_on_typez(typez)
+            ]
+
+        yield producing_task_key, filter_and_map(lambda t: t != "file"), filter_and_map(lambda t: t == "file")
+
+
+@click.command()
+@click.pass_context
+def import_vars(ctx):
+
+    __pipeline_instance_dir = os.environ.get("__pipeline_instance_dir")
+
+    if __pipeline_instance_dir is None:
+        raise Exception("env variable __pipeline_instance_dir not set")
+
+    #__task_key = os.environ.get("__task_key")
+
+    #if __task_key is None:
+    #    raise Exception("env variable __task_key not set")
+
+    for producing_task_key, var_metas, file_metas in _parse_vars_meta({
+        k: v
+        for k, v in os.environ
+        if k.startswith("__meta_")
+    }):
+        task_state = TaskState.from_task_control_dir(__pipeline_instance_dir, producing_task_key)
+
+        if not task_state.is_completed():
+            os.environ["__non_completed_dependent_task"] = producing_task_key
+            return
+
+        out_vars = dict(Task.iterate_out_vars_from(
+            os.path.join(__pipeline_instance_dir, "drypipe", producing_task_key, "output_vars")
+        ))
+
+        for name_in_producing_task, var_name, typez in var_metas:
+            v = out_vars.get(name_in_producing_task)
+            if v is not None:
+                os.environ[var_name] = v
+
+
+
 @click.command()
 @click.pass_context
 @click.argument('mod-func', type=click.STRING)
@@ -566,6 +631,7 @@ def _register_commands():
     cli_group.add_command(run)
     cli_group.add_command(mon)
     cli_group.add_command(prepare)
+    cli_group.add_command(import_vars)
     cli_group.add_command(call)
     cli_group.add_command(test)
     cli_group.add_command(status)

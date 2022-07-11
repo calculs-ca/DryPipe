@@ -147,6 +147,14 @@ class OutputVar:
         self.producing_task = producing_task
         self.may_be_none = may_be_none
 
+    def type_str(self):
+        if self.type == int:
+            return "int"
+        elif self.type == str:
+            return "str"
+        elif self.type == float:
+            return "float"
+
     def format_for_python(self, v):
 
         if self.type == int:
