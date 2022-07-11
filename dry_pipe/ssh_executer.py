@@ -325,18 +325,18 @@ class RemoteSSH(Executor):
 
             self._launch_command(cmd, error_msg)
 
-    def upload_overrides(self, pipeline, task_conf):
+    def upload_overrides(self, pipeline_instance, task_conf):
 
         self.ensure_connected()
 
-        if self.is_remote_overrides_uploaded():
+        if pipeline_instance.is_remote_overrides_uploaded:
             return
 
-        pipeline_instance_dir = pipeline.pipeline_instance_dir
+        pipeline_instance_dir = pipeline_instance.pipeline_instance_dir
         remote_pid_basename = os.path.basename(pipeline_instance_dir)
 
         overrides_file_for_host = os.path.join(
-            pipeline._work_dir,
+            pipeline_instance._work_dir,
             f"pipeline-env-{self.server_connection_key()}.sh"
         )
 
@@ -344,11 +344,13 @@ class RemoteSSH(Executor):
         remote_containers_dir = task_conf.remote_containers_dir
 
         if remote_containers_dir is None:
-            remote_containers_dir = os.path.join(remote_pipeline_code_dir, "containers")
+            if remote_pipeline_code_dir is not None:
+                remote_containers_dir = os.path.join(remote_pipeline_code_dir, "containers")
 
         def gen_remote_overrides():
             yield "__pipeline_code_dir", remote_pipeline_code_dir
-            yield "__containers_dir", remote_containers_dir
+            if remote_containers_dir is not None:
+                yield "__containers_dir", remote_containers_dir
 
         remote_overrides = [
             f"export {k}={v}\n"
@@ -406,7 +408,7 @@ class RemoteSSH(Executor):
 
             upload_overrides()
 
-            self.set_remote_overrides_uploaded()
+            pipeline_instance.set_remote_overrides_uploaded()
 
     """
         Fetches log lines and history.txt for all tasks, done once every janitor run, instead of before each task

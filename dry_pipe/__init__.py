@@ -517,8 +517,19 @@ class TaskConf:
 
             ssh_username, ssh_host = ssh_username_ssh_host.split("@")
 
-            return RemoteSSH(ssh_username, ssh_host, self.remote_base_dir, key_filename,
-                             self.command_before_launch_container)
+            key = f"{ssh_username}@{ssh_host}:{self.remote_base_dir}"
+
+            instance = TaskConf._remote_ssh_executers.get(key)
+
+            if instance is None:
+                instance = RemoteSSH(
+                    ssh_username, ssh_host, self.remote_base_dir, key_filename,
+                    self.command_before_launch_container
+                )
+
+                TaskConf._remote_ssh_executers[key] = instance
+
+            return instance
 
         if self.executer_type == "process":
             if self.is_remote():
