@@ -148,7 +148,7 @@ class RemoteSSH(Executor):
 
         self.ensure_connected()
 
-        remote_pid_basename = os.path.basename(task.pipeline.pipeline_instance_dir)
+        remote_pid_basename = os.path.basename(task.pipeline_instance.pipeline_instance_dir)
 
         #Not called because too slow !
         def fetch_remote_state():
@@ -181,7 +181,7 @@ class RemoteSSH(Executor):
     def _remote_control_dir(self, task):
         return os.path.join(
             self.remote_base_dir,
-            os.path.basename(task.pipeline.pipeline_instance_dir),
+            os.path.basename(task.pipeline_instance.pipeline_instance_dir),
             ".drypipe",
             task.key
         )
