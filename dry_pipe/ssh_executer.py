@@ -468,7 +468,7 @@ class RemoteSSH(Executor):
 
             self.invoke_remote(f"rm {r_control_dir}/state.*", bash_error_ok=True)
 
-            self.invoke_remote(f"touch {r_control_dir}/state.launched.0.0.1")
+            self.invoke_remote(f"touch {r_control_dir}/state.launched.0")
 
             if self.slurm is None:
 
