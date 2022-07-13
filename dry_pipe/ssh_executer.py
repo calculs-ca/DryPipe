@@ -294,7 +294,7 @@ class RemoteSSH(Executor):
 
             self.invoke_remote(f"mkdir -p {self.remote_base_dir}/{remote_pid_basename}")
 
-            cmd = f"{rsync_call} -aRz --partial --recursive --files-from={task_control_dir}/local-deps.txt " + \
+            cmd = f"{rsync_call} -caRz --partial --recursive --files-from={task_control_dir}/local-deps.txt " + \
                   f"{pipeline_instance_dir} {remote_dir}/{remote_pid_basename}"
 
             self._launch_command(
