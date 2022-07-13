@@ -245,7 +245,8 @@ class Task:
                     f"__meta_{input_file.var_name_in_consuming_task}",
                     ":".join([
                         "file",
-                        produced_file.producing_task.key
+                        produced_file.producing_task.key,
+                        produced_file.file_path
                     ])
                 )
 
@@ -269,7 +270,8 @@ class Task:
         for k, v in self._input_meta_data():
             yield k, v
 
-        writer.write(f". {self.task_conf.python_bin or 'python'} -m dry_pipe.cli import-vars\n")
+        gen_input_var_call = f'{self.task_conf.python_bin or "python"} -m dry_pipe.cli gen-input-var-exports'
+        writer.write(f'eval "$({gen_input_var_call})"\n')
 
         def abs_from_pipeline_instance_dir(p):
             return f"$__pipeline_instance_dir/{p}"

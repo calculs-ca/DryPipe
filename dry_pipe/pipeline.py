@@ -243,6 +243,10 @@ class PipelineInstance:
         self._publish_dir = os.path.join(pipeline_instance_dir, "publish")
         self.dag_determining_tasks_ids = set()
         self.tasks = self.pipeline.task_set_generator(self)
+        self.is_remote_overrides_uploaded = False
+
+    def set_remote_overrides_uploaded(self):
+        self.is_remote_overrides_uploaded = True
 
     @staticmethod
     def _hint_file(instance_dir):

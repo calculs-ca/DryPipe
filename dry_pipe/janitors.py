@@ -288,6 +288,9 @@ def _janitor(pipeline_instance, wait_for_completion=False, fail_silently=False, 
 
     pipeline_instance.regen_tasks_if_stale()
 
+    for remote_executor, task_conf in pipeline_instance.remote_executors_with_task_confs():
+        remote_executor.upload_overrides(pipeline_instance, task_conf)
+
     work_done = 0
     tasks_total = 0
     tasks_completed = 0
@@ -387,10 +390,6 @@ def _janitor(pipeline_instance, wait_for_completion=False, fail_silently=False, 
 
 
 def _upload_janitor(pipeline, logger):
-
-    for remote_executor, task_conf in pipeline.remote_executors_with_task_confs():
-        remote_executor.upload_overrides(pipeline, task_conf)
-        #remote_executor.rsync_remote_code_dir_if_applies(pipeline, task_conf)
 
     work_done = 0
 

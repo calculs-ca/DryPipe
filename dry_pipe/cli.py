@@ -424,8 +424,8 @@ def _parse_vars_meta(name_to_meta_dict):
 
             yield task_key, name_in_producing_task, var_name, typez
 
-    def k(task_key, name_in_producing_task, var_name, typez):
-        return task_key
+    def k(t):
+        return t[0]
 
     for producing_task_key, produced_files_or_vars_meta in groupby(sorted(gen(), key=k), key=k):
 
@@ -442,7 +442,7 @@ def _parse_vars_meta(name_to_meta_dict):
 
 @click.command()
 @click.pass_context
-def import_vars(ctx):
+def gen_input_var_exports(ctx):
 
     __pipeline_instance_dir = os.environ.get("__pipeline_instance_dir")
 
@@ -456,23 +456,23 @@ def import_vars(ctx):
 
     for producing_task_key, var_metas, file_metas in _parse_vars_meta({
         k: v
-        for k, v in os.environ
+        for k, v in os.environ.items()
         if k.startswith("__meta_")
     }):
         task_state = TaskState.from_task_control_dir(__pipeline_instance_dir, producing_task_key)
 
         if not task_state.is_completed():
-            os.environ["__non_completed_dependent_task"] = producing_task_key
+            print(f"export __non_completed_dependent_task={producing_task_key}")
             return
 
         out_vars = dict(Task.iterate_out_vars_from(
-            os.path.join(__pipeline_instance_dir, "drypipe", producing_task_key, "output_vars")
+            os.path.join(__pipeline_instance_dir, ".drypipe", producing_task_key, "output_vars")
         ))
 
         for name_in_producing_task, var_name, typez in var_metas:
             v = out_vars.get(name_in_producing_task)
             if v is not None:
-                os.environ[var_name] = v
+                print(f"export {var_name}={v}")
 
 
 
@@ -631,7 +631,7 @@ def _register_commands():
     cli_group.add_command(run)
     cli_group.add_command(mon)
     cli_group.add_command(prepare)
-    cli_group.add_command(import_vars)
+    cli_group.add_command(gen_input_var_exports)
     cli_group.add_command(call)
     cli_group.add_command(test)
     cli_group.add_command(status)

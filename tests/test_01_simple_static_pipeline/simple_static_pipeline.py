@@ -1,3 +1,4 @@
+import os
 
 from dry_pipe import DryPipe
 
@@ -22,9 +23,11 @@ def simple_static_pipeline(dsl):
         key="report",
     ).consumes(
         blast_result=blast.out.blast_out,
-        v1_from_blast=blast.out.v1
+        v1_from_blast=blast.out.v1,
+        v2_from_blast=blast.out.v2,
     ).produces(
         fancy_report=dsl.file("fancy_report.txt"),
+        var_dump=dsl.file("var_dump.txt"),
         x=dsl.var(int),
         s1=dsl.var(str),
         s2=dsl.var(type=str, may_be_none=True)
@@ -67,9 +70,9 @@ def simple_static_pipeline(dsl):
     )()
 
 
-def run_and_validate_pipeline_execution(pipeline, test_case):
+def run_and_validate_pipeline_execution(pipeline_instance, test_case):
 
-    blast, report_task, python_much_fancier_report, python_much_much_fancier_report = pipeline.tasks
+    blast, report_task, python_much_fancier_report, python_much_much_fancier_report = pipeline_instance.tasks
 
     d = list(blast.iterate_unsatisfied_deps())
     test_case.assertEqual(len(d), 0)
@@ -82,21 +85,37 @@ def run_and_validate_pipeline_execution(pipeline, test_case):
 
     test_case.assertEqual(task, blast)
     test_case.assertEqual(len(missing_file_deps), 1)
-    test_case.assertEqual(len(missing_var_deps), 1)
+    test_case.assertEqual(len(missing_var_deps), 2)
 
-    pipeline.run_sync()
+    pipeline_instance.run_sync()
 
-    validate_pipeline_execution(pipeline, test_case)
+    validate_pipeline_execution(pipeline_instance, test_case)
 
 
-def validate_pipeline_execution(pipeline, test_case):
+def validate_pipeline_execution(pipeline_instance, test_case):
 
-    blast, report_task, python_much_fancier_report, python_much_much_fancier_report = pipeline.tasks
+    blast, report_task, python_much_fancier_report, python_much_much_fancier_report = pipeline_instance.tasks
 
     for t in [blast, report_task, python_much_fancier_report, python_much_much_fancier_report]:
         state = t.get_state()
         if not state.is_completed():
             raise Exception(f"expected {t} to be completed, but is {state}")
+
+    with open(os.path.join(
+        pipeline_instance.pipeline_instance_dir,
+        report_task.out.var_dump.absolute_path(report_task)
+    )) as f:
+        for line in f.read().split("\n"):
+            if line.startswith("v1_for_validation:"):
+                v1 = line.split(":")[1]
+            if line.startswith("v2_for_validation:"):
+                v2 = line.split(":")[1]
+
+        test_case.assertEqual(int(v1), 1111)
+        test_case.assertEqual(float(v2), 3.14)
+
+    v1_for_validation: 1111
+    v2_for_validation: 3.14
 
     test_case.assertEqual(
         "9a380a5deaa3a091368d3a07b722d5362328a07b",
@@ -104,7 +123,7 @@ def validate_pipeline_execution(pipeline, test_case):
     )
 
     test_case.assertEqual(
-        "a336aef80f2358c60f16e1e5a10839b59a5e2e42",
+        "e90c0ae0e6cb2d66a00fce87646625d32f9d614d",
         report_task.output_signature()
     )
 
