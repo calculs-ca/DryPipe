@@ -338,7 +338,7 @@ def watch(ctx, pipeline, env, instances_dir):
 
     janitor = Janitor(pipeline, pipeline_instances_dir=instances_dir)
 
-    thread = janitor.start()
+    thread = janitor.start(stay_alive_when_no_more_work=True)
 
     janitor.start_remote_janitors()
 
