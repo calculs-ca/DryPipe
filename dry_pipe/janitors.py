@@ -160,7 +160,7 @@ class Janitor:
                     else:
 
                         if no_more_work and not stay_alive_when_no_more_work:
-                            daemon_thread_helper.logger.debug("no more work")
+                            daemon_thread_helper.logger.info("no more work")
                             yield False
                         else:
                             strike = 0
@@ -169,12 +169,14 @@ class Janitor:
                     strike += 1
 
                 if strike >= 4 and sync_mode:
-                    yield False
+                    if not stay_alive_when_no_more_work:
+                        yield False
 
                 daemon_thread_helper.end_round()
 
                 if active_pipelines == 0 and sync_mode:
-                    yield False
+                    if not stay_alive_when_no_more_work:
+                        yield False
 
 #                if active_pipelines == 1 and no_more_work:
 #                    break
