@@ -114,9 +114,6 @@ def validate_pipeline_execution(pipeline_instance, test_case):
         test_case.assertEqual(int(v1), 1111)
         test_case.assertEqual(float(v2), 3.14)
 
-    v1_for_validation: 1111
-    v2_for_validation: 3.14
-
     test_case.assertEqual(
         "9a380a5deaa3a091368d3a07b722d5362328a07b",
         blast.output_signature()

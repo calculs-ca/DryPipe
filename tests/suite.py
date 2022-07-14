@@ -18,6 +18,12 @@ from test_regressions import RegressionTests
 from test_remote_tasks import RemoteTaskTests1, RemoteTaskTests2, RemoteTaskTestsWithSlurm
 
 
+def signature_tests():
+    return [
+        InOutHashingTests
+    ]
+
+
 def low_level_tests():
     return [
         BaseFuncTests,
@@ -26,7 +32,7 @@ def low_level_tests():
         TaskSignatureTests,
         GroundLevelTests,
         AggregateTaskTests,
-        InOutHashingTests,
+        # InOutHashingTests,
         PipelineCompositionTests
     ]
 
@@ -39,7 +45,7 @@ def quick_sanity_tests():
         GroundLevelTests,
         BaseFuncTests,
         AggregateTaskTests,
-        InOutHashingTests,
+        # InOutHashingTests,
         PipelineCompositionTests
     ]
 
@@ -60,6 +66,7 @@ def exhaustive_1():
         BaseTests,
         NonTrivialPipelineLocalWithSingularityContainerTests
     ]
+
 
 def exhaustive_2():
     return exhaustive_1() + remote_tests()

@@ -1,5 +1,6 @@
 import glob
 import inspect
+import json
 import os
 import re
 import subprocess
@@ -183,8 +184,8 @@ class DryPipeDsl:
         return FileSet(glob_pattern)
 
     def matching_tasks(self, task_keys_glob_pattern):
-
-        return TaskMatcher(task_keys_glob_pattern)
+        raise Exception(f"deprecated")
+        #return TaskMatcher(task_keys_glob_pattern)
 
     def task(self,
              key,
@@ -212,7 +213,7 @@ class DryPipeDsl:
 class TaskBuilder:
 
     def __init__(self, key, executer, _consumes={}, _produces={},
-                 dsl=None, task_steps=[], dependent_scripts=[],
+                 dsl=None, task_steps=[],
                  _upstream_task_completion_dependencies=None, _props=None, task_conf=None, pipeline_instance=None):
 
         self.key = key
@@ -223,7 +224,6 @@ class TaskBuilder:
         self._upstream_task_completion_dependencies = _upstream_task_completion_dependencies or []
         self._produces = _produces
         self.task_steps = task_steps
-        self.dependent_scripts = dependent_scripts
         self.task_conf = task_conf
         self.pipeline_instance = pipeline_instance
 
@@ -398,7 +398,8 @@ class TaskConf:
             remote_base_dir=None,
             remote_containers_dir=None,
             init_bash_command=None,
-            python_interpreter_switches=["-u"]
+            python_interpreter_switches=["-u"],
+            fields_from_json=None
     ):
 
         if executer_type is None:
@@ -416,6 +417,10 @@ class TaskConf:
         if executer_type == "process" and slurm_account is not None:
             raise Exception(f"can't specify slurm_account when executer_type is not 'slurm'")
 
+        if fields_from_json is not None:
+            self.__dict__.update(fields_from_json)
+            return
+
         self.executer_type = executer_type
         self.ssh_specs = ssh_specs
         self.slurm_account = slurm_account
@@ -428,6 +433,21 @@ class TaskConf:
         self.remote_containers_dir = remote_containers_dir
         self.init_bash_command = init_bash_command
         self.python_interpreter_switches = python_interpreter_switches
+
+    def as_json(self):
+        return dict(
+            (key, value)
+            for key, value in self.__dict__.items() if not callable(value) and not key.startswith('__')
+        )
+
+    @staticmethod
+    def from_json(json_dict):
+        return TaskConf(fields_from_json=json_dict)
+
+    @staticmethod
+    def from_json_file(json_file):
+        with open(json_file) as f:
+            return TaskConf.from_json(json.loads(f.read()))
 
     def is_remote(self):
         return self.ssh_specs is not None

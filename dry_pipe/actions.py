@@ -121,13 +121,11 @@ class TaskAction:
     def unpause(self):
         self.delete()
 
-    def do_it(self, pipeline):
+    def do_it(self, task, task_state):
 
         if self.action_name == "pause":
             return
 
-        task = pipeline.tasks[self.task_key]
-        task_state = task.get_state()
         executor = task.executer
 
         if self.is_restart():
@@ -152,8 +150,6 @@ class TaskAction:
                 logger.info("will clear state of remote task %s", task.key)
                 executor.clear_remote_task_state(task)
 
-            logger.info("will prepare task %s", task.key)
-            task.prepare()
 
             logger.info("will requeue task %s", task.key)
             task_state.transition_to_queued(increment_retry=False, step=self.step, force=True)

@@ -280,7 +280,7 @@ class RemoteSSH(Executor):
                 lambda err: Exception(f"rsync of remote_pipeline_code_dir failed:\n{cmd}\n{err}")
             )
 
-    def upload_task_inputs(self, task_state, task):
+    def upload_task_inputs(self, task_state):
         with perf_logger_timer("RemoteSSH.upload_task_inputs") as t:
 
             task_control_dir = task_state.control_dir()

@@ -16,7 +16,7 @@ from dry_pipe.janitors import Janitor
 from dry_pipe.monitoring import fetch_task_groups_stats
 from dry_pipe.pipeline import Pipeline, PipelineInstance
 from dry_pipe.pipeline_state import PipelineState
-from dry_pipe.task_state import NON_TERMINAL_STATES, TaskState
+from dry_pipe.task_state import NON_TERMINAL_STATES, TaskState, parse_in_out_meta
 
 
 @click.group()
@@ -412,32 +412,6 @@ def test(ctx, mod_func):
         python_task.func(*test["args"], test=test)
 
 
-def _parse_vars_meta(name_to_meta_dict):
-
-    # export __meta_<var-name>="(int|str|float):<producing-task-key>:<name_in_producing_task>"
-    # export __meta_<file-name>="file:<producing-task-key>:<name_in_producing_task>"
-
-    def gen():
-        for k, v in name_to_meta_dict.items():
-            var_name = k[7:]
-            typez, task_key, name_in_producing_task = v.split(":")
-
-            yield task_key, name_in_producing_task, var_name, typez
-
-    def k(t):
-        return t[0]
-
-    for producing_task_key, produced_files_or_vars_meta in groupby(sorted(gen(), key=k), key=k):
-
-        def filter_and_map(condition_on_typez):
-            return [
-                (name_in_producing_task, var_name, typez)
-                for task_key, name_in_producing_task, var_name, typez
-                in produced_files_or_vars_meta
-                if condition_on_typez(typez)
-            ]
-
-        yield producing_task_key, filter_and_map(lambda t: t != "file"), filter_and_map(lambda t: t == "file")
 
 
 @click.command()
@@ -454,11 +428,15 @@ def gen_input_var_exports(ctx):
     #if __task_key is None:
     #    raise Exception("env variable __task_key not set")
 
-    for producing_task_key, var_metas, file_metas in _parse_vars_meta({
+    for producing_task_key, var_metas, file_metas in parse_in_out_meta({
         k: v
         for k, v in os.environ.items()
         if k.startswith("__meta_")
     }):
+
+        if producing_task_key == "":
+            continue
+
         task_state = TaskState.from_task_control_dir(__pipeline_instance_dir, producing_task_key)
 
         if not task_state.is_completed():

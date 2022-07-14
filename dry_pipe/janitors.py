@@ -1,3 +1,4 @@
+import glob
 import logging
 import os
 import time
@@ -5,7 +6,7 @@ from threading import Thread
 
 import psutil
 
-from dry_pipe import Local
+from dry_pipe import Local, Task
 from dry_pipe.actions import TaskAction
 from dry_pipe.task_state import TaskState, NON_TERMINAL_STATES
 from dry_pipe.utils import send_email_error_report_if_configured
@@ -144,8 +145,10 @@ class Janitor:
 
                     pipeline.init_work_dir()
 
-                    work_done, no_more_work = _janitor(
-                        pipeline, wait_for_completion=sync_mode, logger=daemon_thread_helper.logger,
+                    work_done, no_more_work = _janitor_ng(
+                        pipeline,
+                        wait_for_completion=sync_mode,
+                        logger=daemon_thread_helper.logger,
                         fail_silently=fail_silently
                     )
 
@@ -264,19 +267,54 @@ class Janitor:
         self._shutdown = True
 
 
-def _janitor_ng(pipeline_instance):
+def _janitor_ng(pipeline_instance, wait_for_completion=False, fail_silently=False, logger=None):
 
     pipeline_instance.regen_tasks_if_stale()
+
+    work_done = 0
 
     for task in pipeline_instance.tasks:
 
         task_state = task.get_state()
 
         if task_state is None:
+            work_done += 1
             task.create_state_file_and_control_dir()
-            task.serialize()
+            task.prepare()
+            # assert task.get_state().is_waiting_for_deps()
 
+    for task_state in TaskState.fetch_all(pipeline_instance.pipeline_instance_dir):
 
+        task = Task.load_from_task_state(task_state)
+        action = task_state.action_if_exists()
+
+        if action is not None:
+            work_done += 1
+            action.do_it(task, task_state)
+
+        if task_state.is_completed() or task_state.is_failed():
+            continue
+        elif task_state.is_completed_unsigned():
+            work_done += 1
+            task_state.transition_to_completed(Task.load_from_task_state(task_state))
+        else:
+
+            if task_state.is_waiting_for_deps():
+                if task_state.is_all_deps_ready():
+                    work_done += 1
+                    task_state.transition_to_prepared(None)
+                    task_state = task.get_state()
+                    if task.is_remote():
+                        work_done += 1
+                        task_state.transition_to_queued_remote_upload()
+                    else:
+                        work_done += 1
+                        task_state.transition_to_queued()
+            elif task_state.is_queued():
+                work_done += 1
+                task_state.transition_to_launched(task, wait_for_completion, fail_silently=fail_silently)
+
+    return work_done, work_done == 0
 
 
 def _janitor(pipeline_instance, wait_for_completion=False, fail_silently=False, logger=None):
@@ -396,7 +434,7 @@ def _upload_janitor(pipeline, logger):
     for task_state in TaskState.queued_for_upload_task_states(pipeline):
         task_state = task_state.transition_to_upload_started()
         task = pipeline.tasks[task_state.task_key]
-        task.executer.upload_task_inputs(task_state, task)
+        task.executer.upload_task_inputs(task_state)
         task_state = task_state.transition_to_upload_completed()
         task_state.transition_to_queued()
 

@@ -290,6 +290,31 @@ class TaskState:
     def __repr__(self):
         return self.base_file_name()
 
+    def gen_meta_dict(self):
+        task_env = os.path.join(self.control_dir(), "task-env.sh")
+
+        def gen():
+            with open(task_env) as f:
+                for line in f.readlines():
+                    if line.startswith("export __meta_"):
+                        yield tuple(line[7:].split("="))
+                    elif line.startswith("export END_META"):
+                        break
+
+        return dict(gen())
+
+    def is_all_deps_ready(self):
+
+        pid = self.pipeline_instance_dir()
+        for task_key, _, _ in parse_in_out_meta(self.gen_meta_dict()):
+            if task_key == "":
+                continue
+            task_state = TaskState.from_task_control_dir(pid, task_key)
+            if not task_state.is_completed():
+                return False
+
+        return True
+
     def pipeline_instance_dir(self):
         return os.path.dirname(os.path.dirname(self.control_dir()))
 
@@ -405,12 +430,12 @@ class TaskState:
         self._transition("waiting-for-deps")
 
     def transition_to_prepared(self, task, force=False):
-        task.prepare()
+        #task.prepare()
         self._transition("prepared", f".{self.step_number()}", force=force)
 
-        task_state = task.get_state()
-        if task.is_remote():
-            task_state.transition_to_queued_remote_upload()
+        #task_state = task.get_state()
+        #if task.is_remote():
+            #task_state.transition_to_queued_remote_upload()
         #else:
         #    task_state.transition_to_queued()
 
@@ -614,3 +639,33 @@ def tail_(filename, lines=20):
             l.decode("utf-8")
             for l in all_read_text.splitlines()[-total_lines_wanted:]
         ]
+
+
+def parse_in_out_meta(name_to_meta_dict):
+
+    # export __meta_<var-name>="(int|str|float):<producing-task-key>:<name_in_producing_task>"
+    # export __meta_<file-name>="file:<producing-task-key>:<name_in_producing_task>"
+
+    #Note: when producing-task-key == "", meta are output values and files
+
+    def gen():
+        for k, v in name_to_meta_dict.items():
+            var_name = k[7:]
+            typez, task_key, name_in_producing_task = v.split(":")
+
+            yield task_key, name_in_producing_task, var_name, typez
+
+    def k(t):
+        return t[0]
+
+    for producing_task_key, produced_files_or_vars_meta in groupby(sorted(gen(), key=k), key=k):
+
+        def filter_and_map(condition_on_typez):
+            return [
+                (name_in_producing_task, var_name, typez)
+                for task_key, name_in_producing_task, var_name, typez
+                in produced_files_or_vars_meta
+                if condition_on_typez(typez)
+            ]
+
+        yield producing_task_key, filter_and_map(lambda t: t != "file"), filter_and_map(lambda t: t == "file")

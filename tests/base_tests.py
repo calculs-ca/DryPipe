@@ -256,7 +256,7 @@ class NonTrivialPipelineLocalWithSingularityContainerTests(WithManyConfigCombina
             task_conf=TaskConf(
                 executer_type="process",
                 container="singularity-test-container.sif",
-                python_bin="/usr/bin/python3.9",
+                #python_bin="/usr/bin/python3",
                 command_before_launch_container=before_execute_bash()
             )
         )

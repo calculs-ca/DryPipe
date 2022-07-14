@@ -2,6 +2,7 @@ import collections
 import datetime
 import glob
 import hashlib
+import json
 import os
 import pathlib
 import shutil
@@ -16,7 +17,7 @@ from dry_pipe.bash import bash_shebang
 from dry_pipe.internals import \
     IndeterminateFile, ProducedFile, Slurm, IncompleteVar, Val, \
     OutputVar, InputFile, InputVar, FileSet, TaskMatcher, OutFileSet, ValidationError, flatten, TaskProps
-from dry_pipe.task_state import TaskState, tail
+from dry_pipe.task_state import TaskState, tail, parse_in_out_meta
 
 
 class Task:
@@ -27,8 +28,28 @@ class Task:
             return task_key
         return task_key.split(".")[0]
 
+    @staticmethod
+    def load_from_task_state(task_state):
+        return Task(None, task_state)
 
-    def __init__(self, task_builder):
+    def __init__(self, task_builder, task_state=None):
+
+        if task_state is not None:
+            self.key = task_state.task_key
+
+            class ShallowPipelineInstance:
+                def __init__(self):
+                    self.pipeline_instance_dir = task_state.pipeline_instance_dir()
+
+            self.pipeline_instance = ShallowPipelineInstance()
+
+            from dry_pipe import TaskConf
+
+            self.task_conf = TaskConf.from_json_file(os.path.join(
+                task_state.control_dir(), "task-conf.json"
+            ))
+            self.executer = self.task_conf.create_executer()
+            return
 
         self.python_bin = None
         self.conda_env = None
@@ -37,7 +58,6 @@ class Task:
         self.task_steps = task_builder.task_steps
         self.executer = task_builder.executer
         self.props = TaskProps(self, task_builder._props)
-        self.dependent_scripts = task_builder.dependent_scripts
         self.upstream_task_completion_dependencies = task_builder._upstream_task_completion_dependencies
         self.produces = task_builder._produces
         self.task_conf = task_builder.task_conf
@@ -261,6 +281,27 @@ class Task:
                     ])
                 )
 
+        for name, produced_item in self.produces.items():
+            if isinstance(produced_item, ProducedFile):
+                rel_path = produced_item.absolute_path(self)
+                yield (
+                    f"__meta_{produced_item.var_name}",
+                    ":".join([
+                        "file",
+                        "",
+                        rel_path
+                    ])
+                )
+            elif isinstance(produced_item, OutputVar):
+                yield (
+                    f"__meta_{name}",
+                    ":".join([
+                        produced_item.type_str(),
+                        "",
+                        produced_item.name
+                    ])
+                )
+
         yield "END_META", "END_META"
 
     def get_env_vars(self, writer, collect_deps_and_outputs_func=None):
@@ -275,6 +316,8 @@ class Task:
 
         def abs_from_pipeline_instance_dir(p):
             return f"$__pipeline_instance_dir/{p}"
+
+        yield "__is_remote", str(self.is_remote())
 
         yield "__control_dir", abs_from_pipeline_instance_dir(f"{self.control_dir()}")
         yield "__work_dir", abs_from_pipeline_instance_dir(f"{self.work_dir()}")
@@ -593,7 +636,7 @@ class Task:
     def prepare(self):
 
         is_remote = self.is_remote()
-        dependent_file_list = self.dependent_scripts + []
+        dependent_file_list = []
         output_file_list = []
 
         def collect_deps_and_outputs(dep_file, output_file):
@@ -604,7 +647,12 @@ class Task:
             else:
                 raise Exception("collect_deps_and_outputs(None, None)")
 
-        self.write_input_signature()
+        #self.write_input_signature()
+
+        task_conf_file = self.v_abs_task_conf_file()
+
+        with open(task_conf_file, "w") as f:
+            f.write(json.dumps(self.task_conf.as_json(), indent=2))
 
         setenv_file = self.v_abs_task_env_file()
 
@@ -895,6 +943,9 @@ class Task:
     def task_env_file(self):
         return os.path.join(self.control_dir(), "task-env.sh")
 
+    def task_conf_file(self):
+        return os.path.join(self.control_dir(), "task-conf.json")
+
     def pid_file(self, pid):
         return os.path.join(self.control_dir(), f"{pid}.pid")
 
@@ -1042,12 +1093,21 @@ class Task:
 
     def verify_output_files_produced(self):
 
-        for name, produced_file in self.produces.items():
-            if isinstance(produced_file, ProducedFile):
-                rel_path = produced_file.absolute_path(self)
-                file = self.abs_from_pipeline_instance_dir(rel_path)
-                if not os.path.exists(file):
-                    raise Exception(f"{self} did not produce file '{name}':'{file}' as specified.")
+        if False:
+            for name, produced_file in self.produces.items():
+                if isinstance(produced_file, ProducedFile):
+                    rel_path = produced_file.absolute_path(self)
+                    file = self.abs_from_pipeline_instance_dir(rel_path)
+                    if not os.path.exists(file):
+                        raise Exception(f"{self} did not produce file '{name}':'{file}' as specified.")
+
+        for producing_task_key, var_metas, file_metas in parse_in_out_meta(self.get_state().gen_meta_dict()):
+            if producing_task_key != "":
+                continue
+
+            for name_in_producing_task, var_name, typez in file_metas:
+                print("!")
+
 
     def reset_logs(self):
 

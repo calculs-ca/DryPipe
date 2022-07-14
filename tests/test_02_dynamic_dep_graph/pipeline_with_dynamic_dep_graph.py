@@ -45,10 +45,15 @@ def aggregate_func(__work_dir, grandiose_report):
 
     d = os.path.dirname(os.path.dirname(__work_dir))
 
+    print(f"s1:{__work_dir}")
+    print(f"s2:{d}")
+
     def results():
         for var_file in glob.glob(f"{d}/.drypipe/work_chunk.*/output_vars"):
+            print("s2")
             with open(var_file) as f:
                 def var_dict():
+                    print("s3")
                     for line in f.readlines():
                         line = line.strip()
                         if line != "":

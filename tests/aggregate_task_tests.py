@@ -14,9 +14,6 @@ from test_utils import TestSandboxDir
 
 class AggregateTaskTests(unittest.TestCase):
 
-    def test_agg_task_with_matching_tasks_pipeline(self):
-        self._validate_agg_task_pipeline(all_pipeline_tasks)
-
     def test_agg_task_with_completed_matching_tasks_pipeline(self):
 
         d = TestSandboxDir(self)
@@ -35,12 +32,12 @@ class AggregateTaskTests(unittest.TestCase):
         )
 
 
-    def _validate_agg_task_pipeline(self, agg_pipeline_generator):
+    def deprecated_test_agg_task_with_matching_tasks_pipeline(self):
 
         d = TestSandboxDir(self)
 
         pipeline_instance = d.pipeline_instance_from_generator(
-            agg_pipeline_generator, completed=True
+            all_pipeline_tasks, completed=True
         )
 
         agg_task = pipeline_instance.tasks["aggregate_all"]
@@ -49,7 +46,7 @@ class AggregateTaskTests(unittest.TestCase):
         self.assertEqual(expected_agg_result, 20)
 
 
-    def test_launch_watch_and_launch_agg_task(self):
+    def deprecated_test_launch_watch_and_launch_agg_task(self):
 
         d = TestSandboxDir(self)
         pipeline = d.pipeline_instance_from_generator(pipeline_with_dynamic_dep_graph.all_pipeline_tasks)
@@ -67,7 +64,9 @@ class AggregateTaskTests(unittest.TestCase):
     def test_agg_task_pipeline_graph(self):
 
         d = TestSandboxDir(self)
-        pipeline = d.pipeline_instance_from_generator(pipeline_with_dynamic_dep_graph.all_pipeline_tasks)
+        pipeline = d.pipeline_instance_from_generator(
+            pipeline_with_dynamic_dep_graph.all_pipeline_tasks_with_wait_for_completion
+        )
 
         pipeline.run_sync()
 

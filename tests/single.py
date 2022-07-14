@@ -4,8 +4,7 @@ from unittest import TextTestRunner, TestSuite, defaultTestLoader
 from suite import exhaustive_3
 
 
-test_func = "test_state_history_tracking"
-
+test_func = "test_run_two_instances_until_done"
 
 
 if __name__ == '__main__':
