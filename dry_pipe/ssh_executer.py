@@ -361,6 +361,7 @@ class RemoteSSH(Executor):
         ]
 
         if len(remote_overrides) == 0:
+            logger_ssh.info(f"no overrides to upload")
             return
 
         with open(overrides_file_for_host, "w") as _f:
@@ -384,6 +385,7 @@ class RemoteSSH(Executor):
                     for i in range(1, 3):
                         try:
                             sftp.put(overrides_file_for_host, r_override_file, confirm=True)
+                            logger_ssh.info(f"overrides loaded: '%s'", r_override_file)
                             break
                         except Exception as ex:
                             if i >= 3:
