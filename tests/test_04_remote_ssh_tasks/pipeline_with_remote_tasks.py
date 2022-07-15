@@ -64,8 +64,9 @@ def ensure_remote_dirs_dont_exist(pipeline_instance):
 
     remote_dir_for_test = pipeline_instance.instance_dir_base_name()
 
-    for rex, task_conf in pipeline_instance.remote_executors_with_task_confs():
+    for task_conf in pipeline_instance.remote_sites_task_confs():
         complete_remote_dir_for_test = f"{task_conf.remote_base_dir}/{remote_dir_for_test}"
+        rex = task_conf.create_executer()
         rex.ensure_connected()
         rex.ssh_client().exec_command(f"rm -Rf {complete_remote_dir_for_test}")
 

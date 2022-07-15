@@ -200,7 +200,6 @@ class DryPipeDsl:
 
         return TaskBuilder(
             key=key,
-            executer=task_conf.create_executer(),
             _produces={},
             _consumes={},
             dsl=self,
@@ -211,13 +210,12 @@ class DryPipeDsl:
 
 class TaskBuilder:
 
-    def __init__(self, key, executer, _consumes={}, _produces={},
+    def __init__(self, key, _consumes={}, _produces={},
                  dsl=None, task_steps=[], dependent_scripts=[],
                  _upstream_task_completion_dependencies=None, _props=None, task_conf=None, pipeline_instance=None):
 
         self.key = key
         self.dsl = dsl
-        self.executer = executer
         self._props = _props or {}
         self._consumes = _consumes
         self._upstream_task_completion_dependencies = _upstream_task_completion_dependencies or []
@@ -429,11 +427,34 @@ class TaskConf:
         self.init_bash_command = init_bash_command
         self.python_interpreter_switches = python_interpreter_switches
 
+        if self.ssh_specs is not None:
+            ssh_specs_parts = self.ssh_specs.split(":")
+            self.key_filename = None
+            if len(ssh_specs_parts) == 2:
+                ssh_username_ssh_host, key_filename = ssh_specs_parts
+            elif len(ssh_specs_parts) == 1:
+                ssh_username_ssh_host = ssh_specs_parts[0]
+                self.key_filename = "~/.ssh/id_rsa"
+            else:
+                raise Exception(f"bad ssh_specs format: {self.ssh_specs}")
+
+            self.ssh_username, self.ssh_host = ssh_username_ssh_host.split("@")
+
+            self.remote_site_key = ":".join([
+                self.ssh_username,
+                self.ssh_host,
+                self.remote_base_dir
+            ])
+
+
     def is_remote(self):
         return self.ssh_specs is not None
 
     def is_slurm(self):
         return self.executer_type == "slurm"
+
+    def is_process(self):
+        return self.executer_type == "process"
 
     def has_container(self):
         return self.container is not None
@@ -509,30 +530,10 @@ class TaskConf:
             if self.remote_base_dir is None:
                 raise Exception("A task_conf with ssh must have remote_base_dir not None")
 
-            ssh_specs_parts = self.ssh_specs.split(":")
-            if len(ssh_specs_parts) == 2:
-                ssh_username_ssh_host, key_filename = ssh_specs_parts
-            elif len(ssh_specs_parts) == 1:
-                ssh_username_ssh_host = ssh_specs_parts[0]
-                key_filename = "~/.ssh/id_rsa"
-            else:
-                raise Exception(f"bad ssh_specs format: {self.ssh_specs}")
-
-            ssh_username, ssh_host = ssh_username_ssh_host.split("@")
-
-            key = f"{ssh_username}@{ssh_host}:{self.remote_base_dir}"
-
-            instance = TaskConf._remote_ssh_executers.get(key)
-
-            if instance is None:
-                instance = RemoteSSH(
-                    ssh_username, ssh_host, self.remote_base_dir, key_filename,
-                    self.command_before_launch_container
-                )
-
-                TaskConf._remote_ssh_executers[key] = instance
-
-            return instance
+            return RemoteSSH(
+                self.ssh_username, self.ssh_host, self.remote_base_dir, self.key_filename,
+                self.command_before_launch_container
+            )
 
         if self.executer_type == "process":
             if self.is_remote():

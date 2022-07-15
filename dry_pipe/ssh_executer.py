@@ -47,10 +47,6 @@ class RemoteSSH(Executor):
     def is_remote(self):
         return True
 
-    def __str__(self):
-
-        return f"{self.ssh_username}@{self.ssh_host}:{self.remote_base_dir}"
-
     def user_at_host(self):
         return f"{self.ssh_username}@{self.ssh_host}"
 
@@ -95,7 +91,7 @@ class RemoteSSH(Executor):
                     self.ssh_host,
                     username=self.ssh_username,
                     key_filename=os.path.expanduser(self.key_filename)
-                        if self.key_filename.startswith("~")
+                        if self.key_filename is not None and self.key_filename.startswith("~")
                         else self.key_filename,
                     timeout=SSH_TIMEOUT
                 )

@@ -5,7 +5,6 @@ from threading import Thread
 
 import psutil
 
-from dry_pipe import Local
 from dry_pipe.actions import TaskAction
 from dry_pipe.task_state import TaskState, NON_TERMINAL_STATES
 from dry_pipe.utils import send_email_error_report_if_configured
@@ -31,8 +30,8 @@ class DaemonThreadHelper:
         self.sleep_time = min_sleep
         self.has_worked_in_round = False
         self.pipelines = pipelines
-
         self.logger = logger
+        self.ssh_executer_per_remote_site_key = {}
 
     def iterate_on_pipelines(self):
 
@@ -91,6 +90,21 @@ class DaemonThreadHelper:
 
         time.sleep(DaemonThreadHelper.SLEEP_SECONDS_AFTER_DAEMON_FAIL)
 
+    def get_executer(self, task_conf):
+
+        if not task_conf.is_remote():
+            return task_conf.create_executer()
+
+        ssh_executer = self.ssh_executer_per_remote_site_key.get(task_conf.remote_site_key)
+
+        if ssh_executer is None:
+            ssh_executer = task_conf.create_executer()
+            self.ssh_executer_per_remote_site_key[task_conf.remote_site_key] = ssh_executer
+
+        return ssh_executer
+
+
+
 
 def janitor_sub_logger(sub_logger):
     return logging.getLogger(f"{__name__}.{sub_logger}")
@@ -145,13 +159,14 @@ class Janitor:
                     pipeline.init_work_dir()
 
                     work_done, no_more_work = _janitor(
+                        daemon_thread_helper,
                         pipeline, wait_for_completion=sync_mode, logger=daemon_thread_helper.logger,
                         fail_silently=fail_silently
                     )
 
                     if sync_mode:
-                        _upload_janitor(pipeline, daemon_thread_helper.logger)
-                        _download_janitor(pipeline)
+                        _upload_janitor(daemon_thread_helper, pipeline, daemon_thread_helper.logger)
+                        _download_janitor(daemon_thread_helper, pipeline)
 
                     yield True
 
@@ -241,7 +256,7 @@ class Janitor:
 
                         download_j_logger.debug("will check remote tasks of %s", pipeline.instance_dir_base_name())
 
-                        has_worked = _download_janitor(pipeline, download_j_logger) > 0
+                        has_worked = _download_janitor(daemon_thread_helper, pipeline, download_j_logger) > 0
 
                         if has_worked:
                             daemon_thread_helper.register_work()
@@ -266,7 +281,7 @@ class Janitor:
         self._shutdown = True
 
 
-def _janitor(pipeline_instance, wait_for_completion=False, fail_silently=False, logger=None):
+def _janitor(daemon_thread_helper, pipeline_instance, wait_for_completion=False, fail_silently=False, logger=None):
 
     if logger is None:
         logger = module_logger
@@ -275,7 +290,8 @@ def _janitor(pipeline_instance, wait_for_completion=False, fail_silently=False, 
 
     pipeline_instance.regen_tasks_if_stale()
 
-    for remote_executor, task_conf in pipeline_instance.remote_executors_with_task_confs():
+    for task_conf in pipeline_instance.remote_sites_task_confs():
+        remote_executor = daemon_thread_helper.get_executer(task_conf)
         remote_executor.upload_overrides(pipeline_instance, task_conf)
 
     work_done = 0
@@ -315,7 +331,7 @@ def _janitor(pipeline_instance, wait_for_completion=False, fail_silently=False, 
     actions_performed = 0
     for task_action in TaskAction.fetch_all_actions(pipeline_instance.pipeline_instance_dir):
         actions_performed += 1
-        task_action.do_it(pipeline_instance)
+        task_action.do_it(pipeline_instance, daemon_thread_helper)
 
     if tasks_total == tasks_completed:
         pipeline_state = pipeline_instance.get_state()
@@ -344,9 +360,7 @@ def _janitor(pipeline_instance, wait_for_completion=False, fail_silently=False, 
 
         task = pipeline_instance.tasks[task_state.task_key]
 
-        executer = task.executer
-
-        if isinstance(executer, Local):
+        if task.task_conf.is_process():
             if currently_running >= cpu_count:
                 logger.info(
                     "exceeded cpu load %s tasks running, will resume launching when below threshold", currently_running
@@ -357,7 +371,7 @@ def _janitor(pipeline_instance, wait_for_completion=False, fail_silently=False, 
             currently_running += 1
 
         logger.debug("will launch %s", task_state.control_dir())
-        executer = task.task_conf.create_executer()
+        executer = daemon_thread_helper.get_executer(task.task_conf)
         task_state.transition_to_launched(executer, task, wait_for_completion, fail_silently=fail_silently)
         launched_count += 1
         work_done += 1
@@ -377,14 +391,15 @@ def _janitor(pipeline_instance, wait_for_completion=False, fail_silently=False, 
     return work_done, False
 
 
-def _upload_janitor(pipeline, logger):
+def _upload_janitor(daemon_thread_helper, pipeline, logger):
 
     work_done = 0
 
     for task_state in TaskState.queued_for_upload_task_states(pipeline):
         task_state = task_state.transition_to_upload_started()
         task = pipeline.tasks[task_state.task_key]
-        task.executer.upload_task_inputs(task_state, task)
+        executer = daemon_thread_helper.get_executer(task.task_conf)
+        executer.upload_task_inputs(task_state, task)
         task_state = task_state.transition_to_upload_completed()
         task_state.transition_to_queued()
 
@@ -393,15 +408,15 @@ def _upload_janitor(pipeline, logger):
     return work_done
 
 
-def _download_janitor(pipeline, download_j_logger=None):
+def _download_janitor(daemon_thread_helper, pipeline, download_j_logger=None):
 
     if download_j_logger is None:
         download_j_logger = logging.getLogger()
 
     work_done = 0
 
-    for remote_executor, task_conf in pipeline.remote_executors_with_task_confs():
-
+    for task_conf in pipeline.remote_sites_task_confs():
+        remote_executor = daemon_thread_helper.get_executer(task_conf)
         download_j_logger.debug("handle remote exec %s ", remote_executor)
 
         running_task_count = 0
@@ -423,7 +438,8 @@ def _download_janitor(pipeline, download_j_logger=None):
 
     for task_state in TaskState.queued_for_dowload_task_states(pipeline):
         task_state = task_state.transition_to_download_started()
-        pipeline.tasks[task_state.task_key].executer.download_task_results(task_state)
+        remote_executor = daemon_thread_helper.get_executer(task_conf)
+        remote_executor.download_task_results(task_state)
         task_state = task_state.transition_to_download_completed()
 
         task = pipeline.tasks[task_state.task_key]

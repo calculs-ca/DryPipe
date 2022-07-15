@@ -35,7 +35,6 @@ class Task:
         self.key = task_builder.key
         self.pipeline_instance = task_builder.pipeline_instance
         self.task_steps = task_builder.task_steps
-        self.executer = task_builder.executer
         self.props = TaskProps(self, task_builder._props)
         self.dependent_scripts = task_builder.dependent_scripts
         self.upstream_task_completion_dependencies = task_builder._upstream_task_completion_dependencies

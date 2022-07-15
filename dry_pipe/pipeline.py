@@ -228,7 +228,7 @@ class Pipeline:
             ssh_remote = task_conf.create_executer()
             if printer is not None:
                 printer(
-                    f"Will rsync {self.pipeline_code_dir} to \n {ssh_remote.user_at_host()}:{task_conf.remote_pipeline_code_dir}"
+                    f"Will rsync {self.pipeline_code_dir} to \n {task_conf}:{task_conf.remote_pipeline_code_dir}"
                 )
             ssh_remote.ensure_connected()
             ssh_remote.rsync_remote_code_dir_if_applies(self, task_conf)
@@ -322,33 +322,12 @@ class PipelineInstance:
         self.calc_pre_existing_files_signatures()
         self.get_state().touch()
 
-
-    remote_executor_cache = {}
-
-    def remote_executors_with_task_confs(self):
-
-        def gen():
-            for task in self.tasks:
-                if task.is_remote():
-                    e = task.executer
-                    task_conf = task.task_conf
-                    unicity_key = (
-                        e.server_connection_key(),
-                        task_conf.remote_base_dir,
-                        task_conf.remote_pipeline_code_dir,
-                        task_conf.remote_containers_dir
-                    )
-
-                    cached_executer = PipelineInstance.remote_executor_cache.get(unicity_key)
-
-                    if cached_executer is None:
-                        PipelineInstance.remote_executor_cache[unicity_key] = e
-                    else:
-                        e = cached_executer
-
-                    yield unicity_key, (e, task_conf)
-
-        return dict(gen()).values()
+    def remote_sites_task_confs(self):
+        return {
+            task.task_conf.remote_site_key: task.task_conf
+            for task in self.tasks
+            if task.is_remote()
+        }.values()
 
     def regen_tasks_if_stale(self, force=False):
         if self.tasks.is_stale() or force:
