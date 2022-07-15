@@ -340,6 +340,8 @@ class RemoteSSH(Executor):
             f"pipeline-env-{self.server_connection_key()}.sh"
         )
 
+        logger_ssh.info(f"will upload overrides: '%s'", overrides_file_for_host)
+
         remote_pipeline_code_dir = task_conf.remote_pipeline_code_dir
         remote_containers_dir = task_conf.remote_containers_dir
 
@@ -374,14 +376,24 @@ class RemoteSSH(Executor):
                 "pipeline-env.sh"
             )
 
-            # sftp.put broken, Paramiko bug:  https://github.com/paramiko/paramiko/issues/149
-            def upload_overrides_broken_by_paramiko_bug():
+            def upload_overrides():
                 self.invoke_remote(f"mkdir -p {r_work_dir}")
                 with self.ssh_client().open_sftp() as sftp:
-                    sftp.put(overrides_file_for_host, r_override_file, confirm=False)
+
+                    # sftp.put fragile, Paramiko bug:  https://github.com/paramiko/paramiko/issues/149
+                    for i in range(1, 3):
+                        try:
+                            sftp.put(overrides_file_for_host, r_override_file, confirm=True)
+                            break
+                        except Exception as ex:
+                            if i >= 3:
+                                raise ex
+                            else:
+                                logger_ssh.warning(f"sftp failure %s will sleep and retry", i)
+                                time.sleep(2)
 
             # as a work around
-            def upload_overrides():
+            def upload_overrides_work_around():
 
                 def lines_in_overrides_file():
                     yield f"mkdir -p {r_work_dir}"
@@ -405,6 +417,8 @@ class RemoteSSH(Executor):
 
                 remote_cmd = " && ".join(lines_in_overrides_file())
                 self.invoke_remote(remote_cmd)
+
+            #upload_overrides_work_around()
 
             upload_overrides()
 
