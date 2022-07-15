@@ -631,19 +631,9 @@ class Task:
                 pass
 
             step_number = 0
-            last_step_number = len(self.task_steps) - 1
             for task_step in self.task_steps:
-
-                executor_compatible_with_next = True
-
-                if step_number < last_step_number:
-                    next_step = self.task_steps[step_number + 1]
-                    e1 = task_step.executer
-                    e2 = next_step.executer
-                    executor_compatible_with_next = type(e1) == type(e2)
-
                 task_step.write_invocation(
-                    f, self, step_number, not executor_compatible_with_next, write_before_first_step
+                    f, self, step_number, write_before_first_step
                 )
                 step_number += 1
 
@@ -1158,13 +1148,12 @@ class Task:
 class TaskStep:
 
     def __init__(self, task_conf, shell_script=None, python_call=None, shell_snippet=None):
-        self.executer = task_conf.create_executer()
         self.task_conf = task_conf
         self.shell_script = shell_script
         self.python_call = python_call
         self.shell_snippet = shell_snippet
 
-    def write_invocation(self, file_writer, task, step_number, exit_after_step, write_before_first_step):
+    def write_invocation(self, file_writer, task, step_number, write_before_first_step):
 
         container = self.task_conf.container
         python_bin = self.task_conf.python_bin
@@ -1196,7 +1185,7 @@ class TaskStep:
         file_writer.write('__transition_to_step_started\n')
 
         #TODO: only redefine __scratch_dir when sbatch-launch.sh
-        if isinstance(self.executer, Slurm):
+        if self.task_conf.is_slurm():
             indent()
             file_writer.write(f"export __scratch_dir=$SLURM_TMPDIR\n")
 
@@ -1235,10 +1224,6 @@ class TaskStep:
         if is_last_step:
             indent()
             file_writer.write("__sign_files\n")
-
-        if exit_after_step:
-            indent()
-            file_writer.write("break\n")
 
         file_writer.write("fi\n\n")
 

@@ -432,6 +432,9 @@ class TaskConf:
     def is_remote(self):
         return self.ssh_specs is not None
 
+    def is_slurm(self):
+        return self.executer_type == "slurm"
+
     def has_container(self):
         return self.container is not None
 
