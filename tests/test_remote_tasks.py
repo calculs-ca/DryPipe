@@ -48,22 +48,22 @@ class RemoteTaskTests1(unittest.TestCase):
 
         complete_and_validate_pipeline_instance(pipeline_instance, self)
 
-    def _test_pipeline_with_two_remote_sites(self):
+    def test_pipeline_with_two_remote_sites(self):
 
         d = TestSandboxDir(self)
+        tc1 = TaskConf(
+            executer_type="process",
+            ssh_specs=f"maxl@ip32.ccs.usherbrooke.ca:~/.ssh/id_rsa",
+            remote_base_dir="/nfs3_ib/ip32-ib/home/maxl/drypipe-tests"
+        )
 
-        pipeline_instance = d.pipeline_instance_from_generator(create_pipeline_generator_two_remote_sites(
-            TaskConf(
-                executer_type="process",
-                ssh_specs=f"maxl@ip32.ccs.usherbrooke.ca:~/.ssh/id_rsa",
-                remote_base_dir="/nfs3_ib/ip32-ib/home/maxl/drypipe-tests",
-            ),
-            TaskConf(
-                executer_type="process",
-                ssh_specs="maxl@ip29.ccs.usherbrooke.ca:~/.ssh/id_rsa",
-                remote_base_dir="/home/maxl/drypipe_tests",
-            )
-        ))
+        tc2 = TaskConf(
+            executer_type="process",
+            ssh_specs="maxl@ip29.ccs.usherbrooke.ca:~/.ssh/id_rsa",
+            remote_base_dir="/home/maxl/drypipe_tests"
+        )
+
+        pipeline_instance = d.pipeline_instance_from_generator(create_pipeline_generator_two_remote_sites(tc1, tc2))
 
         for task_conf in pipeline_instance.remote_sites_task_confs():
             if task_conf.ssh_specs.startswith("maxl@ip32"):
@@ -81,7 +81,15 @@ class RemoteTaskTests1(unittest.TestCase):
         remote_executor_ip29.upload_overrides(pipeline_instance, task_conf_ip29)
         remote_executor_ip32.upload_overrides(pipeline_instance, task_conf_ip32)
 
-        #pipeline_instance.run_sync()
+        pipeline_instance.run_sync()
+
+        with open(os.path.join(d.sandbox_dir, "publish", "t3", "f3.txt")) as f:
+            self.assertEqual(
+                {1, 2},
+                {int(s) for s in f.read().split() if s.strip() != ""}
+            )
+
+
 
 
 

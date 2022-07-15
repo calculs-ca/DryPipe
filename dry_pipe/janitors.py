@@ -438,14 +438,11 @@ def _download_janitor(daemon_thread_helper, pipeline, download_j_logger=None):
 
     for task_state in TaskState.queued_for_dowload_task_states(pipeline):
         task_state = task_state.transition_to_download_started()
-        remote_executor = daemon_thread_helper.get_executer(task_conf)
+        task = pipeline.tasks[task_state.task_key]
+        remote_executor = daemon_thread_helper.get_executer(task.task_conf)
         remote_executor.download_task_results(task_state)
         task_state = task_state.transition_to_download_completed()
-
-        task = pipeline.tasks[task_state.task_key]
-
         task_state.transition_to_completed(task)
-
         work_done += 1
 
     return work_done

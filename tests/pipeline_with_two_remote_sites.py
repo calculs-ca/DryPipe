@@ -1,5 +1,3 @@
-from dry_pipe import DryPipe
-
 
 def create_pipeline_generator_two_remote_sites(remote_task_conf_1, remote_task_conf_2):
 

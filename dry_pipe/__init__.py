@@ -429,9 +429,8 @@ class TaskConf:
 
         if self.ssh_specs is not None:
             ssh_specs_parts = self.ssh_specs.split(":")
-            self.key_filename = None
             if len(ssh_specs_parts) == 2:
-                ssh_username_ssh_host, key_filename = ssh_specs_parts
+                ssh_username_ssh_host, self.key_filename = ssh_specs_parts
             elif len(ssh_specs_parts) == 1:
                 ssh_username_ssh_host = ssh_specs_parts[0]
                 self.key_filename = "~/.ssh/id_rsa"

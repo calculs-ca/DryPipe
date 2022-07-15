@@ -40,6 +40,8 @@ class RemoteSSH(Executor):
         self.remote_base_dir = remote_base_dir
         self.ssh_host = ssh_host
         self.ssh_username = ssh_username
+        if key_filename is None:
+            raise Exception("key_filename can't be none")
         self.key_filename = key_filename
         self.rsync_containers = True
         self.slurm = None
