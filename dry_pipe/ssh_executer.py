@@ -329,7 +329,7 @@ class RemoteSSH(Executor):
 
         self.ensure_connected()
 
-        if pipeline_instance.is_remote_overrides_uploaded:
+        if pipeline_instance.is_remote_overrides_uploaded(self.server_connection_key()):
             return
 
         pipeline_instance_dir = pipeline_instance.pipeline_instance_dir
@@ -424,7 +424,7 @@ class RemoteSSH(Executor):
 
             upload_overrides()
 
-            pipeline_instance.set_remote_overrides_uploaded()
+            pipeline_instance.set_remote_overrides_uploaded(self.server_connection_key())
 
     """
         Fetches log lines and history.txt for all tasks, done once every janitor run, instead of before each task
