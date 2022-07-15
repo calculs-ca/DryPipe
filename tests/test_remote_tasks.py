@@ -2,6 +2,7 @@ import os
 import unittest
 
 from dry_pipe import TaskConf
+from pipeline_with_two_remote_sites import create_pipeline_generator_two_remote_sites
 from test_04_remote_ssh_tasks import pipeline_with_remote_tasks
 from test_04_remote_ssh_tasks.pipeline_with_remote_tasks import \
     ensure_remote_dirs_dont_exist, complete_and_validate_pipeline_instance
@@ -46,6 +47,46 @@ class RemoteTaskTests1(unittest.TestCase):
         pipeline_instance.pipeline.prepare_remote_sites()
 
         complete_and_validate_pipeline_instance(pipeline_instance, self)
+
+    def test_pipeline_with_two_remote_sites(self):
+
+        d = TestSandboxDir(self)
+
+        pipeline_instance = d.pipeline_instance_from_generator(create_pipeline_generator_two_remote_sites(
+            TaskConf(
+                executer_type="process",
+                ssh_specs=f"maxl@ip32.ccs.usherbrooke.ca:~/.ssh/id_rsa",
+                remote_base_dir="/nfs3_ib/ip32-ib/home/maxl/drypipe-tests",
+            ),
+            TaskConf(
+                executer_type="process",
+                ssh_specs="maxl@ip29.ccs.usherbrooke.ca:~/.ssh/id_rsa",
+                remote_base_dir="/home/maxl/drypipe_tests",
+            )
+        ))
+
+        for remote_executor, task_conf in pipeline_instance.remote_executors_with_task_confs():
+            if task_conf.ssh_specs.startswith("maxl@ip32"):
+                remote_executor_ip32 = remote_executor
+                task_conf_ip32 = task_conf
+            elif task_conf.ssh_specs.startswith("maxl@ip29"):
+                remote_executor_ip29 = remote_executor
+                task_conf_ip29 = task_conf
+            else:
+                raise Exception("!")
+
+        self.assertTrue(remote_executor_ip32.ssh_host.startswith("ip32"))
+        self.assertTrue(remote_executor_ip29.ssh_host.startswith("ip29"))
+        self.assertIsNotNone(task_conf_ip32)
+        self.assertIsNotNone(task_conf_ip29)
+
+        if False:
+            ensure_remote_dirs_dont_exist(pipeline_instance)
+
+            remote_executor_ip29.upload_overrides(pipeline_instance, task_conf_ip29)
+            remote_executor_ip32.upload_overrides(pipeline_instance, task_conf_ip32)
+
+            pipeline_instance.run_sync()
 
 
 
