@@ -357,7 +357,8 @@ def _janitor(pipeline_instance, wait_for_completion=False, fail_silently=False, 
             currently_running += 1
 
         logger.debug("will launch %s", task_state.control_dir())
-        task_state.transition_to_launched(task, wait_for_completion, fail_silently=fail_silently)
+        executer = task.task_conf.create_executer()
+        task_state.transition_to_launched(executer, task, wait_for_completion, fail_silently=fail_silently)
         launched_count += 1
         work_done += 1
 

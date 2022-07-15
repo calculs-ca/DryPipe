@@ -279,7 +279,7 @@ def launch_single(pipeline, single):
     task.re_queue()
     task.prepare()
     task_state = task.get_state()
-    task_state.transition_to_launched(task, wait_for_completion=True)
+    task_state.transition_to_launched(task.task_conf.create_executer(), task, wait_for_completion=True)
     task_state = task.get_state()
     task_state.transition_to_completed(task)
 

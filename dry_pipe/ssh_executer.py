@@ -41,7 +41,6 @@ class RemoteSSH(Executor):
         self.ssh_host = ssh_host
         self.ssh_username = ssh_username
         self.key_filename = key_filename
-        self.dependent_files = []
         self.rsync_containers = True
         self.slurm = None
 
@@ -85,15 +84,6 @@ class RemoteSSH(Executor):
 
     def ssh_client(self):
         return self.thread_local_ssh_client.h.ssh_client
-
-    def add_dependent_file(self, file):
-        if file not in self.dependent_files:
-            self.dependent_files.append(file)
-
-    def add_dependent_dir(self, dir):
-        d = f"{dir}/"
-        if d not in self.dependent_files:
-            self.dependent_files.append(d)
 
     def server_connection_key(self):
         return f"{self.ssh_username}-{self.ssh_host}"
@@ -479,7 +469,7 @@ class RemoteSSH(Executor):
             self.invoke_remote(f"mkdir -p {r_work_dir}")
             self.invoke_remote(f"mkdir -p {r_control_dir}/out_sigs")
 
-            if task.scratch_dir:
+            if task.scratch_dir() is not None:
                 self.invoke_remote(f"mkdir -p {remote_base_dir(task.scratch_dir())}")
 
             self.invoke_remote(f"rm {r_control_dir}/state.*", bash_error_ok=True)

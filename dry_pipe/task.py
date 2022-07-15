@@ -144,7 +144,8 @@ class Task:
 
         if self.is_remote():
 
-            ssh_executor = self.executer
+            # TODO: close ssh session using "with session as:
+            ssh_executor = self.task_conf.create_executer()
 
             f_out, f_err, f_history_file, last_activity_time = ssh_executor.fetch_logs_and_history(self)
 
@@ -233,9 +234,6 @@ class Task:
         ))
 
         return lambda: cached_it
-
-    def uses_singularity(self):
-        return self.executer
 
     def get_env_vars(self, collect_deps_and_outputs_func=None):
 
@@ -644,9 +642,7 @@ class Task:
 
         os.chmod(shell_script_file, 0o764)
 
-        slurm_executor_or_none = self.slurm_executor_or_none()
-
-        if slurm_executor_or_none is not None:
+        if self.task_conf.is_slurm():
 
             with open(self.v_abs_sbatch_launch_script(), "w") as f:
                 f.write(f"{bash_shebang()}\n\n")
@@ -659,8 +655,8 @@ class Task:
 
                 f.write("\n".join([
                     f"__job_id=$(sbatch \\",
-                    f"    {' '.join(slurm_executor_or_none.sbatch_options)} \\",
-                    f"    --account={slurm_executor_or_none.account} \\",
+                    f"    {' '.join(self.task_conf.sbatch_options)} \\",
+                    f"    --account={self.task_conf.slurm_account} \\",
                      "    --output=$__script_location/out.log \\",
                      "    --error=$__script_location/err.log \\",
                      "    --export=__script_location=$__script_location,__is_slurm=True \\",
@@ -692,10 +688,6 @@ class Task:
                         f.write("\n\n")
                     step_number += 1
 
-                for df in self.executer.dependent_files:
-                    f.write(df)
-                    f.write("\n")
-
                 f.write(self.history_file())
                 f.write("\n")
                 f.write(self.task_env_file())
@@ -703,7 +695,7 @@ class Task:
                 f.write(self.script_file())
                 f.write("\n")
 
-                if slurm_executor_or_none:
+                if self.task_conf.is_slurm():
                     f.write(self.sbatch_launch_script())
                     f.write("\n")
 
@@ -786,19 +778,8 @@ class Task:
 
         return False
 
-    def slurm_executor_or_none(self):
-
-        if isinstance(self.executer, Slurm):
-            return self.executer
-
-        if self.executer.is_remote():
-            if self.executer.slurm is not None:
-                return self.executer.slurm
-
-        return None
-
     def is_remote(self):
-        return self.executer.is_remote()
+        return self.task_conf.is_remote()
 
     def control_dir(self):
         return os.path.join(".drypipe", self.key)
@@ -862,7 +843,7 @@ class Task:
         return os.path.join(self.control_dir(), f"{pid}.pid")
 
     def scratch_dir(self):
-        if not isinstance(self.executer, Slurm):
+        if not self.task_conf.is_slurm():
             return os.path.join(self.work_dir(), "scratch")
 
         return None
@@ -1106,14 +1087,14 @@ class Task:
         shutil.rmtree(self.v_abs_control_dir(), ignore_errors=True)
         shutil.rmtree(self.v_abs_work_dir(), ignore_errors=True)
 
-    def launch(self, wait_for_completion=False, fail_silently=False):
+    def launch(self, executer, wait_for_completion=False, fail_silently=False):
 
         def touch_pid_file(pid):
             #pathlib.Path(self.v_abs_pid_file(pid)).touch(exist_ok=False)
             #TODO: figure out if PID tracking should be done
             pass
 
-        self.executer.execute(self, touch_pid_file, wait_for_completion, fail_silently)
+        executer.execute(self, touch_pid_file, wait_for_completion, fail_silently)
 
     """
         Recomputes out.sig (output signatures) of the task         
