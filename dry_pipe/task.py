@@ -616,7 +616,8 @@ class Task:
                 . $__script_location/task-env.sh
                 . $__pipeline_instance_dir/.drypipe/drypipe-bash-lib.sh                
                 __read_task_state
-                __check_bash_version                
+                __check_bash_version
+                touch $__control_dir/output_vars                
                 trap  "__transition_to_timed_out"  USR1                
                 trap '__transition_to_failed ${LINENO}' ERR                                
             """))

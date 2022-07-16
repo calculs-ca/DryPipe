@@ -16,6 +16,7 @@ from test_multistep_tasks import MultipstepTaskTests
 from test_pipeline_composition import PipelineCompositionTests
 from test_regressions import RegressionTests
 from test_remote_tasks import RemoteTaskTests1, RemoteTaskTests2, RemoteTaskTestsWithSlurm
+from test_utils import log_4_debug_daemon_mode
 
 
 def low_level_tests():
@@ -78,6 +79,8 @@ def exhaustive_3():
 
 
 if __name__ == '__main__':
+
+    #log_4_debug_daemon_mode()
 
     suite_to_test = "exhaustive_except_for_non_portable_tests"
 

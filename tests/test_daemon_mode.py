@@ -1,3 +1,4 @@
+import os
 import unittest
 
 import pipeline_for_ssh_crash_recovery_tests
@@ -6,6 +7,7 @@ from dry_pipe.janitors import Janitor
 from test_01_simple_static_pipeline.simple_static_pipeline import simple_static_pipeline, validate_pipeline_execution
 from test_04_remote_ssh_tasks.pipeline_with_remote_tasks import ensure_remote_dirs_dont_exist
 from test_utils import TestSandboxDir, copy_pre_existing_file_deps_from_code_dir
+import test_utils
 
 
 class DaemonModeTests(unittest.TestCase):
@@ -64,7 +66,12 @@ class DaemonModeTests(unittest.TestCase):
 
         self.assertEqual(c, 2)
 
+
+class LongRunningDaemonModeTests(unittest.TestCase):
+
     def test_ssh_crash_recovery(self):
+
+        test_utils.log_4_debug_daemon_mode()
 
         tc_remote = TaskConf(
             executer_type="process",

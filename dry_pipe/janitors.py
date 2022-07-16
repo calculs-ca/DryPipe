@@ -126,6 +126,7 @@ class DaemonThreadHelper:
         if ssh_executer is None:
             ssh_executer = task_conf.create_executer()
             self.ssh_executer_per_remote_site_key[task_conf.remote_site_key] = ssh_executer
+            ssh_executer.connect()
 
         return ssh_executer
 
@@ -161,7 +162,7 @@ class Janitor:
     def is_shutdown(self):
         return self._shutdown
 
-    def iterate_main_work(self, sync_mode=False, fail_silently=False, stay_alive_when_no_more_work=False):
+    def iterate_main_work(self, do_upload_and_download=False, sync_mode=False, fail_silently=False, stay_alive_when_no_more_work=False):
 
         daemon_thread_helper = DaemonThreadHelper(
             janitor_sub_logger("main_d"), self.min_sleep, self.max_sleep, self.pipelines, sync_mode
@@ -190,7 +191,7 @@ class Janitor:
                         fail_silently=fail_silently
                     )
 
-                    if sync_mode:
+                    if do_upload_and_download:
                         _upload_janitor(daemon_thread_helper, pipeline, daemon_thread_helper.logger)
                         _download_janitor(daemon_thread_helper, pipeline)
 
@@ -230,7 +231,11 @@ class Janitor:
     def start(self, stay_alive_when_no_more_work=False):
 
         def work():
-            work_iterator = self.iterate_main_work(sync_mode=False, stay_alive_when_no_more_work=stay_alive_when_no_more_work)
+            work_iterator = self.iterate_main_work(
+                do_upload_and_download=False,
+                sync_mode=False,
+                stay_alive_when_no_more_work=stay_alive_when_no_more_work
+            )
 
             has_work = next(work_iterator)
             while has_work:

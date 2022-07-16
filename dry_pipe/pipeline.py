@@ -225,13 +225,16 @@ class Pipeline:
         if self.remote_task_confs is None:
             raise Exception(f"no remote_task_confs have been assigned for this pipeline")
         for task_conf in self.remote_task_confs:
-            ssh_remote = task_conf.create_executer()
+            ssh_executer = task_conf.create_executer()
             if printer is not None:
                 printer(
                     f"Will rsync {self.pipeline_code_dir} to \n {task_conf}:{task_conf.remote_pipeline_code_dir}"
                 )
-            ssh_remote.ensure_connected()
-            ssh_remote.rsync_remote_code_dir_if_applies(self, task_conf)
+            ssh_executer.connect()
+            try:
+                ssh_executer.rsync_remote_code_dir_if_applies(self, task_conf)
+            finally:
+                ssh_executer.close()
 
 
 class PipelineInstance:
@@ -500,6 +503,7 @@ class PipelineInstance:
 
         j = Janitor(pipeline_instance=self)
         i = j.iterate_main_work(
+            do_upload_and_download=True,
             sync_mode=sync, fail_silently=fail_silently, stay_alive_when_no_more_work=stay_alive_when_no_more_work
         )
         has_work = next(i)
