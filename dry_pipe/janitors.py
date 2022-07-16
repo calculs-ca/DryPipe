@@ -269,6 +269,7 @@ class Janitor:
                     daemon_thread_helper.end_round()
 
                 except Exception as ex:
+                    daemon_thread_helper.logger.exception(ex)
                     daemon_thread_helper.handle_exception_in_daemon_loop(ex)
 
         def download_j():
@@ -297,6 +298,7 @@ class Janitor:
                     daemon_thread_helper.end_round()
 
                 except Exception as ex:
+                    daemon_thread_helper.logger.exception(ex)
                     daemon_thread_helper.handle_exception_in_daemon_loop(ex)
 
         # setup stalled transfer for restart
