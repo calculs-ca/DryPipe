@@ -12,22 +12,14 @@ from dry_pipe.internals import flatten
 from dry_pipe.task_state import TaskState
 from dry_pipe.utils import perf_logger_timer
 
-SSH_TIMEOUT = 120
-
 logger_ssh = logging.getLogger(f"{__name__}.ssh")
 
 
-class SSHClientHolder:
-    def __init__(self):
-        self.ssh_client = SSHClient()
-        self.ssh_client.set_missing_host_key_policy(AutoAddPolicy)
-        self._remote_overrides_uploaded = False
-
-    def is_remote_overrides_uploaded(self):
-        return self._remote_overrides_uploaded
-
-    def set_remote_overrides_uploaded(self):
-        self._remote_overrides_uploaded = True
+class SftpFileNotFoundError(Exception):
+    """
+     sftp.put fragile, Paramiko bug:  https://github.com/paramiko/paramiko/issues/149
+    """
+    pass
 
 
 class RemoteSSH(Executor):
@@ -35,80 +27,42 @@ class RemoteSSH(Executor):
     def __init__(
         self, ssh_username, ssh_host, remote_base_dir, key_filename, before_execute_bash
     ):
-        self.thread_local_ssh_client = threading.local()
+        if key_filename is None:
+            raise Exception("key_filename can't be none")
+
         self.before_execute_bash = before_execute_bash
         self.remote_base_dir = remote_base_dir
         self.ssh_host = ssh_host
         self.ssh_username = ssh_username
         self.key_filename = key_filename
-        self.dependent_files = []
         self.rsync_containers = True
         self.slurm = None
+        self.ssh_timeout_in_seconds = 60
 
     def is_remote(self):
         return True
 
-    def __str__(self):
-
-        return f"{self.ssh_username}@{self.ssh_host}:{self.remote_base_dir}"
-
     def user_at_host(self):
         return f"{self.ssh_username}@{self.ssh_host}"
-
-    def is_remote_overrides_uploaded(self):
-        return self.thread_local_ssh_client.h.is_remote_overrides_uploaded()
-
-    def set_remote_overrides_uploaded(self):
-        return self.thread_local_ssh_client.h.set_remote_overrides_uploaded()
-
-    def ensure_connected(self):
-
-        if not hasattr(self.thread_local_ssh_client, 'h'):
-
-            self.thread_local_ssh_client.h = SSHClientHolder()
-            connection_was_initialized = False
-        else:
-            connection_was_initialized = True
-
-        try:
-            transport = self.ssh_client().get_transport()
-
-            if transport is None:
-                logger_ssh.debug("transport None, connection_was_initialized: %s", connection_was_initialized)
-                self.connect()
-                transport = self.ssh_client().get_transport()
-
-            transport.send_ignore()
-        except EOFError as e:
-            logger_ssh.warning("ssh connection dead, will reconnect %s", e)
-            self.connect()
-
-    def ssh_client(self):
-        return self.thread_local_ssh_client.h.ssh_client
-
-    def add_dependent_file(self, file):
-        if file not in self.dependent_files:
-            self.dependent_files.append(file)
-
-    def add_dependent_dir(self, dir):
-        d = f"{dir}/"
-        if d not in self.dependent_files:
-            self.dependent_files.append(d)
 
     def server_connection_key(self):
         return f"{self.ssh_username}-{self.ssh_host}"
 
     def connect(self):
         try:
+            self.ssh_client = SSHClient()
+            self.ssh_client.set_missing_host_key_policy(AutoAddPolicy)
+
             with perf_logger_timer("RemoteSSH.connect") as t:
-                self.ssh_client().connect(
+                self.ssh_client.connect(
                     self.ssh_host,
                     username=self.ssh_username,
                     key_filename=os.path.expanduser(self.key_filename)
-                        if self.key_filename.startswith("~")
+                        if self.key_filename is not None and self.key_filename.startswith("~")
                         else self.key_filename,
-                    timeout=SSH_TIMEOUT
+                    timeout=self.ssh_timeout_in_seconds
                 )
+            logger_ssh.info("new ssh connection established %s at %s", self.ssh_username, self.ssh_host)
         except Exception as ex:
             logger_ssh.error(f"ssh connect failed: {self}")
             raise ex
@@ -117,7 +71,7 @@ class RemoteSSH(Executor):
         logger_ssh.debug("will invoke '%s' at %s", cmd, self.ssh_host)
 
         with perf_logger_timer("RemoteSSH.invoke_remote", cmd) as t:
-            stdin, stdout, stderr = self.ssh_client().exec_command(cmd, timeout=SSH_TIMEOUT)
+            stdin, stdout, stderr = self.ssh_client.exec_command(cmd, timeout=self.ssh_timeout_in_seconds)
 
             stdout_txt = stdout.read().decode("utf-8")
 
@@ -129,11 +83,19 @@ class RemoteSSH(Executor):
 
         return stdout_txt
 
+    def __enter__(self):
+        self.connect()
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.close()
+
+    def close(self):
+        self.ssh_client.close()
+
     def fetch_remote_task_states(self, pipeline):
         with perf_logger_timer("RemoteSSH.fetch_remote_task_states") as t:
             remote_pid_basename = os.path.basename(pipeline.pipeline_instance_dir)
-
-            self.ensure_connected()
 
             cmd = f"find {self.remote_base_dir}/{remote_pid_basename}/.drypipe/*/state.* 2>/dev/null || true"
             stdout = self.invoke_remote(cmd)
@@ -146,8 +108,6 @@ class RemoteSSH(Executor):
 
     def fetch_logs_and_history(self, task):
 
-        self.ensure_connected()
-
         remote_pid_basename = os.path.basename(task.pipeline_instance.pipeline_instance_dir)
 
         #Not called because too slow !
@@ -158,7 +118,7 @@ class RemoteSSH(Executor):
 
             return TaskState(stdout.strip())
 
-        with self.ssh_client().open_sftp() as sftp:
+        with self.ssh_client.open_sftp() as sftp:
 
             def file_content_and_last_mod_time(p):
                 f = os.path.join(self.remote_base_dir, remote_pid_basename, p)
@@ -194,23 +154,19 @@ class RemoteSSH(Executor):
 
     def clear_remote_task_state(self, task):
         state_file = self._file_in_control_dir(task, "state.*")
-        self.ensure_connected()
         self.invoke_remote(f"rm {state_file}", bash_error_ok=True)
 
     def kill_slurm_task(self, task):
 
         slurm_job_id_file = self._file_in_control_dir(task, "slurm_job_id")
-        self.ensure_connected()
 
-        with self.ssh_client().open_sftp() as sftp:
+        with self.ssh_client.open_sftp() as sftp:
 
             with sftp.open(slurm_job_id_file) as _f:
                 slurm_job_id = _f.read().strip().decode("utf-8")
                 self.invoke_remote(f"scancel {slurm_job_id}")
 
     def delete_remote_state_file(self, file):
-
-        self.ensure_connected()
 
         self.invoke_remote(f"rm {file}")
 
@@ -246,8 +202,6 @@ class RemoteSSH(Executor):
         bn = os.path.basename(image_path)
         dn = os.path.dirname(image_path)
 
-        self.ensure_connected()
-
         self.invoke_remote(f"mkdir -p {self.remote_base_dir}/pipeline_code_dir")
 
         cmd = f"{rsync_call} -az --partial {image_path} {remote_dir}/pipeline_code_dir"
@@ -268,8 +222,6 @@ class RemoteSSH(Executor):
 
             rsync_call, remote_dir = self._rsync_with_args_and_remote_dir()
 
-            self.ensure_connected()
-
             self.invoke_remote(f"mkdir -p {remote_pipeline_code_dir}")
 
             cmd = f"{rsync_call} -az --partial " + \
@@ -289,8 +241,6 @@ class RemoteSSH(Executor):
             pipeline_instance_dir = os.path.dirname(os.path.dirname(task_control_dir))
 
             remote_pid_basename = os.path.basename(pipeline_instance_dir)
-
-            self.ensure_connected()
 
             self.invoke_remote(f"mkdir -p {self.remote_base_dir}/{remote_pid_basename}")
 
@@ -327,9 +277,7 @@ class RemoteSSH(Executor):
 
     def upload_overrides(self, pipeline_instance, task_conf):
 
-        self.ensure_connected()
-
-        if pipeline_instance.is_remote_overrides_uploaded:
+        if pipeline_instance.is_remote_overrides_uploaded(self.server_connection_key()):
             return
 
         pipeline_instance_dir = pipeline_instance.pipeline_instance_dir
@@ -339,6 +287,8 @@ class RemoteSSH(Executor):
             pipeline_instance._work_dir,
             f"pipeline-env-{self.server_connection_key()}.sh"
         )
+
+        logger_ssh.info(f"will upload overrides: '%s'", overrides_file_for_host)
 
         remote_pipeline_code_dir = task_conf.remote_pipeline_code_dir
         remote_containers_dir = task_conf.remote_containers_dir
@@ -359,6 +309,7 @@ class RemoteSSH(Executor):
         ]
 
         if len(remote_overrides) == 0:
+            logger_ssh.info(f"no overrides to upload")
             return
 
         with open(overrides_file_for_host, "w") as _f:
@@ -374,14 +325,26 @@ class RemoteSSH(Executor):
                 "pipeline-env.sh"
             )
 
-            # sftp.put broken, Paramiko bug:  https://github.com/paramiko/paramiko/issues/149
-            def upload_overrides_broken_by_paramiko_bug():
+            def upload_overrides():
                 self.invoke_remote(f"mkdir -p {r_work_dir}")
-                with self.ssh_client().open_sftp() as sftp:
-                    sftp.put(overrides_file_for_host, r_override_file, confirm=False)
+                with self.ssh_client.open_sftp() as sftp:
+
+                    # sftp.put fragile, Paramiko bug:  https://github.com/paramiko/paramiko/issues/149
+                    for i in range(1, 3):
+                        try:
+                            sftp.put(overrides_file_for_host, r_override_file, confirm=True)
+                            logger_ssh.info(f"overrides loaded: '%s'", r_override_file)
+                            break
+                        except Exception as ex:
+                            if i >= 3:
+                                logger_ssh.warning(ex)
+                                raise SftpFileNotFoundError()
+                            else:
+                                logger_ssh.warning(f"sftp failure %s will sleep and retry", i)
+                                time.sleep(2)
 
             # as a work around
-            def upload_overrides():
+            def upload_overrides_work_around():
 
                 def lines_in_overrides_file():
                     yield f"mkdir -p {r_work_dir}"
@@ -406,9 +369,11 @@ class RemoteSSH(Executor):
                 remote_cmd = " && ".join(lines_in_overrides_file())
                 self.invoke_remote(remote_cmd)
 
+            #upload_overrides_work_around()
+
             upload_overrides()
 
-            pipeline_instance.set_remote_overrides_uploaded()
+            pipeline_instance.set_remote_overrides_uploaded(self.server_connection_key())
 
     """
         Fetches log lines and history.txt for all tasks, done once every janitor run, instead of before each task
@@ -458,17 +423,15 @@ class RemoteSSH(Executor):
                 task.control_dir()
             ])
 
-            self.ensure_connected()
-
             self.invoke_remote(f"mkdir -p {r_work_dir}")
             self.invoke_remote(f"mkdir -p {r_control_dir}/out_sigs")
 
-            if task.scratch_dir:
+            if task.scratch_dir() is not None:
                 self.invoke_remote(f"mkdir -p {remote_base_dir(task.scratch_dir())}")
 
             self.invoke_remote(f"rm {r_control_dir}/state.*", bash_error_ok=True)
 
-            self.invoke_remote(f"touch {r_control_dir}/state.launched.0.0.1")
+            self.invoke_remote(f"touch {r_control_dir}/state.launched.0")
 
             if self.slurm is None:
 

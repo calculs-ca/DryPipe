@@ -10,6 +10,7 @@ import shutil
 import textwrap
 import signal
 
+from dry_pipe import Local
 from dry_pipe.bash import BASH_TASK_FUNCS_AND_TRAPS, bash_shebang
 from dry_pipe.task_state import TaskState
 
@@ -19,7 +20,7 @@ class BaseFuncTests(unittest.TestCase):
     def _task_mockup(self):
 
         class TaskMockup:
-            def launch(self, wait=False, fail_silently=False):
+            def launch(self, executer, wait=False, fail_silently=False):
                 return None
 
         return TaskMockup()
@@ -303,7 +304,9 @@ class BaseFuncTests(unittest.TestCase):
         self.load_task_state().transition_to_queued()
         self.assertEqual("state.queued.1", str(self.load_task_state()))
 
-        self.load_task_state().transition_to_launched(self._task_mockup())
+        local_executer = Local(before_execute_bash=None)
+        self.load_task_state().transition_to_launched(local_executer, self._task_mockup())
+
         self.assertEqual("state.launched.1", str(self.load_task_state()))
 
         self._launch_script_and_dump_env(
@@ -319,7 +322,7 @@ class BaseFuncTests(unittest.TestCase):
         self.load_task_state().transition_to_queued()
         self.assertEqual("state.queued.1", str(self.load_task_state()))
 
-        self.load_task_state().transition_to_launched(self._task_mockup())
+        self.load_task_state().transition_to_launched(local_executer, self._task_mockup())
 
         input_hash = "712053c23ced29fec4621b6002f3d28fea4df7a8"
 

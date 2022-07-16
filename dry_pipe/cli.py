@@ -280,7 +280,7 @@ def launch_single(pipeline, single):
     task.re_queue()
     task.prepare()
     task_state = task.get_state()
-    task_state.transition_to_launched(task, wait_for_completion=True)
+    task_state.transition_to_launched(task.task_conf.create_executer(), task, wait_for_completion=True)
     task_state = task.get_state()
     task_state.transition_to_completed(task)
 
@@ -339,7 +339,7 @@ def watch(ctx, pipeline, env, instances_dir):
 
     janitor = Janitor(pipeline, pipeline_instances_dir=instances_dir)
 
-    thread = janitor.start()
+    thread = janitor.start(stay_alive_when_no_more_work=True)
 
     janitor.start_remote_janitors()
 

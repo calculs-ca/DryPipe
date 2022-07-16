@@ -56,7 +56,6 @@ class Task:
         self.key = task_builder.key
         self.pipeline_instance = task_builder.pipeline_instance
         self.task_steps = task_builder.task_steps
-        self.executer = task_builder.executer
         self.props = TaskProps(self, task_builder._props)
         self.upstream_task_completion_dependencies = task_builder._upstream_task_completion_dependencies
         self.produces = task_builder._produces
@@ -161,7 +160,8 @@ class Task:
 
         if self.is_remote():
 
-            ssh_executor = self.executer
+            # TODO: close ssh session using "with session as:
+            ssh_executor = self.task_conf.create_executer()
 
             f_out, f_err, f_history_file, last_activity_time = ssh_executor.fetch_logs_and_history(self)
 
@@ -251,14 +251,10 @@ class Task:
 
         return lambda: cached_it
 
-    def uses_singularity(self):
-        return self.executer
-
     def _input_meta_data(self):
         # export __meta_<var-name>="(int|str|float):<producing-task-key>:<name_in_producing_task>"
         # export __meta_<file-name>="file:<producing-task-key>:<name_in_producing_task>"
         for _, upstream_input_files, upstream_input_vars in self.upstream_deps_iterator():
-
             for input_file in upstream_input_files:
                 produced_file = input_file.produced_file
                 yield (
@@ -694,7 +690,8 @@ class Task:
                 . $__script_location/task-env.sh
                 . $__pipeline_instance_dir/.drypipe/drypipe-bash-lib.sh                
                 __read_task_state
-                __check_bash_version                
+                __check_bash_version
+                touch $__control_dir/output_vars                
                 trap  "__transition_to_timed_out"  USR1                
                 trap '__transition_to_failed ${LINENO}' ERR                                
             """))
@@ -706,19 +703,9 @@ class Task:
                 pass
 
             step_number = 0
-            last_step_number = len(self.task_steps) - 1
             for task_step in self.task_steps:
-
-                executor_compatible_with_next = True
-
-                if step_number < last_step_number:
-                    next_step = self.task_steps[step_number + 1]
-                    e1 = task_step.executer
-                    e2 = next_step.executer
-                    executor_compatible_with_next = type(e1) == type(e2)
-
                 task_step.write_invocation(
-                    f, self, step_number, not executor_compatible_with_next, write_before_first_step
+                    f, self, step_number, write_before_first_step
                 )
                 step_number += 1
 
@@ -729,9 +716,7 @@ class Task:
 
         os.chmod(shell_script_file, 0o764)
 
-        slurm_executor_or_none = self.slurm_executor_or_none()
-
-        if slurm_executor_or_none is not None:
+        if self.task_conf.is_slurm():
 
             with open(self.v_abs_sbatch_launch_script(), "w") as f:
                 f.write(f"{bash_shebang()}\n\n")
@@ -744,8 +729,8 @@ class Task:
 
                 f.write("\n".join([
                     f"__job_id=$(sbatch \\",
-                    f"    {' '.join(slurm_executor_or_none.sbatch_options)} \\",
-                    f"    --account={slurm_executor_or_none.account} \\",
+                    f"    {' '.join(self.task_conf.sbatch_options)} \\",
+                    f"    --account={self.task_conf.slurm_account} \\",
                      "    --output=$__script_location/out.log \\",
                      "    --error=$__script_location/err.log \\",
                      "    --export=__script_location=$__script_location,__is_slurm=True \\",
@@ -777,10 +762,6 @@ class Task:
                         f.write("\n\n")
                     step_number += 1
 
-                for df in self.executer.dependent_files:
-                    f.write(df)
-                    f.write("\n")
-
                 f.write(self.history_file())
                 f.write("\n")
                 f.write(self.task_env_file())
@@ -788,7 +769,7 @@ class Task:
                 f.write(self.script_file())
                 f.write("\n")
 
-                if slurm_executor_or_none:
+                if self.task_conf.is_slurm():
                     f.write(self.sbatch_launch_script())
                     f.write("\n")
 
@@ -805,6 +786,8 @@ class Task:
                 f.write(self.history_file())
                 f.write("\n")
                 f.write(os.path.join(self.control_dir(), "out_sigs/"))
+                f.write("\n")
+                f.write(os.path.join(self.control_dir(), "output_vars"))
                 f.write("\n")
                 f.write(self.err_log())
                 f.write("\n")
@@ -871,19 +854,8 @@ class Task:
 
         return False
 
-    def slurm_executor_or_none(self):
-
-        if isinstance(self.executer, Slurm):
-            return self.executer
-
-        if self.executer.is_remote():
-            if self.executer.slurm is not None:
-                return self.executer.slurm
-
-        return None
-
     def is_remote(self):
-        return self.executer.is_remote()
+        return self.task_conf.is_remote()
 
     def control_dir(self):
         return os.path.join(".drypipe", self.key)
@@ -950,7 +922,7 @@ class Task:
         return os.path.join(self.control_dir(), f"{pid}.pid")
 
     def scratch_dir(self):
-        if not isinstance(self.executer, Slurm):
+        if not self.task_conf.is_slurm():
             return os.path.join(self.work_dir(), "scratch")
 
         return None
@@ -1203,14 +1175,14 @@ class Task:
         shutil.rmtree(self.v_abs_control_dir(), ignore_errors=True)
         shutil.rmtree(self.v_abs_work_dir(), ignore_errors=True)
 
-    def launch(self, wait_for_completion=False, fail_silently=False):
+    def launch(self, executer, wait_for_completion=False, fail_silently=False):
 
         def touch_pid_file(pid):
             #pathlib.Path(self.v_abs_pid_file(pid)).touch(exist_ok=False)
             #TODO: figure out if PID tracking should be done
             pass
 
-        self.executer.execute(self, touch_pid_file, wait_for_completion, fail_silently)
+        executer.execute(self, touch_pid_file, wait_for_completion, fail_silently)
 
     """
         Recomputes out.sig (output signatures) of the task         
@@ -1245,13 +1217,12 @@ class Task:
 class TaskStep:
 
     def __init__(self, task_conf, shell_script=None, python_call=None, shell_snippet=None):
-        self.executer = task_conf.create_executer()
         self.task_conf = task_conf
         self.shell_script = shell_script
         self.python_call = python_call
         self.shell_snippet = shell_snippet
 
-    def write_invocation(self, file_writer, task, step_number, exit_after_step, write_before_first_step):
+    def write_invocation(self, file_writer, task, step_number, write_before_first_step):
 
         container = self.task_conf.container
         python_bin = self.task_conf.python_bin
@@ -1283,7 +1254,7 @@ class TaskStep:
         file_writer.write('__transition_to_step_started\n')
 
         #TODO: only redefine __scratch_dir when sbatch-launch.sh
-        if isinstance(self.executer, Slurm):
+        if self.task_conf.is_slurm():
             indent()
             file_writer.write(f"export __scratch_dir=$SLURM_TMPDIR\n")
 
@@ -1322,10 +1293,6 @@ class TaskStep:
         if is_last_step:
             indent()
             file_writer.write("__sign_files\n")
-
-        if exit_after_step:
-            indent()
-            file_writer.write("break\n")
 
         file_writer.write("fi\n\n")
 

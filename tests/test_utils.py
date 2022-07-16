@@ -2,8 +2,25 @@ import inspect
 import os
 import pathlib
 import shutil
-
+import yaml
+import logging.config
 from dry_pipe import DryPipe
+
+def setup_log_conf(log_file):
+    log_conf_file = os.path.join(
+        os.path.dirname(__file__),
+        "logging-configs",
+        log_file
+    )
+
+    with open(log_conf_file) as f:
+        print(f"log config: {log_conf_file}")
+        config = yaml.load(f, Loader=yaml.FullLoader)
+        logging.config.dictConfig(config)
+
+
+def log_4_debug_daemon_mode():
+    setup_log_conf("debug-daemon-mode.yml")
 
 
 class TestSandboxDir:

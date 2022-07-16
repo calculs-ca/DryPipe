@@ -225,13 +225,16 @@ class Pipeline:
         if self.remote_task_confs is None:
             raise Exception(f"no remote_task_confs have been assigned for this pipeline")
         for task_conf in self.remote_task_confs:
-            ssh_remote = task_conf.create_executer()
+            ssh_executer = task_conf.create_executer()
             if printer is not None:
                 printer(
-                    f"Will rsync {self.pipeline_code_dir} to \n {ssh_remote.user_at_host()}:{task_conf.remote_pipeline_code_dir}"
+                    f"Will rsync {self.pipeline_code_dir} to \n {task_conf}:{task_conf.remote_pipeline_code_dir}"
                 )
-            ssh_remote.ensure_connected()
-            ssh_remote.rsync_remote_code_dir_if_applies(self, task_conf)
+            ssh_executer.connect()
+            try:
+                ssh_executer.rsync_remote_code_dir_if_applies(self, task_conf)
+            finally:
+                ssh_executer.close()
 
 
 class PipelineInstance:
@@ -243,10 +246,13 @@ class PipelineInstance:
         self._publish_dir = os.path.join(pipeline_instance_dir, "publish")
         self.dag_determining_tasks_ids = set()
         self.tasks = self.pipeline.task_set_generator(self)
-        self.is_remote_overrides_uploaded = False
+        self._is_remote_overrides_uploaded = set()
 
-    def set_remote_overrides_uploaded(self):
-        self.is_remote_overrides_uploaded = True
+    def set_remote_overrides_uploaded(self, server_key):
+        self._is_remote_overrides_uploaded.add(server_key)
+
+    def is_remote_overrides_uploaded(self, server_key):
+        return server_key in self._is_remote_overrides_uploaded
 
     @staticmethod
     def _hint_file(instance_dir):
@@ -319,33 +325,12 @@ class PipelineInstance:
         self.calc_pre_existing_files_signatures()
         self.get_state().touch()
 
-
-    remote_executor_cache = {}
-
-    def remote_executors_with_task_confs(self):
-
-        def gen():
-            for task in self.tasks:
-                if task.is_remote():
-                    e = task.executer
-                    task_conf = task.task_conf
-                    unicity_key = (
-                        e.server_connection_key(),
-                        task_conf.remote_base_dir,
-                        task_conf.remote_pipeline_code_dir,
-                        task_conf.remote_containers_dir
-                    )
-
-                    cached_executer = PipelineInstance.remote_executor_cache.get(unicity_key)
-
-                    if cached_executer is None:
-                        PipelineInstance.remote_executor_cache[unicity_key] = e
-                    else:
-                        e = cached_executer
-
-                    yield unicity_key, (e, task_conf)
-
-        return dict(gen()).values()
+    def remote_sites_task_confs(self):
+        return {
+            task.task_conf.remote_site_key: task.task_conf
+            for task in self.tasks
+            if task.is_remote()
+        }.values()
 
     def regen_tasks_if_stale(self, force=False):
         if self.tasks.is_stale() or force:
@@ -509,7 +494,7 @@ class PipelineInstance:
 
         return total_changed
 
-    def run_sync(self, tmp_env_vars={}, fail_silently=False):
+    def run_sync(self, tmp_env_vars={}, fail_silently=False, stay_alive_when_no_more_work=False, sync=True):
 
         for k, v in tmp_env_vars.items():
             os.environ[k] = v
@@ -517,7 +502,10 @@ class PipelineInstance:
         self.init_work_dir()
 
         j = Janitor(pipeline_instance=self)
-        i = j.iterate_main_work(sync_mode=True, fail_silently=fail_silently)
+        i = j.iterate_main_work(
+            do_upload_and_download=True,
+            sync_mode=sync, fail_silently=fail_silently, stay_alive_when_no_more_work=stay_alive_when_no_more_work
+        )
         has_work = next(i)
         while has_work:
             has_work = next(i)
