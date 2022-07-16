@@ -1,6 +1,8 @@
 import logging
 import os
+import socket
 import time
+from datetime import datetime
 from threading import Thread
 
 import psutil
@@ -32,6 +34,7 @@ class DaemonThreadHelper:
         self.pipelines = pipelines
         self.logger = logger
         self.ssh_executer_per_remote_site_key = {}
+        self.last_exception_at = None
 
     def iterate_on_pipelines(self):
 
@@ -78,9 +81,16 @@ class DaemonThreadHelper:
 
         self.logger.exception(f"daemon failure ({self.fail_count})")
 
+        if self.last_exception_at is not None:
+            seconds_since_last_exception = (datetime.now() - self.last_exception_at).total_seconds()
+            hour_in_seconds = 60*60
+            if seconds_since_last_exception > hour_in_seconds:
+                self.logger.exception(f"last daemon exceeds 1 hour, will reset fail_count")
+                self.fail_count = 1
+
         if self.fail_count >= DaemonThreadHelper.MAX_DEAMON_FAILS_BEFORE_SHUTDOWN:
 
-            self.logger.critical(f"daemon failed {self.fail_count} times, will exit.")
+            self.logger.critical(f"daemon failed {self.fail_count} 10x in last hour, will exit.")
 
             daemon_name = self.logger.name
 
@@ -88,7 +98,23 @@ class DaemonThreadHelper:
 
             os._exit(0)
 
+        self._reset_ssh_connections_if_applies(exception)
+
+        self.last_exception_at = datetime.now()
         time.sleep(DaemonThreadHelper.SLEEP_SECONDS_AFTER_DAEMON_FAIL)
+
+    def _reset_ssh_connections_if_applies(self, ex):
+
+        from paramiko.buffered_pipe import PipeTimeout
+        if isinstance(ex, PipeTimeout) or isinstance(ex, socket.timeout):
+            self.logger.exception(f"will reset ssh connections")
+            try:
+                for ssh_executer in self.ssh_executer_per_remote_site_key.values():
+                    ssh_executer.close()
+            except:
+                pass
+
+            self.ssh_executer_per_remote_site_key = {}
 
     def get_executer(self, task_conf):
 

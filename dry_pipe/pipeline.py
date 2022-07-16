@@ -491,7 +491,7 @@ class PipelineInstance:
 
         return total_changed
 
-    def run_sync(self, tmp_env_vars={}, fail_silently=False):
+    def run_sync(self, tmp_env_vars={}, fail_silently=False, stay_alive_when_no_more_work=False, sync=True):
 
         for k, v in tmp_env_vars.items():
             os.environ[k] = v
@@ -499,7 +499,9 @@ class PipelineInstance:
         self.init_work_dir()
 
         j = Janitor(pipeline_instance=self)
-        i = j.iterate_main_work(sync_mode=True, fail_silently=fail_silently)
+        i = j.iterate_main_work(
+            sync_mode=sync, fail_silently=fail_silently, stay_alive_when_no_more_work=stay_alive_when_no_more_work
+        )
         has_work = next(i)
         while has_work:
             has_work = next(i)

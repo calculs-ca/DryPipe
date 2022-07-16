@@ -4,7 +4,7 @@ from unittest import TextTestRunner, TestSuite, defaultTestLoader
 from suite import exhaustive_3
 
 
-test_func = "test_state_history_tracking"
+test_func = "test_ssh_crash_recovery"
 
 
 

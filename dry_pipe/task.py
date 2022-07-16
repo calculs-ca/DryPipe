@@ -712,6 +712,8 @@ class Task:
                 f.write("\n")
                 f.write(os.path.join(self.control_dir(), "out_sigs/"))
                 f.write("\n")
+                f.write(os.path.join(self.control_dir(), "output_vars"))
+                f.write("\n")
                 f.write(self.err_log())
                 f.write("\n")
                 f.write(self.out_log())

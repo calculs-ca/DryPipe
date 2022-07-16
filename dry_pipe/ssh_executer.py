@@ -12,8 +12,6 @@ from dry_pipe.internals import flatten
 from dry_pipe.task_state import TaskState
 from dry_pipe.utils import perf_logger_timer
 
-SSH_TIMEOUT = 120
-
 logger_ssh = logging.getLogger(f"{__name__}.ssh")
 
 
@@ -45,6 +43,7 @@ class RemoteSSH(Executor):
         self.key_filename = key_filename
         self.rsync_containers = True
         self.slurm = None
+        self.ssh_timeout_in_seconds = 60
 
     def is_remote(self):
         return True
@@ -95,7 +94,7 @@ class RemoteSSH(Executor):
                     key_filename=os.path.expanduser(self.key_filename)
                         if self.key_filename is not None and self.key_filename.startswith("~")
                         else self.key_filename,
-                    timeout=SSH_TIMEOUT
+                    timeout=self.ssh_timeout_in_seconds
                 )
         except Exception as ex:
             logger_ssh.error(f"ssh connect failed: {self}")
@@ -105,7 +104,7 @@ class RemoteSSH(Executor):
         logger_ssh.debug("will invoke '%s' at %s", cmd, self.ssh_host)
 
         with perf_logger_timer("RemoteSSH.invoke_remote", cmd) as t:
-            stdin, stdout, stderr = self.ssh_client().exec_command(cmd, timeout=SSH_TIMEOUT)
+            stdin, stdout, stderr = self.ssh_client().exec_command(cmd, timeout=self.ssh_timeout_in_seconds)
 
             stdout_txt = stdout.read().decode("utf-8")
 
@@ -116,6 +115,9 @@ class RemoteSSH(Executor):
         logger_ssh.debug(f"invocation of '%s' at {self} returned '%s'", cmd, stdout_txt)
 
         return stdout_txt
+
+    def close(self):
+        self.ssh_client().close()
 
     def fetch_remote_task_states(self, pipeline):
         with perf_logger_timer("RemoteSSH.fetch_remote_task_states") as t:

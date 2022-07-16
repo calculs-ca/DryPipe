@@ -1,8 +1,10 @@
 import unittest
 
-from dry_pipe import DryPipe
+import pipeline_for_ssh_crash_recovery_tests
+from dry_pipe import DryPipe, TaskConf
 from dry_pipe.janitors import Janitor
 from test_01_simple_static_pipeline.simple_static_pipeline import simple_static_pipeline, validate_pipeline_execution
+from test_04_remote_ssh_tasks.pipeline_with_remote_tasks import ensure_remote_dirs_dont_exist
 from test_utils import TestSandboxDir, copy_pre_existing_file_deps_from_code_dir
 
 
@@ -61,3 +63,31 @@ class DaemonModeTests(unittest.TestCase):
             c += 1
 
         self.assertEqual(c, 2)
+
+    def test_ssh_crash_recovery(self):
+
+        tc_remote = TaskConf(
+            executer_type="process",
+            #ssh_specs="maxl@127.0.0.1:~/.ssh/id_dsa",
+            ssh_specs="maxl@ip29.ccs.usherbrooke.ca:~/.ssh/id_rsa",
+            remote_base_dir="/home/maxl/drypipe_tests",
+            remote_containers_dir="dummyZzz"
+        )
+
+        d = TestSandboxDir(self)
+
+        pipeline_instance = d.pipeline_instance_from_generator(
+            pipeline_for_ssh_crash_recovery_tests.create_pipeline(
+                #TaskConf.default()
+                tc_remote
+            )
+        )
+
+        ensure_remote_dirs_dont_exist(pipeline_instance)
+
+        pipeline_instance.run_sync(stay_alive_when_no_more_work=True, sync=False)
+
+        # socat tcp-listen:7775,bind=127.0.0.1,fork tcp:maxl@ip29.ccs.usherbrooke.ca:22
+        # sudo tc qdisc add dev wlp1s0 root netem loss 30%
+
+
