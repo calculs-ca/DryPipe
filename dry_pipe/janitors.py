@@ -79,13 +79,13 @@ class DaemonThreadHelper:
 
         self.fail_count += 1
 
-        self.logger.exception(f"daemon failure ({self.fail_count})")
+        self.logger.error(f"daemon failure ({self.fail_count})")
 
         if self.last_exception_at is not None:
             seconds_since_last_exception = (datetime.now() - self.last_exception_at).total_seconds()
             hour_in_seconds = 60*60
             if seconds_since_last_exception > hour_in_seconds:
-                self.logger.exception(f"last daemon exceeds 1 hour, will reset fail_count")
+                self.logger.info(f"last daemon exceeds 1 hour, will reset fail_count")
                 self.fail_count = 1
 
         if self.fail_count >= DaemonThreadHelper.MAX_DEAMON_FAILS_BEFORE_SHUTDOWN:
@@ -106,8 +106,9 @@ class DaemonThreadHelper:
     def _reset_ssh_connections_if_applies(self, ex):
 
         from paramiko.buffered_pipe import PipeTimeout
-        if isinstance(ex, PipeTimeout) or isinstance(ex, socket.timeout):
-            self.logger.exception(f"will reset ssh connections")
+        from dry_pipe.ssh_executer import SftpFileNotFoundError
+        if isinstance(ex, PipeTimeout) or isinstance(ex, socket.timeout) or isinstance(ex, SftpFileNotFoundError):
+            self.logger.info(f"will reset ssh connections")
             try:
                 for ssh_executer in self.ssh_executer_per_remote_site_key.values():
                     ssh_executer.close()
@@ -224,6 +225,7 @@ class Janitor:
 #                    break
 
             except Exception as ex:
+                daemon_thread_helper.logger.exception(ex)
                 if sync_mode:
                     raise ex
                 daemon_thread_helper.handle_exception_in_daemon_loop(ex)

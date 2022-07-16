@@ -15,6 +15,13 @@ from dry_pipe.utils import perf_logger_timer
 logger_ssh = logging.getLogger(f"{__name__}.ssh")
 
 
+class SftpFileNotFoundError(Exception):
+    """
+     sftp.put fragile, Paramiko bug:  https://github.com/paramiko/paramiko/issues/149
+    """
+    pass
+
+
 class RemoteSSH(Executor):
 
     def __init__(
@@ -330,7 +337,8 @@ class RemoteSSH(Executor):
                             break
                         except Exception as ex:
                             if i >= 3:
-                                raise ex
+                                logger_ssh.warning(ex)
+                                raise SftpFileNotFoundError()
                             else:
                                 logger_ssh.warning(f"sftp failure %s will sleep and retry", i)
                                 time.sleep(2)
