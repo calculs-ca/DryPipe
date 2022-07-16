@@ -263,7 +263,7 @@ class Janitor:
 
                     for pipeline in daemon_thread_helper.iterate_on_pipelines():
 
-                        if _upload_janitor(pipeline, daemon_thread_helper.logger) > 0:
+                        if _upload_janitor(daemon_thread_helper, pipeline, daemon_thread_helper.logger) > 0:
                             daemon_thread_helper.register_work()
 
                     daemon_thread_helper.end_round()
