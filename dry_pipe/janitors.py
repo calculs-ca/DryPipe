@@ -107,7 +107,11 @@ class DaemonThreadHelper:
 
         from paramiko.buffered_pipe import PipeTimeout
         from dry_pipe.ssh_executer import SftpFileNotFoundError
-        if isinstance(ex, PipeTimeout) or isinstance(ex, socket.timeout) or isinstance(ex, SftpFileNotFoundError):
+        from paramiko.ssh_exception import SSHException
+        if isinstance(ex, PipeTimeout) or \
+           isinstance(ex, socket.timeout) or \
+           isinstance(ex, SSHException) or \
+           isinstance(ex, SftpFileNotFoundError):
             self.logger.info(f"will reset ssh connections")
             try:
                 for ssh_executer in self.ssh_executer_per_remote_site_key.values():
@@ -116,6 +120,8 @@ class DaemonThreadHelper:
                 pass
 
             self.ssh_executer_per_remote_site_key = {}
+        else:
+            self.logger.info(f"exception not known as retryable %s", ex.__class__.__name__)
 
     def get_executer(self, task_conf):
 
