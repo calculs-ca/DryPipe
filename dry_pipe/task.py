@@ -143,10 +143,8 @@ class Task:
 
         if self.is_remote():
 
-            # TODO: close ssh session using "with session as:
-            ssh_executor = self.task_conf.create_executer()
-
-            f_out, f_err, f_history_file, last_activity_time = ssh_executor.fetch_logs_and_history(self)
+            with self.task_conf.create_executer() as ssh_executor:
+                f_out, f_err, f_history_file, last_activity_time = ssh_executor.fetch_logs_and_history(self)
 
             return {
                 'key': self.key,

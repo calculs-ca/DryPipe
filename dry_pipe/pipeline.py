@@ -306,6 +306,15 @@ class PipelineInstance:
 
         os.chmod(pipeline_env, 0o764)
 
+        drypipe_cmds = os.path.join(self._work_dir, "dryfuncs")
+        with open(drypipe_cmds, "w") as _drypipe_cmds:
+            _drypipe_cmds.write("#!/usr/bin/env python3\n\n")
+
+            with open(os.path.join(os.path.dirname(__file__), "script_commands.py")) as f:
+                _drypipe_cmds.write(f.read())
+
+        os.chmod(drypipe_cmds, 0o764)
+
         drypipe_bash_lib = os.path.join(self._work_dir, "drypipe-bash-lib.sh")
 
         with open(drypipe_bash_lib, "w") as f:
