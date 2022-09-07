@@ -431,10 +431,10 @@ def test(ctx, test_case_mod_func):
     def run_test(python_test_case):
         init_func = python_test_case.get("init_func")
 
-        if init_func is None:
+        if init_func is not None:
             init_func()
 
-        res = python_call.func(*python_test_case["args"], test=test)
+        res = python_call.func(*python_test_case["args"], test=python_test_case)
 
         expects = python_test_case.get("expects")
         if expects is not None:
