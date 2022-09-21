@@ -109,7 +109,11 @@ class DaemonThreadHelper:
 
         from paramiko.buffered_pipe import PipeTimeout
         from dry_pipe.ssh_executer import SftpFileNotFoundError
-        if isinstance(ex, PipeTimeout) or isinstance(ex, socket.timeout) or isinstance(ex, SftpFileNotFoundError):
+        from paramiko.ssh_exception import SSHException
+        if isinstance(ex, PipeTimeout) or \
+           isinstance(ex, socket.timeout) or \
+           isinstance(ex, SSHException) or \
+           isinstance(ex, SftpFileNotFoundError):
             self.logger.info(f"will reset ssh connections")
             try:
                 for ssh_executer in self.ssh_executer_per_remote_site_key.values():
@@ -118,6 +122,8 @@ class DaemonThreadHelper:
                 pass
 
             self.ssh_executer_per_remote_site_key = {}
+        else:
+            self.logger.info(f"exception not known as retryable %s", ex.__class__.__name__)
 
     def get_executer(self, task_conf):
 
@@ -266,12 +272,13 @@ class Janitor:
 
                     for pipeline in daemon_thread_helper.iterate_on_pipelines():
 
-                        if _upload_janitor(pipeline, daemon_thread_helper.logger) > 0:
+                        if _upload_janitor(daemon_thread_helper, pipeline, daemon_thread_helper.logger) > 0:
                             daemon_thread_helper.register_work()
 
                     daemon_thread_helper.end_round()
 
                 except Exception as ex:
+                    daemon_thread_helper.logger.exception(ex)
                     daemon_thread_helper.handle_exception_in_daemon_loop(ex)
 
         def download_j():
@@ -300,6 +307,7 @@ class Janitor:
                     daemon_thread_helper.end_round()
 
                 except Exception as ex:
+                    daemon_thread_helper.logger.exception(ex)
                     daemon_thread_helper.handle_exception_in_daemon_loop(ex)
 
         # setup stalled transfer for restart
