@@ -9,7 +9,7 @@ import os
 import traceback
 import click
 from dry_pipe import DryPipe
-from dry_pipe.internals import env_from_sourcing
+from dry_pipe.internals import env_from_sourcing, PythonCall
 from dry_pipe.janitors import Janitor
 from dry_pipe.monitoring import fetch_task_groups_stats
 from dry_pipe.pipeline import Pipeline, PipelineInstance
@@ -399,16 +399,59 @@ def _func_from_mod_func(mod_func):
 
 @click.command()
 @click.pass_context
-@click.argument('mod-func', type=click.STRING)
-def test(ctx, mod_func):
-    python_task = _func_from_mod_func(mod_func)
+@click.argument('test-case-mod-func', type=click.STRING)
+def test(ctx, test_case_mod_func):
 
-    if len(python_task.tests) == 0:
-        click.echo(f"No tests for python_task {mod_func}")
+    idx = None
+
+    if test_case_mod_func.count(":") == 1:
+        mod, func_name = test_case_mod_func.split(":")
+    elif test_case_mod_func.count(":") == 2:
+        mod, func_name, idx = test_case_mod_func.split(":")
+        idx = int(idx)
+    else:
+        raise Exception(
+            f"expected an argument of the form <module>:<function_name>, or <module>:<function_name>:<number>"
+        )
+
+    module = importlib.import_module(mod)
+
+    python_call = getattr(module, func_name, None)
+
+    if python_call is None:
+        raise Exception(f"function {func_name} not found in module {mod}")
+
+    if not isinstance(python_call, PythonCall):
+        raise Exception(f"function {func_name} should be decorated with @DryPipe.python_call(tests=[...])")
+
+    if len(python_call.tests) == 0:
+        click.echo(f"python_task {test_case_mod_func} has no tests")
         return
 
-    for test in python_task.tests:
-        python_task.func(*test["args"], test=test)
+    def run_test(python_test_case):
+        init_func = python_test_case.get("init_func")
+
+        if init_func is not None:
+            init_func()
+
+        res = python_call.func(*python_test_case["args"], test=python_test_case)
+
+        expects = python_test_case.get("expects")
+        if expects is not None:
+            if res != expects:
+                raise Exception(f"expected {json.dumps(expects, indent=2)}\ngot:\n{json.dumps(res, indent=2)}")
+
+    c = 0
+
+    if idx is None:
+        for python_test_case in python_call.tests:
+            run_test(python_test_case)
+            print(f"test passed: {mod}:{func_name}:{c}")
+            c += 1
+    else:
+        run_test(python_call.tests[idx])
+        print(f"test passed: {test_case_mod_func}")
+
 
 
 @click.command()
