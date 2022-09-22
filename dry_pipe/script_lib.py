@@ -1,6 +1,7 @@
 import glob
 import json
 import os
+import signal
 import subprocess
 import sys
 import textwrap
@@ -24,9 +25,9 @@ def task_script_header():
         loader = importlib.machinery.SourceFileLoader('script_lib', script_lib_path)
         spec = importlib.util.spec_from_loader(loader.name, loader)
         script_lib = importlib.util.module_from_spec(spec)
-        loader.exec_module(script_lib)
-                
-        env = script_lib.source_task_env(os.path.join(__script_location, 'task-env.sh'))        
+        loader.exec_module(script_lib)                                
+        env = script_lib.source_task_env(os.path.join(__script_location, 'task-env.sh'))
+        script_lib.register_timeout_handler()        
     """)
 
 
@@ -133,6 +134,15 @@ def transition_to_step_started(state_file, step_number):
 def transition_to_step_completed(state_file, step_number):
     return _transition_state_file(state_file, "step-completed", step_number, inc_step_number=True)
 
+def register_timeout_handler(sig=signal.SIGUSR1):
+
+    def timeout_handler(s, frame):
+        step_number, control_dir, state_file = read_task_state()
+        _transition_state_file(state_file, "timed-out", step_number)
+        exit(1)
+
+    signal.signal(sig, timeout_handler)
+
 
 def sign_files():
     return
@@ -172,17 +182,19 @@ def run_script(cmd):
 
     is_silent = "--is-silent" in sys.argv
 
-    with open(os.environ['__out'], 'w')as  out:
+    with open(os.environ['__out'], 'w') as out:
         with open(os.environ['__err'], 'w') as err:
             with subprocess.Popen(
                     cmd,
                     stdout=out,
                     stderr=err,
-                    shell=True,
-                    text=True
+                    shell=True
             ) as p:
                 p.wait()
-                return p.returncode
+                if p.returncode != 0:
+                    step_number, control_dir, state_file = read_task_state()
+                    _transition_state_file(state_file, "failed", step_number)
+                    exit(1)
 
 
 def launch_task(control_dir, is_slurm, wait_for_completion=False):

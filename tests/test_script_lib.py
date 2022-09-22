@@ -1,29 +1,30 @@
 import os
-import shutil
+import signal
 import subprocess
-import sys
 import textwrap
+import time
 import unittest
 from pathlib import Path
+from threading import Thread
 
 from dry_pipe import bash_shebang, script_lib
 from dry_pipe.script_lib import task_script_header, touch
 from test_utils import TestSandboxDir
 
 
-def _run_script(script):
+def _run_script(script, send_signal=None):
 
     with subprocess.Popen(
             [script, "--is-silent"],
-            stdout=sys.stdout, #subprocess.PIPE,
-            stderr=sys.stderr #subprocess.PIPE
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE
     ) as p:
+
+        if send_signal is not None:
+            send_signal(p)
+
         p.wait()
-
-        out = "" #p.stdout.read().strip().decode("utf8")
-        err = "" #p.stderr.read().strip().decode("utf8")
-
-        return p.returncode, out, err
+        return p.returncode
 
 
 __non_ending_script = """
@@ -37,20 +38,18 @@ done
 
 class ScriptLibTests(unittest.TestCase):
 
-    def test_bash_run_no_fail(self):
-        d = TestSandboxDir(self)
+    def _out_err_content(self, control_dir):
+        with open(os.path.join(control_dir, "out.log")) as out:
+            with open(os.path.join(control_dir, "err.log")) as err:
+                return out.read(), err.read()
+
+    def _single_step_bash_template(self, d, script_code):
         d.init_pid_for_tests()
 
-        __ending_script = textwrap.dedent("""
-            #!/usr/bin/env bash
-            echo "the end"
-            echo "err123" >&2
-        """)
+        script_path = os.path.join(d.sandbox_dir, 'script.sh')
 
-        ending_script_path = os.path.join(d.sandbox_dir, 'ending-script.sh')
-
-        with open(ending_script_path, 'w') as f:
-            f.write(__ending_script)
+        with open(script_path, 'w') as f:
+            f.write(script_code)
 
         pseudo_task_key = "task0"
         control_dir = os.path.join(d.sandbox_dir, '.drypipe', pseudo_task_key)
@@ -70,20 +69,19 @@ class ScriptLibTests(unittest.TestCase):
             """))
 
         os.chmod(task_env_file, 0o764)
-        os.chmod(ending_script_path, 0o764)
+        os.chmod(script_path, 0o764)
 
         task_script = os.path.join(control_dir, 'task')
 
         with open(task_script, 'w') as f:
             f.write(task_script_header())
             f.write(textwrap.dedent(
-                f"""                        
-                script_lib.touch(os.path.join(env['__control_dir'], 'output_vars'))
-                
-                step_number, control_dir, state_file = script_lib.read_task_state()                
+                f"""                                        
+                script_lib.touch(os.path.join(env['__control_dir'], 'output_vars'))                                                
+                step_number, control_dir, state_file = script_lib.read_task_state()                                
                         
                 state_file, step_number = script_lib.transition_to_step_started(state_file, step_number)                                        
-                script_lib.run_script(os.path.join(env['__pipeline_code_dir'], 'ending-script.sh'))                    
+                script_lib.run_script(os.path.join(env['__pipeline_code_dir'], 'script.sh'))                    
                 state_file, step_number = script_lib.transition_to_step_completed(state_file, step_number)                                                        
                 """
             ))
@@ -92,20 +90,90 @@ class ScriptLibTests(unittest.TestCase):
         state_file = os.path.join(control_dir, 'state.queued.0')
         touch(state_file)
 
-        return_code, out, err = _run_script(task_script)
+        return control_dir, task_script
+
+    def test_bash_run_no_fail(self):
+        d = TestSandboxDir(self)
+        script_code = textwrap.dedent("""
+            #!/usr/bin/env bash
+            echo "the end"
+            echo "err123" >&2
+        """)
+
+        control_dir, task_script = self._single_step_bash_template(d, script_code)
+
+        return_code = _run_script(task_script)
 
         if return_code != 0:
-            raise Exception(f"task failed: {err}\n stdout:\n{out}")
+            raise Exception(f"task failed")
 
-        with open(os.path.join(control_dir, "out.log")) as out:
-            with open(os.path.join(control_dir, "err.log")) as err:
-                self.assertEqual(out.read(), "the end\n")
-                self.assertEqual(err.read(), "err123\n")
+        out, err = self._out_err_content(control_dir)
+
+        self.assertEqual(out, "the end\n")
+        self.assertEqual(err, "err123\n")
 
         step_number, control_dir, state_file = script_lib.read_task_state(control_dir)
 
         self.assertEqual(step_number, 1)
         self.assertEqual(os.path.basename(state_file), "state.step-completed.1")
 
+    def test_bash_fail(self):
+        d = TestSandboxDir(self)
+        script_code = textwrap.dedent("""
+            #!/usr/bin/env bash            
+            echo "the end"
+            echo "err99999" >&2
+            exit 1            
+        """)
 
+        control_dir, task_script = self._single_step_bash_template(d, script_code)
 
+        return_code = _run_script(task_script)
+
+        self.assertNotEqual(return_code, 0)
+
+        out, err = self._out_err_content(control_dir)
+
+        self.assertEqual(out, "the end\n")
+        self.assertEqual(err, "err99999\n")
+
+        step_number, control_dir, state_file = script_lib.read_task_state(control_dir)
+
+        self.assertEqual(step_number, 0)
+        self.assertEqual(os.path.basename(state_file), "state.failed.0")
+
+    def test_bash_timeout(self):
+        d = TestSandboxDir(self)
+        script_code = textwrap.dedent("""
+            #!/usr/bin/env bash            
+            echo "the end"
+            echo "err99999" >&2
+            for i in $(seq 1000000); do
+                echo "--:>$i"
+                sleep 2
+            done                        
+        """)
+
+        control_dir, task_script = self._single_step_bash_template(d, script_code)
+
+        def send_signal(p):
+            def f():
+                time.sleep(1)
+                p.send_signal(signal.SIGUSR1)
+                time.sleep(1)
+                p.kill()
+            t = Thread(target=f)
+            t.start()
+
+        return_code = _run_script(task_script, send_signal)
+
+        self.assertNotEqual(return_code, 0)
+
+        out, err = self._out_err_content(control_dir)
+
+        self.assertEqual(err, "err99999\n")
+
+        step_number, control_dir, state_file = script_lib.read_task_state(control_dir)
+
+        self.assertEqual(step_number, 0)
+        self.assertEqual(os.path.basename(state_file), "state.timed-out.0")
