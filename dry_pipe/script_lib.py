@@ -5,6 +5,7 @@ import signal
 import subprocess
 import sys
 import textwrap
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 
@@ -145,7 +146,41 @@ def register_timeout_handler(sig=signal.SIGUSR1):
 
 
 def sign_files():
-    return
+    file_list_to_sign = os.environ.get('__file_list_to_sign')
+
+    if file_list_to_sign is None or file_list_to_sign == "":
+        return
+
+    sig_dir = os.path.join(os.environ['__control_dir'], 'out_sigs')
+
+    Path(sig_dir).mkdir(exist_ok=True)
+
+    def all_files():
+        for f in file_list_to_sign.split(","):
+            if os.path.exists(f):
+                yield f
+
+    def checksum_one_file(f):
+        bf = os.path.basename(f)
+        sig_file = os.path.join(sig_dir, f"{bf}.sig")
+        cmd = f"sha1sum {f}"
+        with subprocess.Popen(
+            cmd.split(" "),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE
+        ) as p:
+            p.wait()
+            if p.returncode != 0:
+                raise Exception(f"failed: '{cmd}'")
+            sha1sum = p.stdout.read().strip().decode("utf8")
+            with open(sig_file, "w") as f:
+                f.write(sha1sum)
+            return True
+
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        for b in executor.map(checksum_one_file, all_files()):
+            assert b
+
 
 
 def transition_to_completed():

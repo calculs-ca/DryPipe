@@ -24,17 +24,11 @@ def _run_script(script, send_signal=None):
             send_signal(p)
 
         p.wait()
-        return p.returncode
+        out = p.stdout.read().strip().decode("utf8")
+        err = p.stderr.read().strip().decode("utf8")
+        return p.returncode, out, err
 
 
-__non_ending_script = """
-#!/usr/bin/env bash
-
-for i in $(seq 1000000); do
-    echo "--:>$i"
-    sleep 2
-done
-"""
 
 class ScriptLibTests(unittest.TestCase):
 
@@ -43,17 +37,7 @@ class ScriptLibTests(unittest.TestCase):
             with open(os.path.join(control_dir, "err.log")) as err:
                 return out.read(), err.read()
 
-    def _single_step_bash_template(self, d, script_code):
-        d.init_pid_for_tests()
-
-        script_path = os.path.join(d.sandbox_dir, 'script.sh')
-
-        with open(script_path, 'w') as f:
-            f.write(script_code)
-
-        pseudo_task_key = "task0"
-        control_dir = os.path.join(d.sandbox_dir, '.drypipe', pseudo_task_key)
-        Path(control_dir).mkdir()
+    def _write_task_env_file(self, control_dir, pseudo_task_key):
         task_env_file = os.path.join(control_dir, 'task-env.sh')
         with open(task_env_file, 'w') as f:
             f.write(bash_shebang())
@@ -66,9 +50,24 @@ class ScriptLibTests(unittest.TestCase):
                 export __out=$__control_dir/out.log
                 export __err=$__control_dir/err.log
                 export __work_dir=$__pipeline_instance_dir/publish/{pseudo_task_key}   
+                export __file_list_to_sign=$__work_dir/a.txt,$__work_dir/b.txt
             """))
-
         os.chmod(task_env_file, 0o764)
+
+    def _single_step_bash_template(self, d, script_code):
+        d.init_pid_for_tests()
+
+        script_path = os.path.join(d.sandbox_dir, 'script.sh')
+
+        with open(script_path, 'w') as f:
+            f.write(script_code)
+
+        pseudo_task_key = "task0"
+        control_dir = os.path.join(d.sandbox_dir, '.drypipe', pseudo_task_key)
+        Path(control_dir).mkdir()
+        work_dir = os.path.join(d.sandbox_dir, 'publish', pseudo_task_key)
+        Path(work_dir).mkdir()
+        self._write_task_env_file(control_dir, pseudo_task_key)
         os.chmod(script_path, 0o764)
 
         task_script = os.path.join(control_dir, 'task')
@@ -82,7 +81,8 @@ class ScriptLibTests(unittest.TestCase):
                         
                 state_file, step_number = script_lib.transition_to_step_started(state_file, step_number)                                        
                 script_lib.run_script(os.path.join(env['__pipeline_code_dir'], 'script.sh'))                    
-                state_file, step_number = script_lib.transition_to_step_completed(state_file, step_number)                                                        
+                state_file, step_number = script_lib.transition_to_step_completed(state_file, step_number)
+                script_lib.sign_files()                                                        
                 """
             ))
         os.chmod(task_script, 0o764)
@@ -102,10 +102,10 @@ class ScriptLibTests(unittest.TestCase):
 
         control_dir, task_script = self._single_step_bash_template(d, script_code)
 
-        return_code = _run_script(task_script)
+        return_code, out, err = _run_script(task_script)
 
         if return_code != 0:
-            raise Exception(f"task failed")
+            raise Exception(f"task failed: {out}, {err}")
 
         out, err = self._out_err_content(control_dir)
 
@@ -116,6 +116,26 @@ class ScriptLibTests(unittest.TestCase):
 
         self.assertEqual(step_number, 1)
         self.assertEqual(os.path.basename(state_file), "state.step-completed.1")
+
+    def test_file_sign(self):
+        d = TestSandboxDir(self)
+        script_code = textwrap.dedent("""
+            #!/usr/bin/env bash
+            echo "a" > $__work_dir/a.txt
+            echo "b" > $__work_dir/b.txt
+        """)
+
+        control_dir, task_script = self._single_step_bash_template(d, script_code)
+
+        return_code, out, err = _run_script(task_script)
+
+        if return_code != 0:
+            raise Exception(f"task failed: {out}, {err}")
+
+        with open(os.path.join(control_dir, "out_sigs", "a.txt.sig")) as a:
+            sig, f = a.readline().split()
+            self.assertEqual(sig, "3f786850e387550fdab836ed7e6dc881de23001b")
+            self.assertTrue(f.endswith("publish/task0/a.txt"))
 
     def test_bash_fail(self):
         d = TestSandboxDir(self)
