@@ -4,7 +4,8 @@ import pathlib
 import shutil
 import yaml
 import logging.config
-from dry_pipe import DryPipe
+from dry_pipe import DryPipe, script_lib
+
 
 def setup_log_conf(log_file):
     log_conf_file = os.path.join(
@@ -64,6 +65,18 @@ class TestSandboxDir:
             pi.run_sync(fail_silently=fail_silently)
 
         return pi
+
+    def init_pid_for_tests(self):
+        def mkdir(d):
+            d = os.path.join(self.sandbox_dir, d)
+            pathlib.Path(d).mkdir(exist_ok=True)
+            return d
+
+        drypipe_dir = mkdir('.drypipe')
+        mkdir('publish')
+
+        shutil.copy(script_lib.__file__, drypipe_dir)
+
 
 
 def copy_pre_existing_file_deps_from_code_dir(pipeline_instance):
