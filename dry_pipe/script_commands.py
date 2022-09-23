@@ -33,7 +33,7 @@ def launch_task(control_dir, is_slurm, wait_for_completion=False):
 
     r_script, r_sbatch_script, r_out, r_err, r_out_sig_dir, r_state_file_glob, launch_state = map(
         lambda f: os.path.join(control_dir, f), [
-            "script.sh",
+            "task",
             "sbatch-launcher.sh",
             "out.log",
             "err.log",

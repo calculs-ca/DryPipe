@@ -28,7 +28,7 @@ def task_script_header():
         script_lib = importlib.util.module_from_spec(spec)
         loader.exec_module(script_lib)                                
         env = script_lib.source_task_env(os.path.join(__script_location, 'task-env.sh'))
-        script_lib.register_timeout_handler()        
+        script_lib.register_timeout_handler()                
     """)
 
 
@@ -105,7 +105,7 @@ def _append_to_history(control_dir, state_name, step_number=None):
         f.write("\n")
 
 
-def _transition_state_file(state_file, next_state_name, step_number, inc_step_number=False):
+def _transition_state_file(state_file, next_state_name, step_number=None, inc_step_number=False):
 
     control_dir = os.path.dirname(state_file)
 
@@ -182,10 +182,8 @@ def sign_files():
             assert b
 
 
-
-def transition_to_completed():
-
-    return
+def transition_to_completed(state_file):
+    return _transition_state_file(state_file, "completed-unsigned")
 
 
 def run_script(cmd):
@@ -217,13 +215,21 @@ def run_script(cmd):
 
     is_silent = "--is-silent" in sys.argv
 
-    with open(os.environ['__out'], 'w') as out:
-        with open(os.environ['__err'], 'w') as err:
+    with open(os.environ['__out_log'], 'w') as out:
+        with open(os.environ['__err_log'], 'w') as err:
+
+            shell = True
+            if cmd.endswith(".sh"):
+                if cmd.startswith("singularity"):
+                    shell = True
+                else:
+                    cmd = ['/bin/bash', cmd]
+                    shell = False
             with subprocess.Popen(
                     cmd,
                     stdout=out,
                     stderr=err,
-                    shell=True
+                    shell=shell
             ) as p:
                 p.wait()
                 if p.returncode != 0:
@@ -239,7 +245,7 @@ def launch_task(control_dir, is_slurm, wait_for_completion=False):
 
     r_script, r_sbatch_script, r_out, r_err, r_out_sig_dir, r_state_file_glob, launch_state = map(
         lambda f: os.path.join(control_dir, f), [
-            "script.sh",
+            "task",
             "sbatch-launcher.sh",
             "out.log",
             "err.log",

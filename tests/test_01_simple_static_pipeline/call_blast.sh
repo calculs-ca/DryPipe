@@ -2,7 +2,7 @@
 
 set -e
 
-if [ $dummy_env_var = "abc" ]; then
+if [[ $dummy_env_var = "abc" ]]; then
   echo "good..."
 else
   echo >&2 echo "not good, dummy_env_var not set"

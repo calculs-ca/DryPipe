@@ -47,8 +47,8 @@ class ScriptLibTests(unittest.TestCase):
                 export export __pipeline_code_dir=$__pipeline_instance_dir                
                 # . $__pipeline_instance_dir/.drypipe/pipeline-env.sh
                 export __control_dir=$__pipeline_instance_dir/.drypipe/{pseudo_task_key}
-                export __out=$__control_dir/out.log
-                export __err=$__control_dir/err.log
+                export __out_log=$__control_dir/out.log
+                export __err_log=$__control_dir/err.log
                 export __work_dir=$__pipeline_instance_dir/publish/{pseudo_task_key}   
                 export __file_list_to_sign=$__work_dir/a.txt,$__work_dir/b.txt
             """))
