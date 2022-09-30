@@ -493,7 +493,7 @@ def _upload_janitor(daemon_thread_helper, pipeline, logger):
         task_state = task_state.transition_to_upload_started()
         task = pipeline.tasks[task_state.task_key]
         executer = daemon_thread_helper.get_executer(task.task_conf)
-        executer.upload_task_inputs(task_state, task)
+        executer.upload_task_inputs(task_state)
         task_state = task_state.transition_to_upload_completed()
         task_state.transition_to_queued()
 

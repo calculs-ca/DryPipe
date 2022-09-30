@@ -433,6 +433,24 @@ class TaskConf:
         self.init_bash_command = init_bash_command
         self.python_interpreter_switches = python_interpreter_switches
 
+        if self.ssh_specs is not None:
+            ssh_specs_parts = self.ssh_specs.split(":")
+            if len(ssh_specs_parts) == 2:
+                ssh_username_ssh_host, self.key_filename = ssh_specs_parts
+            elif len(ssh_specs_parts) == 1:
+                ssh_username_ssh_host = ssh_specs_parts[0]
+                self.key_filename = "~/.ssh/id_rsa"
+            else:
+                raise Exception(f"bad ssh_specs format: {self.ssh_specs}")
+
+            self.ssh_username, self.ssh_host = ssh_username_ssh_host.split("@")
+
+            self.remote_site_key = ":".join([
+                self.ssh_username,
+                self.ssh_host,
+                self.remote_base_dir
+            ])
+
     def as_json(self):
         return dict(
             (key, value)
