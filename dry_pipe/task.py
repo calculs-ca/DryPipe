@@ -13,10 +13,12 @@ from itertools import groupby
 import textwrap
 
 from dry_pipe.actions import TaskAction
-from dry_pipe.bash import bash_shebang
+from dry_pipe.bash import bash_shebang, python_shebang
 from dry_pipe.internals import \
     IndeterminateFile, ProducedFile, Slurm, IncompleteVar, Val, \
     OutputVar, InputFile, InputVar, FileSet, TaskMatcher, OutFileSet, ValidationError, flatten, TaskProps
+
+from dry_pipe.script_lib import task_script_header
 from dry_pipe.task_state import TaskState, tail, parse_in_out_meta
 
 
@@ -160,10 +162,8 @@ class Task:
 
         if self.is_remote():
 
-            # TODO: close ssh session using "with session as:
-            ssh_executor = self.task_conf.create_executer()
-
-            f_out, f_err, f_history_file, last_activity_time = ssh_executor.fetch_logs_and_history(self)
+            with self.task_conf.create_executer() as ssh_executor:
+                f_out, f_err, f_history_file, last_activity_time = ssh_executor.fetch_logs_and_history(self)
 
             return {
                 'key': self.key,
@@ -673,30 +673,9 @@ class Task:
         shell_script_file = self.v_abs_script_file()
 
         with open(shell_script_file, "w") as f:
-            f.write(f"{bash_shebang()}\n\n")
+            f.write(task_script_header())
 
-            f.write(textwrap.dedent("""
-                if [[ -z "$SLURM_JOB_ID" ]] ; then
-                    __script_location=$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )                                        
-                elif [[ -z "__script_location" ]] ; then                    
-                    echo "env variable '__script_location' must be set when running as a Slurm job" >&2
-                    exit 1                    
-                fi
-
-                if [[ -z __arg_1  || $1 == "--force" ]] ; then
-                    __arg_1=$1
-                fi
-                
-                . $__script_location/task-env.sh
-                . $__pipeline_instance_dir/.drypipe/drypipe-bash-lib.sh                
-                __read_task_state
-                __check_bash_version
-                touch $__control_dir/output_vars                
-                trap  "__transition_to_timed_out"  USR1                
-                trap '__transition_to_failed ${LINENO}' ERR                                
-            """))
-
-            f.write("\nfor __v in 0; do\n\n")
+            f.write("\nstep_number, control_dir, state_file = script_lib.read_task_state()\n")
 
             def write_before_first_step(indent):
                 #f.write(f"{indent}mkdir -p $__work_dir\n")
@@ -709,10 +688,7 @@ class Task:
                 )
                 step_number += 1
 
-            f.write('__transition_to_completed\n')
-
-            f.write(f"rm -f $__pid_file_glob_matcher\n")
-            f.write("\ndone\n")
+            f.write('script_lib.transition_to_completed(state_file)\n')
 
         os.chmod(shell_script_file, 0o764)
 
@@ -737,7 +713,7 @@ class Task:
                      "    --signal=B:USR1@50 \\",
                      "    --parsable \\",
                     f"    --job-name={self.key} \\",
-                     "    $__script_location/script.sh)"
+                     "    $__script_location/task)"
                 ]))
 
                 f.write("\n\n")
@@ -928,7 +904,7 @@ class Task:
         return None
 
     def script_file(self):
-        return os.path.join(self.control_dir(), "script.sh")
+        return os.path.join(self.control_dir(), "task")
 
     def step_script_file(self, step_number):
         return os.path.join(self.control_dir(), f"step-{step_number}.sh")
@@ -1228,13 +1204,20 @@ class TaskStep:
         python_bin = self.task_conf.python_bin
 
         if self.shell_snippet is not None:
-            invocation_line = task.v_exp_step_script_file(step_number)
+            if container is not None:
+                invocation_line = task.v_exp_step_script_file(step_number)
+            else:
+                invocation_line = f"os.path.join(os.environ['__pipeline_instance_dir'], '{task.step_script_file(step_number)}')"
+
             step_script = task.v_abs_step_script_file(step_number)
             with open(step_script, "w") as _step_script:
                 _step_script.write(self.shell_snippet)
             os.chmod(step_script, 0o764)
         elif self.shell_script is not None:
-            invocation_line = f"$__pipeline_code_dir/{self.shell_script}"
+            if container is not None:
+                invocation_line = f"$__pipeline_code_dir/{self.shell_script}"
+            else:
+                invocation_line = f"os.path.join(os.environ['__pipeline_code_dir'], '{self.shell_script}')"
         elif python_bin is not None:
 
             switches = " ".join(self.task_conf.python_interpreter_switches)
@@ -1242,7 +1225,7 @@ class TaskStep:
         else:
             raise Exception("shouldn't have got here")
 
-        file_writer.write(f"\nif (( $__next_step_number <= {step_number} )); then\n")
+        file_writer.write(f"\nif step_number <= {step_number}:\n")
 
         if step_number == 0:
             write_before_first_step(indent="    ")
@@ -1251,7 +1234,9 @@ class TaskStep:
             file_writer.write("    ")
 
         indent()
-        file_writer.write('__transition_to_step_started\n')
+        file_writer.write(
+            'state_file, step_number = script_lib.transition_to_step_started(state_file, step_number)\n'
+        )
 
         #TODO: only redefine __scratch_dir when sbatch-launch.sh
         if self.task_conf.is_slurm():
@@ -1260,41 +1245,39 @@ class TaskStep:
 
         if container is None:
             indent()
-            file_writer.write(f"__step_command=$(echo {invocation_line})")
+            if python_bin is not None:
+                invocation_line = f"'{invocation_line}'"
+            file_writer.write(f"script_lib.run_script({invocation_line})")
         else:
-            if self.task_conf.command_before_launch_container is not None:
-                indent()
-                file_writer.write(self.task_conf.command_before_launch_container)
-                file_writer.write("\n\n")
+            #if self.task_conf.command_before_launch_container is not None:
+            #    indent()
+            #    file_writer.write(self.task_conf.command_before_launch_container)
+            #    file_writer.write("\n\n")
 
             indent()
+            container_exec_cmd = f"singularity exec $__containers_dir/{container} {invocation_line}"
+            file_writer.write(f'script_lib.run_script("{container_exec_cmd}")')
 
-            file_writer.write(f"container_image=$(__container_image_path {container})\n")
+            file_writer.write("\n")
 
-            indent()
-            file_writer.write("__add_binding_for_singularity_if_required\n")
+            #indent()
+            #file_writer.write("__add_binding_for_singularity_if_required\n")
 
-            indent()
-            file_writer.write(f"__step_command=$(echo singularity exec $container_image")
-            file_writer.write(" ")
-            file_writer.write(invocation_line)
-            file_writer.write(")")
 
         file_writer.write('\n')
 
         indent()
-        file_writer.write('__invoke_step\n')
-
-        indent()
-        file_writer.write('__transition_to_step_completed\n')
+        file_writer.write(
+            'state_file, step_number = script_lib.transition_to_step_completed(state_file, step_number)\n'
+        )
 
         is_last_step = step_number == (len(task.task_steps) - 1)
 
         if is_last_step:
             indent()
-            file_writer.write("__sign_files\n")
+            file_writer.write("script_lib.sign_files()\n")
 
-        file_writer.write("fi\n\n")
+        file_writer.write("\n")
 
 
 class TaskOut:

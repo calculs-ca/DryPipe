@@ -1,17 +1,15 @@
 import inspect
 import sys
 from unittest import TextTestRunner, TestSuite, defaultTestLoader
-from suite import exhaustive_3
-
+from suite import exhaustive_3, low_level_tests
 
 test_func = "test_run_two_instances_until_done"
-
 
 if __name__ == '__main__':
 
     def search():
 
-        all_classes = exhaustive_3()
+        all_classes = exhaustive_3() + low_level_tests()
 
         for c in all_classes:
             #print(f"{c.__name__}")

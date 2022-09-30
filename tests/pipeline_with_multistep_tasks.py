@@ -58,6 +58,7 @@ def hybrid_bash_python_mutlistep_pipeline(dsl):
     ).calls(
         """
             #!/usr/bin/env bash
+            echo "zaz"
             
             if [[ "${CRASH_STEP_1}" ]]; then
               exit 1

@@ -3,6 +3,9 @@
 def bash_shebang():
     return "#!/usr/bin/env bash"
 
+def python_shebang():
+    return "#!/usr/bin/env python3"
+
 BASH_TASK_FUNCS_AND_TRAPS = """
 
 

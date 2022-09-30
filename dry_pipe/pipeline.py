@@ -6,7 +6,7 @@ import shutil
 import subprocess
 from itertools import groupby
 
-from dry_pipe import TaskConf, DryPipeDsl, TaskBuilder
+from dry_pipe import TaskConf, DryPipeDsl, TaskBuilder, script_lib
 from dry_pipe.bash import BASH_SIGN_FILES_IF_NEWER, BASH_TASK_FUNCS_AND_TRAPS, BASH_SIGN_FILES, bash_shebang
 from dry_pipe.internals import ValidationError, SubPipeline
 from dry_pipe.janitors import Janitor
@@ -306,14 +306,24 @@ class PipelineInstance:
 
         os.chmod(pipeline_env, 0o764)
 
-        drypipe_bash_lib = os.path.join(self._work_dir, "drypipe-bash-lib.sh")
+        #drypipe_cmds = os.path.join(self._work_dir, "dryfuncs")
+        #with open(drypipe_cmds, "w") as _drypipe_cmds:
+        #    _drypipe_cmds.write("#!/usr/bin/env python3\n\n")
 
-        with open(drypipe_bash_lib, "w") as f:
-            f.write(f"{bash_shebang()}\n\n")
-            f.write(BASH_TASK_FUNCS_AND_TRAPS)
-            f.write(BASH_SIGN_FILES)
+        #    with open(os.path.join(os.path.dirname(__file__), "script_commands.py")) as f:
+        #        _drypipe_cmds.write(f.read())
 
-        os.chmod(drypipe_bash_lib, 0o764)
+        #os.chmod(drypipe_cmds, 0o764)
+
+        #drypipe_bash_lib = os.path.join(self._work_dir, "drypipe-bash-lib.sh")
+
+        #with open(drypipe_bash_lib, "w") as f:
+        #    f.write(f"{bash_shebang()}\n\n")
+        #    f.write(BASH_TASK_FUNCS_AND_TRAPS)
+        #    f.write(BASH_SIGN_FILES)
+
+        #os.chmod(drypipe_bash_lib, 0o764)
+        shutil.copy(script_lib.__file__, self._work_dir)
 
         if not os.path.exists(self._recalc_hash_script()):
             with open(self._recalc_hash_script(), "w") as f:

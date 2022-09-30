@@ -8,7 +8,7 @@ from test_utils import TestSandboxDir
 
 class InOutHashingTests(unittest.TestCase):
 
-    def test_input_hash_tracking(self):
+    def _test_input_hash_tracking(self):
 
         pipeline_instance = TestSandboxDir(self).pipeline_instance_from_generator(
             pipeline_with_dynamic_dep_graph.all_pipeline_tasks

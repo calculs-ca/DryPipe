@@ -16,6 +16,8 @@ from test_multistep_tasks import MultipstepTaskTests
 from test_pipeline_composition import PipelineCompositionTests
 from test_regressions import RegressionTests
 from test_remote_tasks import RemoteTaskTests1, RemoteTaskTests2, RemoteTaskTestsWithSlurm
+from test_script_lib import ScriptLibTests
+from test_single_task_pipelines import SingleTaskPipelinesTests
 from test_utils import log_4_debug_daemon_mode
 
 
@@ -27,6 +29,8 @@ def signature_tests():
 
 def low_level_tests():
     return [
+        ScriptLibTests,
+        SingleTaskPipelinesTests,
         BaseFuncTests,
         NonTrivialPipelineTests,
         NonTrivialPipelineLocalContainerlessTests,
@@ -39,6 +43,7 @@ def low_level_tests():
 
 def quick_sanity_tests():
     return [
+        ScriptLibTests,
         DaemonModeTests,
         NonTrivialPipelineTests,
         NonTrivialPipelineLocalContainerlessTests,
