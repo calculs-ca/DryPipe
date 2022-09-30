@@ -16,7 +16,7 @@ from dry_pipe.janitors import Janitor
 from dry_pipe.monitoring import fetch_task_groups_stats
 from dry_pipe.pipeline import Pipeline, PipelineInstance
 from dry_pipe.pipeline_state import PipelineState
-from dry_pipe.task_state import NON_TERMINAL_STATES, TaskState, parse_in_out_meta
+from dry_pipe.task_state import NON_TERMINAL_STATES
 
 
 @click.group()
@@ -454,49 +454,6 @@ def test(ctx, test_case_mod_func):
         print(f"test passed: {test_case_mod_func}")
 
 
-
-
-
-@click.command()
-@click.pass_context
-def gen_input_var_exports(ctx):
-
-    __pipeline_instance_dir = os.environ.get("__pipeline_instance_dir")
-
-    if __pipeline_instance_dir is None:
-        raise Exception("env variable __pipeline_instance_dir not set")
-
-    #__task_key = os.environ.get("__task_key")
-
-    #if __task_key is None:
-    #    raise Exception("env variable __task_key not set")
-
-    for producing_task_key, var_metas, file_metas in parse_in_out_meta({
-        k: v
-        for k, v in os.environ.items()
-        if k.startswith("__meta_")
-    }):
-
-        if producing_task_key == "":
-            continue
-
-        task_state = TaskState.from_task_control_dir(__pipeline_instance_dir, producing_task_key)
-
-        if not task_state.is_completed():
-            print(f"export __non_completed_dependent_task={producing_task_key}")
-            return
-
-        out_vars = dict(Task.iterate_out_vars_from(
-            os.path.join(__pipeline_instance_dir, ".drypipe", producing_task_key, "output_vars")
-        ))
-
-        for name_in_producing_task, var_name, typez in var_metas:
-            v = out_vars.get(name_in_producing_task)
-            if v is not None:
-                print(f"export {var_name}={v}")
-
-
-
 @click.command()
 @click.pass_context
 @click.argument('mod-func', type=click.STRING)
@@ -652,7 +609,6 @@ def _register_commands():
     cli_group.add_command(run)
     cli_group.add_command(mon)
     cli_group.add_command(prepare)
-    cli_group.add_command(gen_input_var_exports)
     cli_group.add_command(call)
     cli_group.add_command(test)
     cli_group.add_command(status)

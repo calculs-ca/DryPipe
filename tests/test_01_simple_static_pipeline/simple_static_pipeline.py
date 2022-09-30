@@ -101,15 +101,20 @@ def validate_pipeline_execution(pipeline_instance, test_case):
         if not state.is_completed():
             raise Exception(f"expected {t} to be completed, but is {state}")
 
-    with open(os.path.join(
-        pipeline_instance.pipeline_instance_dir,
-        report_task.out.var_dump.absolute_path(report_task)
-    )) as f:
+    var_dump = os.path.join(
+        pipeline_instance.pipeline_instance_dir, report_task.out.var_dump.absolute_path(report_task)
+    )
+    with open(var_dump) as f:
         for line in f.read().split("\n"):
             if line.startswith("v1_for_validation:"):
                 v1 = line.split(":")[1]
             if line.startswith("v2_for_validation:"):
                 v2 = line.split(":")[1]
+
+        if v1 == "":
+            raise Exception(f"variable v1_for_validation was not set by task {report_task} in {var_dump}")
+        if v2 == "":
+            raise Exception(f"variable v2_for_validation was not set by task {report_task} in {var_dump}")
 
         test_case.assertEqual(int(v1), 1111)
         test_case.assertEqual(float(v2), 3.14)

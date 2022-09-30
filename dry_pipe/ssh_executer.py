@@ -284,7 +284,7 @@ class RemoteSSH(Executor):
         remote_pid_basename = os.path.basename(pipeline_instance_dir)
 
         overrides_file_for_host = os.path.join(
-            pipeline_instance._work_dir,
+            pipeline_instance.work_dir,
             f"pipeline-env-{self.server_connection_key()}.sh"
         )
 

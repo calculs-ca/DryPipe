@@ -7,7 +7,10 @@ import sys
 import textwrap
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
+from itertools import groupby
 from pathlib import Path
+
+
 
 
 def python_shebang():
@@ -28,7 +31,11 @@ def task_script_header():
         script_lib = importlib.util.module_from_spec(spec)
         loader.exec_module(script_lib)                                
         env = script_lib.source_task_env(os.path.join(__script_location, 'task-env.sh'))
-        script_lib.register_timeout_handler()                
+        script_lib.register_timeout_handler()    
+        
+        non_completed_dependent_task = env.get("__non_completed_dependent_task")
+        if non_completed_dependent_task is not None:
+            print(f"upstream dependent task : '+non_completed_dependent_task+ "not completed, can't run.")            
     """)
 
 
@@ -50,6 +57,13 @@ def env_from_sourcing(env_file):
         return json.loads(out)
 
 
+def iterate_out_vars_from(file):
+    with open(file) as f:
+        for line in f.readlines():
+            var_name, value = line.split("=")
+            yield var_name.strip(), value.strip()
+
+
 def source_task_env(task_env_file):
 
     env = env_from_sourcing(task_env_file)
@@ -59,6 +73,35 @@ def source_task_env(task_env_file):
 
     return env
 
+
+def parse_in_out_meta(name_to_meta_dict):
+
+    # export __meta_<var-name>="(int|str|float):<producing-task-key>:<name_in_producing_task>"
+    # export __meta_<file-name>="file:<producing-task-key>:<name_in_producing_task>"
+
+    #Note: when producing-task-key == "", meta are output values and files
+
+    def gen():
+        for k, v in name_to_meta_dict.items():
+            var_name = k[7:]
+            typez, task_key, name_in_producing_task = v.split(":")
+
+            yield task_key, name_in_producing_task, var_name, typez
+
+    def k(t):
+        return t[0]
+
+    for producing_task_key, produced_files_or_vars_meta in groupby(sorted(gen(), key=k), key=k):
+
+        def filter_and_map(condition_on_typez):
+            return [
+                (name_in_producing_task, var_name, typez)
+                for task_key, name_in_producing_task, var_name, typez
+                in produced_files_or_vars_meta
+                if condition_on_typez(typez)
+            ]
+
+        yield producing_task_key, filter_and_map(lambda t: t != "file"), filter_and_map(lambda t: t == "file")
 
 def read_task_state(control_dir=None):
 
@@ -76,13 +119,14 @@ def read_task_state(control_dir=None):
     state_file = state_file[0]
     base_file_name = os.path.basename(state_file)
     name_parts = base_file_name.split(".")
+    state_name = name_parts[1]
 
     if len(name_parts) == 3:
         step_number = int(name_parts[-1])
     else:
-        step_number = None
+        step_number = 0
 
-    return step_number, control_dir, state_file
+    return step_number, control_dir, state_file, state_name
 
 
 def touch(fname):
@@ -138,7 +182,7 @@ def transition_to_step_completed(state_file, step_number):
 def register_timeout_handler(sig=signal.SIGUSR1):
 
     def timeout_handler(s, frame):
-        step_number, control_dir, state_file = read_task_state()
+        step_number, control_dir, state_file, state_name = read_task_state()
         _transition_state_file(state_file, "timed-out", step_number)
         exit(1)
 
@@ -233,7 +277,7 @@ def run_script(cmd):
             ) as p:
                 p.wait()
                 if p.returncode != 0:
-                    step_number, control_dir, state_file = read_task_state()
+                    step_number, control_dir, state_file, state_name = read_task_state()
                     _transition_state_file(state_file, "failed", step_number)
                     exit(1)
 
@@ -283,3 +327,49 @@ def launch_task(control_dir, is_slurm, wait_for_completion=False):
             cmd = r_sbatch_script
 
     print(f"res:{run_script(cmd)}")
+
+
+def gen_input_var_exports(out=sys.stdout, env=os.environ):
+
+    pipeline_instance_dir = env.get("__pipeline_instance_dir")
+
+    task_key = env.get('__task_key')
+
+    if pipeline_instance_dir is None:
+        raise Exception("env variable __pipeline_instance_dir not set")
+
+    if task_key is None:
+        raise Exception("env variable __task_key not set")
+
+    for producing_task_key, var_metas, file_metas in parse_in_out_meta({
+        k: v
+        for k, v in env.items()
+        if k.startswith("__meta_")
+    }):
+
+        if producing_task_key == "":
+            continue
+
+        control_dir = os.path.join(pipeline_instance_dir, ".drypipe", producing_task_key)
+
+        step_number, control_dir, state_file, state_name = read_task_state(control_dir)
+
+        if not state_name == "completed":
+            print(f"export __non_completed_dependent_task={producing_task_key}", file=out)
+            return
+
+        out_vars = dict(iterate_out_vars_from(
+            os.path.join(pipeline_instance_dir, ".drypipe", producing_task_key, "output_vars")
+        ))
+
+        for name_in_producing_task, var_name, typez in var_metas:
+            v = out_vars.get(name_in_producing_task)
+            if v is not None:
+                print(f"export {var_name}={v}", file=out)
+
+
+
+if __name__ == '__main__':
+
+    if "gen-input-var-exports" in sys.argv:
+        gen_input_var_exports()

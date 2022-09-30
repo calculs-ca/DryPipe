@@ -242,7 +242,7 @@ class PipelineInstance:
     def __init__(self, pipeline, pipeline_instance_dir):
         self.pipeline = pipeline
         self.pipeline_instance_dir = pipeline_instance_dir
-        self._work_dir = os.path.join(pipeline_instance_dir, ".drypipe")
+        self.work_dir = os.path.join(pipeline_instance_dir, ".drypipe")
         self._publish_dir = os.path.join(pipeline_instance_dir, "publish")
         self.dag_determining_tasks_ids = set()
         self.tasks = self.pipeline.task_set_generator(self)
@@ -293,9 +293,9 @@ class PipelineInstance:
     def init_work_dir(self):
 
         pathlib.Path(self._publish_dir).mkdir(parents=True, exist_ok=True)
-        pathlib.Path(self._work_dir).mkdir(parents=True, exist_ok=True)
+        pathlib.Path(self.work_dir).mkdir(parents=True, exist_ok=True)
 
-        pipeline_env = os.path.join(self._work_dir, "pipeline-env.sh")
+        pipeline_env = os.path.join(self.work_dir, "pipeline-env.sh")
         with open(pipeline_env, "w") as f:
             f.write(f"{bash_shebang()}\n\n")
             f.write(f"export __pipeline_code_dir={self.pipeline.pipeline_code_dir}\n")
@@ -323,7 +323,7 @@ class PipelineInstance:
         #    f.write(BASH_SIGN_FILES)
 
         #os.chmod(drypipe_bash_lib, 0o764)
-        shutil.copy(script_lib.__file__, self._work_dir)
+        shutil.copy(script_lib.__file__, self.work_dir)
 
         if not os.path.exists(self._recalc_hash_script()):
             with open(self._recalc_hash_script(), "w") as f:
@@ -350,10 +350,10 @@ class PipelineInstance:
         return os.path.basename(self.pipeline_instance_dir)
 
     def _recalc_hash_script(self):
-        return os.path.join(self._work_dir, "recalc-output-file-hashes.sh")
+        return os.path.join(self.work_dir, "recalc-output-file-hashes.sh")
 
     def work_dir_exists(self):
-        return os.path.exists(self._work_dir)
+        return os.path.exists(self.work_dir)
 
     def tasks_for_glob_expr(self, glob_expr):
         return [
@@ -373,14 +373,14 @@ class PipelineInstance:
             task.clean()
 
     def clean_all(self):
-        if os.path.exists(self._work_dir):
-            shutil.rmtree(self._work_dir)
+        if os.path.exists(self.work_dir):
+            shutil.rmtree(self.work_dir)
 
         if os.path.exists(self._publish_dir):
             shutil.rmtree(self._publish_dir)
 
     def get_state(self, create_if_not_exists=False):
-        return PipelineState.from_pipeline_work_dir(self._work_dir, create_if_not_exists)
+        return PipelineState.from_pipeline_work_dir(self.work_dir, create_if_not_exists)
 
     def pre_existing_file_deps(self):
         def gen_deps():
@@ -452,19 +452,19 @@ class PipelineInstance:
             f for f in name_file_paths_tuples()
         }
 
-        sig_dir = os.path.join(self._work_dir, "in_sigs")
+        sig_dir = os.path.join(self.work_dir, "in_sigs")
 
         if not os.path.exists(sig_dir):
 
             pathlib.Path(sig_dir).mkdir(parents=True, exist_ok=True)
 
             with subprocess.Popen(
-                    f"{self._work_dir}/recalc-output-file-hashes.sh",
+                    f"{self.work_dir}/recalc-output-file-hashes.sh",
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     text=True,
                     env={
-                        "__control_dir": self._work_dir,
+                        "__control_dir": self.work_dir,
                         "__sig_dir": "in_sigs",
                         "__file_list_to_sign": ",".join(all_pre_existing_files)
                     }

@@ -77,7 +77,7 @@ class ScriptLibTests(unittest.TestCase):
             f.write(textwrap.dedent(
                 f"""                                        
                 script_lib.touch(os.path.join(env['__control_dir'], 'output_vars'))                                                
-                step_number, control_dir, state_file = script_lib.read_task_state()                                
+                step_number, control_dir, state_file, read_task_state = script_lib.read_task_state()                                
                         
                 state_file, step_number = script_lib.transition_to_step_started(state_file, step_number)                                        
                 script_lib.run_script(os.path.join(env['__pipeline_code_dir'], 'script.sh'))                    
@@ -112,7 +112,7 @@ class ScriptLibTests(unittest.TestCase):
         self.assertEqual(out, "the end\n")
         self.assertEqual(err, "err123\n")
 
-        step_number, control_dir, state_file = script_lib.read_task_state(control_dir)
+        step_number, control_dir, state_file, state_name = script_lib.read_task_state(control_dir)
 
         self.assertEqual(step_number, 1)
         self.assertEqual(os.path.basename(state_file), "state.step-completed.1")
@@ -157,7 +157,7 @@ class ScriptLibTests(unittest.TestCase):
         self.assertEqual(out, "the end\n")
         self.assertEqual(err, "err99999\n")
 
-        step_number, control_dir, state_file = script_lib.read_task_state(control_dir)
+        step_number, control_dir, state_file, state_name = script_lib.read_task_state(control_dir)
 
         self.assertEqual(step_number, 0)
         self.assertEqual(os.path.basename(state_file), "state.failed.0")
@@ -193,7 +193,7 @@ class ScriptLibTests(unittest.TestCase):
 
         self.assertEqual(err, "err99999\n")
 
-        step_number, control_dir, state_file = script_lib.read_task_state(control_dir)
+        step_number, control_dir, state_file, state_name = script_lib.read_task_state(control_dir)
 
         self.assertEqual(step_number, 0)
         self.assertEqual(os.path.basename(state_file), "state.timed-out.0")

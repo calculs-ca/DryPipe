@@ -12,14 +12,15 @@ from itertools import groupby
 
 import textwrap
 
+from dry_pipe.script_lib import parse_in_out_meta
 from dry_pipe.actions import TaskAction
-from dry_pipe.bash import bash_shebang, python_shebang
+from dry_pipe.bash import bash_shebang
 from dry_pipe.internals import \
-    IndeterminateFile, ProducedFile, Slurm, IncompleteVar, Val, \
+    IndeterminateFile, ProducedFile, IncompleteVar, Val, \
     OutputVar, InputFile, InputVar, FileSet, TaskMatcher, OutFileSet, ValidationError, flatten, TaskProps
 
-from dry_pipe.script_lib import task_script_header
-from dry_pipe.task_state import TaskState, tail, parse_in_out_meta
+from dry_pipe.script_lib import task_script_header, iterate_out_vars_from
+from dry_pipe.task_state import TaskState, tail
 
 
 class Task:
@@ -307,7 +308,7 @@ class Task:
         for k, v in self._input_meta_data():
             yield k, v
 
-        gen_input_var_call = f'{self.task_conf.python_bin or "python"} -m dry_pipe.cli gen-input-var-exports'
+        gen_input_var_call = f'{self.task_conf.python_bin or "python"} $__pipeline_instance_dir/.drypipe/script_lib.py gen-input-var-exports'
         writer.write(f'eval "$({gen_input_var_call})"\n')
 
         def abs_from_pipeline_instance_dir(p):
@@ -580,17 +581,10 @@ class Task:
         sig, write_file_func = self._calc_output_signature()
         write_file_func()
 
-    @staticmethod
-    def iterate_out_vars_from(file):
-        with open(file) as f:
-            for line in f.readlines():
-                var_name, value = line.split("=")
-                yield var_name.strip(), value.strip()
-
     def iterate_out_vars(self):
         of = self.v_abs_output_var_file()
         if os.path.exists(of):
-            yield from Task.iterate_out_vars_from(of)
+            yield from iterate_out_vars_from(of)
 
     def out_vars_by_name(self):
         return dict(self.iterate_out_vars())
@@ -675,7 +669,7 @@ class Task:
         with open(shell_script_file, "w") as f:
             f.write(task_script_header())
 
-            f.write("\nstep_number, control_dir, state_file = script_lib.read_task_state()\n")
+            f.write("\nstep_number, control_dir, state_file, state_name = script_lib.read_task_state()\n")
 
             def write_before_first_step(indent):
                 #f.write(f"{indent}mkdir -p $__work_dir\n")
@@ -749,7 +743,7 @@ class Task:
                     f.write(self.sbatch_launch_script())
                     f.write("\n")
 
-                f.write(".drypipe/drypipe-bash-lib.sh\n")
+                f.write(".drypipe/script_lib.py\n")
 
             remote_outputs = os.path.join(self.v_abs_control_dir(), "remote-outputs.txt")
 

@@ -9,7 +9,7 @@ from datetime import datetime
 from itertools import groupby
 
 from dry_pipe.actions import TaskAction
-
+from dry_pipe.script_lib import parse_in_out_meta
 
 """
 
@@ -639,33 +639,3 @@ def tail_(filename, lines=20):
             l.decode("utf-8")
             for l in all_read_text.splitlines()[-total_lines_wanted:]
         ]
-
-
-def parse_in_out_meta(name_to_meta_dict):
-
-    # export __meta_<var-name>="(int|str|float):<producing-task-key>:<name_in_producing_task>"
-    # export __meta_<file-name>="file:<producing-task-key>:<name_in_producing_task>"
-
-    #Note: when producing-task-key == "", meta are output values and files
-
-    def gen():
-        for k, v in name_to_meta_dict.items():
-            var_name = k[7:]
-            typez, task_key, name_in_producing_task = v.split(":")
-
-            yield task_key, name_in_producing_task, var_name, typez
-
-    def k(t):
-        return t[0]
-
-    for producing_task_key, produced_files_or_vars_meta in groupby(sorted(gen(), key=k), key=k):
-
-        def filter_and_map(condition_on_typez):
-            return [
-                (name_in_producing_task, var_name, typez)
-                for task_key, name_in_producing_task, var_name, typez
-                in produced_files_or_vars_meta
-                if condition_on_typez(typez)
-            ]
-
-        yield producing_task_key, filter_and_map(lambda t: t != "file"), filter_and_map(lambda t: t == "file")
