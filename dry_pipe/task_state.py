@@ -483,12 +483,12 @@ class TaskState:
     def transition_to_killed(self):
         self._transition("killed", self._step_and_retry_suffix(), force=True)
 
-    def transition_to_launched(self, task, wait_for_completion=False, fail_silently=False):
+    def transition_to_launched(self, executer, task, wait_for_completion=False, fail_silently=False):
 
         p = pathlib.Path(os.path.join(self._control_dir, "step_start"))
         p.touch(exist_ok=True)
         self._transition("launched", self._step_and_retry_suffix())
-        task.launch(task.executer, wait_for_completion, fail_silently=fail_silently)
+        task.launch(executer, wait_for_completion, fail_silently=fail_silently)
 
     def transition_to_completed(self, task):
         task.verify_output_files_produced()

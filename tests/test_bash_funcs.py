@@ -325,7 +325,7 @@ class BaseFuncTests(unittest.TestCase):
         self.load_task_state().transition_to_queued()
         self.assertEqual("state.queued.1", str(self.load_task_state()))
 
-        self.load_task_state().transition_to_launched(self._task_mockup())
+        self.load_task_state().transition_to_launched(Local(before_execute_bash=None), self._task_mockup())
 
         input_hash = "712053c23ced29fec4621b6002f3d28fea4df7a8"
 

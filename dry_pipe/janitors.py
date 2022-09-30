@@ -197,8 +197,8 @@ class Janitor:
                     work_done, no_more_work = _janitor_ng(
                         pipeline,
                         wait_for_completion=sync_mode,
-                        logger=daemon_thread_helper.logger,
-                        fail_silently=fail_silently
+                        fail_silently=fail_silently,
+                        daemon_thread_helper=daemon_thread_helper
                     )
 
                     if do_upload_and_download:
@@ -325,7 +325,7 @@ class Janitor:
         self._shutdown = True
 
 
-def _janitor_ng(pipeline_instance, wait_for_completion=False, fail_silently=False, logger=None):
+def _janitor_ng(pipeline_instance, wait_for_completion=False, fail_silently=False, daemon_thread_helper=None):
 
     pipeline_instance.regen_tasks_if_stale()
 
@@ -370,7 +370,8 @@ def _janitor_ng(pipeline_instance, wait_for_completion=False, fail_silently=Fals
                         task_state.transition_to_queued()
             elif task_state.is_queued():
                 work_done += 1
-                task_state.transition_to_launched(task, wait_for_completion, fail_silently=fail_silently)
+                executer = daemon_thread_helper.get_executer(task.task_conf)
+                task_state.transition_to_launched(executer, task, wait_for_completion, fail_silently=fail_silently)
 
     return work_done, work_done == 0
 
