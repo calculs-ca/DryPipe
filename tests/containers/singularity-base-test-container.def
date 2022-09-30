@@ -1,5 +1,5 @@
 BootStrap: library
-From: ubuntu:20.04
+From: ubuntu:22.04
 
 %post
 
@@ -9,7 +9,7 @@ From: ubuntu:20.04
     add-apt-repository universe
 
     apt-get install -y \
-        python3.9 \
+        python3.10 \
         python3-pip \
         python3-venv
 

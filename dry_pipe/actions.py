@@ -121,14 +121,13 @@ class TaskAction:
     def unpause(self):
         self.delete()
 
-    def do_it(self, pipeline, executer_getter):
+    def do_it(self, task, executor):
 
         if self.action_name == "pause":
             return
 
-        task = pipeline.tasks[self.task_key]
         task_state = task.get_state()
-        executor = executer_getter.get_executer(task.task_conf)
+        #executor = executer_getter.get_executer(task.task_conf)
 
         if self.is_restart():
             self._do_restart(task, task_state, executor)

@@ -2,7 +2,7 @@ import unittest
 
 import os
 import test_helpers
-
+from dry_pipe import TaskConf
 
 from tests.pipeline_with_multistep_tasks import three_steps_pipeline, hybrid_bash_python_mutlistep_pipeline
 from test_utils import TestSandboxDir
@@ -89,7 +89,11 @@ class MultipstepTaskTests(unittest.TestCase):
 
         pipeline = TestSandboxDir(self).pipeline_instance_from_generator(
             hybrid_bash_python_mutlistep_pipeline,
-            completed=True
+            completed=True,
+            task_conf=TaskConf(
+                executer_type="process"
+                #python_bin="/usr/bin/python3"
+            )
         )
 
         three_phase_task = next(pipeline.tasks_for_key_prefix("three_phase_task"))

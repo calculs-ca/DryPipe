@@ -22,5 +22,6 @@ From: ./singularity-base-test-container.sif
 #    /drypipe_venv/bin/python3 /drypipe/setup.py install
 
     cd /tmp/drypipe
-    python3.9 setup.py install
+    export dry_pipe_is_full_req=True
+    python3 setup.py install
     rm -Rf /tmp/drypipe

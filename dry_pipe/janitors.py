@@ -348,7 +348,7 @@ def _janitor_ng(pipeline_instance, wait_for_completion=False, fail_silently=Fals
 
         if action is not None:
             work_done += 1
-            action.do_it(task, task_state)
+            action.do_it(task, task.executer)
 
         if task_state.is_completed() or task_state.is_failed():
             continue
