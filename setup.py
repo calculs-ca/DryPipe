@@ -1,3 +1,5 @@
+import os
+
 from setuptools import setup
 
 minimal_requirements = [
@@ -14,6 +16,11 @@ extra_requirements = [
     'PyYAML==5.4.1',
     'paramiko==2.11.0'
 ]
+
+is_full_req = os.environ.get("dry_pipe_is_full_req") == "True"
+
+if is_full_req:
+    minimal_requirements = minimal_requirements + extra_requirements
 
 setup(
     name='dry_pipe',
