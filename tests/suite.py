@@ -106,7 +106,7 @@ if __name__ == '__main__':
         "remote_tests": remote_tests,
         "slurm_client": slurm_client,
         "exhaustive_1": exhaustive_1,
-        "exhaustive_2": exhaustive_3,
+        "exhaustive_2": exhaustive_2,
         "exhaustive_3": exhaustive_3
     }
 
