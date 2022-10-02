@@ -31,12 +31,15 @@ def task_script_header():
         script_lib = importlib.util.module_from_spec(spec)
         loader.exec_module(script_lib)                                
         env = script_lib.source_task_env(os.path.join(__script_location, 'task-env.sh'))
-        script_lib.register_timeout_handler()    
-        
-        non_completed_dependent_task = env.get("__non_completed_dependent_task")
-        if non_completed_dependent_task is not None:
-            print(f"upstream dependent task : '+non_completed_dependent_task+ "not completed, can't run.")            
+        script_lib.ensure_upstream_tasks_completed(env)
+        script_lib.register_timeout_handler()            
     """)
+
+
+def ensure_upstream_tasks_completed(env):
+    non_completed_dependent_task = env.get("__non_completed_dependent_task")
+    if non_completed_dependent_task is not None:
+        print("upstream dependent task : " + non_completed_dependent_task + " not completed, cannot run.")
 
 
 def env_from_sourcing(env_file):
