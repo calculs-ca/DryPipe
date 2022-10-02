@@ -1236,7 +1236,7 @@ class TaskStep:
         #TODO: only redefine __scratch_dir when sbatch-launch.sh
         if self.task_conf.is_slurm():
             indent()
-            file_writer.write(f"export __scratch_dir=$SLURM_TMPDIR\n")
+            file_writer.write(f"os.environ['__scratch_dir'] = os.environ['SLURM_TMPDIR']\n")
 
         if container is None:
             indent()

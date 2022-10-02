@@ -22,7 +22,11 @@ def script_header():
         import importlib.machinery
         import importlib.util        
 
-        __script_location = os.path.dirname(os.path.abspath(__file__))
+        is_slurm = os.environ.get("__is_slurm") == "True"        
+        if is_slurm:
+            __script_location = os.environ['__script_location']
+        else:
+            __script_location = os.path.dirname(os.path.abspath(__file__))
         script_lib_path = os.path.join(os.path.dirname(__script_location), 'script_lib.py')        
         loader = importlib.machinery.SourceFileLoader('script_lib', script_lib_path)
         spec = importlib.util.spec_from_loader(loader.name, loader)
@@ -376,6 +380,7 @@ def launch_task(control_dir, is_slurm, wait_for_completion=False):
 def launch_task_remote(task_key, is_slurm, wait_for_completion):
 
     pipeline_instance_dir = os.path.dirname(os.path.dirname(sys.argv[0]))
+
     control_dir = os.path.join(pipeline_instance_dir, '.drypipe', task_key)
     out_sigs_dir = os.path.join(control_dir, 'out_sigs')
     touch(os.path.join(control_dir, 'output_vars'))
@@ -391,20 +396,22 @@ def launch_task_remote(task_key, is_slurm, wait_for_completion):
 
     touch(os.path.join(control_dir, 'state.launched.0'))
 
-    if is_slurm:
-        cmd = os.path.join(control_dir, 'sbatch-launcher.sh')
-    else:
-        cmd = os.path.join(control_dir, 'task')
-
     back_ground = "&"
 
     if wait_for_completion:
         back_ground = ""
 
+    if is_slurm:
+        cmd = os.path.join(control_dir, 'sbatch-launcher.sh')
+        #cmd = ["nohup", "bash", "-c", f"python3 {cmd} {back_ground}"]
+    else:
+        scr = os.path.join(control_dir, 'task')
+        cmd = ["nohup", "bash", "-c", f"python3 {scr} {back_ground}"]
+
     with open(os.path.join(control_dir, 'out.log'), 'w') as out:
         with open(os.path.join(control_dir, 'err.log'), 'w') as err:
             with subprocess.Popen(
-                ["nohup", "bash", "-c", f"python3 {cmd} {back_ground}"],
+                cmd,
                 stdout=out,
                 stderr=err
             ) as p:
