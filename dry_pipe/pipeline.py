@@ -11,6 +11,7 @@ from dry_pipe.bash import BASH_SIGN_FILES_IF_NEWER, BASH_TASK_FUNCS_AND_TRAPS, B
 from dry_pipe.internals import ValidationError, SubPipeline
 from dry_pipe.janitors import Janitor
 from dry_pipe.pipeline_state import PipelineState
+from dry_pipe.script_lib import write_task_lib_script
 from dry_pipe.task import Task
 
 logger = logging.getLogger(__name__)
@@ -324,6 +325,11 @@ class PipelineInstance:
 
         #os.chmod(drypipe_bash_lib, 0o764)
         shutil.copy(script_lib.__file__, self.work_dir)
+
+        script_lib_file = os.path.join(self.work_dir, "script_lib")
+        with open(script_lib_file, "w") as script_lib_file_handle:
+            write_task_lib_script(script_lib_file_handle)
+        os.chmod(script_lib_file, 0o764)
 
         if not os.path.exists(self._recalc_hash_script()):
             with open(self._recalc_hash_script(), "w") as f:

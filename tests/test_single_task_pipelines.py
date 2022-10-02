@@ -89,7 +89,10 @@ class MinimalistPipelinesTests(unittest.TestCase):
 
         env = env_from_sourcing(task_env_script)
 
-        v = int(env.get("v"))
+        v = env.get("v")
+        if v is None:
+            raise Exception(f"script {task_env_script} did not resolve variable 'v'")
+        v = int(v)
         self.assertEqual(v, 1234)
 
         self.assertEqual(consume_and_produce_a_var.out.result.fetch(), 2468)

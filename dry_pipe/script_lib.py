@@ -11,28 +11,60 @@ from itertools import groupby
 from pathlib import Path
 
 
-
-
 def python_shebang():
     return "#!/usr/bin/env python3"
 
 
-def task_script_header():
+def script_header():
     return f"{python_shebang()}\n" + textwrap.dedent(f"""            
         import os
         import sys 
         import importlib.machinery
         import importlib.util        
-        
+
         __script_location = os.path.dirname(os.path.abspath(__file__))
         script_lib_path = os.path.join(os.path.dirname(__script_location), 'script_lib.py')        
         loader = importlib.machinery.SourceFileLoader('script_lib', script_lib_path)
         spec = importlib.util.spec_from_loader(loader.name, loader)
         script_lib = importlib.util.module_from_spec(spec)
-        loader.exec_module(script_lib)                                
+        loader.exec_module(script_lib)
+    """)
+
+
+def write_task_lib_script(file_handle):
+    file_handle.write(
+        f"{python_shebang()}\n" + textwrap.dedent(f"""            
+            import os
+            import sys 
+            import importlib.machinery
+            import importlib.util        
+
+            __script_location = os.path.dirname(os.path.abspath(__file__))
+            script_lib_path = os.path.join(__script_location, 'script_lib.py')        
+            loader = importlib.machinery.SourceFileLoader('script_lib', script_lib_path)
+            spec = importlib.util.spec_from_loader(loader.name, loader)
+            script_lib = importlib.util.module_from_spec(spec)
+            loader.exec_module(script_lib)
+        """)
+    )
+
+    file_handle.write(textwrap.dedent(f"""        
+    if __name__ == '__main__':
+    
+        if "gen-input-var-exports" in sys.argv:
+            script_lib.gen_input_var_exports()
+        elif "launch-task-remote" in sys.argv:
+            task_key = sys.argv[2]
+            is_slurm = "--is-slurm" in sys.argv
+            wait_for_completion = "--wait-for-completion" in sys.argv
+            script_lib.launch_task_remote(task_key, is_slurm, wait_for_completion)
+    """))
+
+def task_script_header():
+    return f"{script_header()}\n" + textwrap.dedent(f"""
         env = script_lib.source_task_env(os.path.join(__script_location, 'task-env.sh'))
         script_lib.ensure_upstream_tasks_completed(env)
-        script_lib.register_timeout_handler()            
+        script_lib.register_timeout_handler()    
     """)
 
 
@@ -40,6 +72,14 @@ def ensure_upstream_tasks_completed(env):
     non_completed_dependent_task = env.get("__non_completed_dependent_task")
     if non_completed_dependent_task is not None:
         print("upstream dependent task : " + non_completed_dependent_task + " not completed, cannot run.")
+
+
+def _fail_safe_stderr(process):
+    try:
+        err = process.stderr.read().decode("utf-8")
+    except Exception as _e:
+        err = ""
+    return err
 
 
 def env_from_sourcing(env_file):
@@ -50,21 +90,21 @@ def env_from_sourcing(env_file):
 
     with subprocess.Popen(
             ['/bin/bash', '-c', f". {env_file} && {dump_with_python_script}"],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
-    ) as pipe:
-        pipe.wait()
-        err = pipe.stderr.read()
-        out = pipe.stdout.read()
-        if pipe.returncode != 0:
-            raise Exception(f"Failed sourcing env file: {env_file}\n{err}")
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE
+    ) as p:
+        p.wait()
+        out = p.stdout.read().decode("utf-8")
+        if p.returncode != 0:
+            raise Exception(f"Failed sourcing env file: {env_file}\n{_fail_safe_stderr(p)}")
         return json.loads(out)
 
 
 def iterate_out_vars_from(file):
-    with open(file) as f:
-        for line in f.readlines():
-            var_name, value = line.split("=")
-            yield var_name.strip(), value.strip()
+    if os.path.exists(file):
+        with open(file) as f:
+            for line in f.readlines():
+                var_name, value = line.split("=")
+                yield var_name.strip(), value.strip()
 
 
 def source_task_env(task_env_file):
@@ -106,7 +146,8 @@ def parse_in_out_meta(name_to_meta_dict):
 
         yield producing_task_key, filter_and_map(lambda t: t != "file"), filter_and_map(lambda t: t == "file")
 
-def read_task_state(control_dir=None):
+
+def read_task_state(control_dir=None, no_state_file_ok=False):
 
     if control_dir is None:
         control_dir = os.environ["__control_dir"]
@@ -332,6 +373,45 @@ def launch_task(control_dir, is_slurm, wait_for_completion=False):
     print(f"res:{run_script(cmd)}")
 
 
+def launch_task_remote(task_key, is_slurm, wait_for_completion):
+
+    pipeline_instance_dir = os.path.dirname(os.path.dirname(sys.argv[0]))
+    control_dir = os.path.join(pipeline_instance_dir, '.drypipe', task_key)
+    out_sigs_dir = os.path.join(control_dir, 'out_sigs')
+    touch(os.path.join(control_dir, 'output_vars'))
+
+    work_dir = os.path.join(pipeline_instance_dir, 'publish', task_key)
+    scratch_dir = os.path.join(work_dir, "scratch")
+
+    for d in [work_dir, out_sigs_dir, scratch_dir]:
+        Path(d).mkdir(exist_ok=True, parents=True)
+
+    for state_file in glob.glob(os.path.join(control_dir, "state.*")):
+        os.remove(state_file)
+
+    touch(os.path.join(control_dir, 'state.launched.0'))
+
+    if is_slurm:
+        cmd = os.path.join(control_dir, 'sbatch-launcher.sh')
+    else:
+        cmd = os.path.join(control_dir, 'task')
+
+    back_ground = "&"
+
+    if wait_for_completion:
+        back_ground = ""
+
+    with open(os.path.join(control_dir, 'out.log'), 'w') as out:
+        with open(os.path.join(control_dir, 'err.log'), 'w') as err:
+            with subprocess.Popen(
+                ["nohup", "bash", "-c", f"python3 {cmd} {back_ground}"],
+                stdout=out,
+                stderr=err
+            ) as p:
+                p.wait()
+                print(str(p.returncode))
+
+
 def gen_input_var_exports(out=sys.stdout, env=os.environ):
 
     pipeline_instance_dir = env.get("__pipeline_instance_dir")
@@ -353,13 +433,13 @@ def gen_input_var_exports(out=sys.stdout, env=os.environ):
         if producing_task_key == "":
             continue
 
-        control_dir = os.path.join(pipeline_instance_dir, ".drypipe", producing_task_key)
+        #control_dir = os.path.join(pipeline_instance_dir, ".drypipe", producing_task_key)
 
-        step_number, control_dir, state_file, state_name = read_task_state(control_dir)
+        #step_number, control_dir, state_file, state_name = read_task_state(control_dir, no_state_file_ok=True)
 
-        if not state_name == "completed":
-            print(f"export __non_completed_dependent_task={producing_task_key}", file=out)
-            return
+        #if not state_name == "completed":
+        #    print(f"export __non_completed_dependent_task={producing_task_key}", file=out)
+        #    return
 
         out_vars = dict(iterate_out_vars_from(
             os.path.join(pipeline_instance_dir, ".drypipe", producing_task_key, "output_vars")
@@ -369,10 +449,3 @@ def gen_input_var_exports(out=sys.stdout, env=os.environ):
             v = out_vars.get(name_in_producing_task)
             if v is not None:
                 print(f"export {var_name}={v}", file=out)
-
-
-
-if __name__ == '__main__':
-
-    if "gen-input-var-exports" in sys.argv:
-        gen_input_var_exports()

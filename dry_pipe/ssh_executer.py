@@ -404,6 +404,37 @@ class RemoteSSH(Executor):
             )
 
     def execute(self, task, touch_pid_file_func, wait_for_completion=False, fail_silently=False):
+
+        remote_pid_basename = os.path.basename(task.pipeline_instance.pipeline_instance_dir)
+
+        remote_pipeline_instance_dir = os.path.join(self.remote_base_dir, remote_pid_basename)
+
+        remote_script_lib_path = os.path.join(
+            remote_pipeline_instance_dir,
+            '.drypipe',
+            'script_lib'
+        )
+
+        cmd = " ".join([
+            remote_script_lib_path,
+            "launch-task-remote",
+            task.key,
+            "--is-slurm" if task.task_conf.is_slurm() else "",
+            "--wait-for-completion" if wait_for_completion else ""
+        ])
+
+        with perf_logger_timer("RemoteSSH.execute") as t:
+            res = self.invoke_remote(cmd)
+            try:
+                res_num = int(res)
+            except Exception as ex:
+                raise Exception(f"remote command {cmd} returned invalid result: {res}")
+            if res_num != 0:
+                raise Exception(f"remote command {cmd} failed with return code: {res_num}")
+
+
+
+    def __execute(self, task, touch_pid_file_func, wait_for_completion=False, fail_silently=False):
         with perf_logger_timer("RemoteSSH.execute") as t:
             b4_command = ""
             if self.before_execute_bash is not None:

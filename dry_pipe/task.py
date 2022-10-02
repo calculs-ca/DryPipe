@@ -308,7 +308,7 @@ class Task:
         for k, v in self._input_meta_data():
             yield k, v
 
-        gen_input_var_call = f'{self.task_conf.python_bin or "python"} $__pipeline_instance_dir/.drypipe/script_lib.py gen-input-var-exports'
+        gen_input_var_call = f'$__pipeline_instance_dir/.drypipe/script_lib gen-input-var-exports'
         writer.write(f'eval "$({gen_input_var_call})"\n')
 
         def abs_from_pipeline_instance_dir(p):
@@ -744,6 +744,7 @@ class Task:
                     f.write("\n")
 
                 f.write(".drypipe/script_lib.py\n")
+                f.write(".drypipe/script_lib\n")
 
             remote_outputs = os.path.join(self.v_abs_control_dir(), "remote-outputs.txt")
 
