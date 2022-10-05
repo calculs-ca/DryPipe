@@ -89,49 +89,19 @@ def run_python(python_bin, mod_func, container=None):
             os.path.join(os.environ['__containers_dir'], container)
         ] + cmd
 
+    env = {**os.environ}
+
+    if os.environ.get("__is_slurm"):
+        env['__scratch_dir'] = os.environ['SLURM_TMPDIR']
+
     with open(os.environ['__out_log'], 'a') as out:
         with open(os.environ['__err_log'], 'a') as err:
             with subprocess.Popen(cmd, stdout=out, stderr=err) as p:
                 p.wait()
                 if p.returncode != 0:
-                    raise Exception(f"failed\n: {' '.join(cmd)}")
-
-
-def run_script_in_singularity(container, script):
-
-    cmd = [
-        "singularity",
-        "exec",
-        os.path.join(os.environ['__containers_dir'], container),
-        script
-    ]
-
-    singularity_bindings = []
-
-    root_dir_of_script = _root_dir(script)
-
-    if _fs_type(root_dir_of_script) in ["autofs", "nfs", "zfs"]:
-        singularity_bindings.append(f"{root_dir_of_script}:{root_dir_of_script}")
-
-    if os.environ.get("__is_slurm"):
-        scratch_dir = os.environ.get("__scratch_dir")
-        root_of_scratch_dir = _root_dir(scratch_dir)
-        singularity_bindings.append(f"{root_of_scratch_dir}:{root_of_scratch_dir}")
-
-    env = os.environ if len(singularity_bindings) == 0 else {
-        **os.environ, "SINGULARITY_BIND": ",".join(singularity_bindings)
-    }
-
-    with open(os.environ['__out_log'], 'a') as out:
-        with open(os.environ['__err_log'], 'a') as err:
-            with subprocess.Popen(
-                cmd,
-                stdout=out, stderr=err,
-                env=env
-            ) as p:
-                p.wait()
-                if p.returncode != 0:
-                    raise Exception(f"singularity exec failed\n: {' '.join(cmd)}")
+                    step_number, control_dir, state_file, state_name = read_task_state()
+                    _transition_state_file(state_file, "failed", step_number)
+                    exit(1)
 
 
 def ensure_upstream_tasks_completed(env):
@@ -340,50 +310,45 @@ def transition_to_completed(state_file):
     return _transition_state_file(state_file, "completed-unsigned")
 
 
-def run_script(cmd):
+def run_script(script, container=None):
 
-    class Tee(object):
-        def __init__(self, name, mode, echo_file=None):
-            self.name = name
-            self.mode = mode
-            self.echo_file = echo_file
+    env = {**os.environ}
 
-        def __enter__(self):
-            self.file = open(self.name, self.mode)
+    if container is None:
+        cmd = script
+        shell = True
+    else:
+        shell = False
+        cmd = [
+            "singularity",
+            "exec",
+            os.path.join(os.environ['__containers_dir'], container),
+            script
+        ]
 
-        def __exit__(self, *args):
-            self.file.close()
+        singularity_bindings = []
 
-        def write(self, data):
-            self.file.write(data)
-            if self.echo_file is not None:
-                self.echo_file.write(data)
+        root_dir_of_script = _root_dir(script)
 
-        def flush(self):
-            self.file.flush()
-            if self.echo_file is not None:
-                self.echo_file.flush()
+        if _fs_type(root_dir_of_script) in ["autofs", "nfs", "zfs"]:
+            singularity_bindings.append(f"{root_dir_of_script}:{root_dir_of_script}")
 
-    #with Tee(os.environ['__out'], 'w', None if is_silent else sys.stdout) as out:
-    #    with Tee(os.environ['__err'], 'w', None if is_silent else sys.stderr) as err:
+        if os.environ.get("__is_slurm"):
+            scratch_dir = os.environ['SLURM_TMPDIR']
+            env['__scratch_dir'] = scratch_dir
+            root_of_scratch_dir = _root_dir(scratch_dir)
+            singularity_bindings.append(f"{root_of_scratch_dir}:{root_of_scratch_dir}")
 
-    is_silent = "--is-silent" in sys.argv
+        if len(singularity_bindings) == 0:
+            env["SINGULARITY_BIND"] = ",".join(singularity_bindings)
 
     with open(os.environ['__out_log'], 'a') as out:
         with open(os.environ['__err_log'], 'a') as err:
-
-            shell = True
-            if cmd.endswith(".sh"):
-                if cmd.startswith("singularity"):
-                    shell = True
-                else:
-                    cmd = ['/bin/bash', cmd]
-                    shell = False
             with subprocess.Popen(
-                    cmd,
-                    stdout=out,
-                    stderr=err,
-                    shell=shell
+                cmd,
+                stdout=out, stderr=err,
+                env=env,
+                shell=shell
             ) as p:
                 p.wait()
                 if p.returncode != 0:

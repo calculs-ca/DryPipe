@@ -1198,93 +1198,52 @@ class TaskStep:
         container = self.task_conf.container
         python_bin = self.task_conf.python_bin
 
-        if self.shell_snippet is not None:
-            #if container is not None:
-            #    invocation_line = task.v_exp_step_script_file(step_number)
-            #else:
-            invocation_line = f"os.path.join(os.environ['__pipeline_instance_dir'], '{task.step_script_file(step_number)}')"
-
-            step_script = task.v_abs_step_script_file(step_number)
-            with open(step_script, "w") as _step_script:
-                _step_script.write(self.shell_snippet)
-            os.chmod(step_script, 0o764)
-        elif self.shell_script is not None:
-            #if container is not None:
-            #    invocation_line = f"$__pipeline_code_dir/{self.shell_script}"
-            #else:
-            invocation_line = f"os.path.join(os.environ['__pipeline_code_dir'], '{self.shell_script}')"
-        elif python_bin is not None:
-
-            switches = " ".join(self.task_conf.python_interpreter_switches)
-            invocation_line = f"'{python_bin} {switches} -m dry_pipe.cli call {self.python_call.mod_func()}'"
-        else:
-            raise Exception("shouldn't have got here")
-
         file_writer.write(f"\nif step_number <= {step_number}:\n")
 
         if step_number == 0:
             write_before_first_step(indent="    ")
 
-        def indent():
+        def indented_line(line):
             file_writer.write("    ")
-
-        indent()
-        file_writer.write(
-            'state_file, step_number = script_lib.transition_to_step_started(state_file, step_number)\n'
-        )
-
-        #TODO: only redefine __scratch_dir when sbatch-launch.sh
-        if self.task_conf.is_slurm():
-            indent()
-            file_writer.write(f"os.environ['__scratch_dir'] = os.environ['SLURM_TMPDIR']\n")
-
-        if container is None:
-            indent()
-            if python_bin is not None:
-                invocation_line = f"'{invocation_line}'"
-
-            if python_bin is None:
-                file_writer.write(f"script_lib.run_script({invocation_line})")
-            else:
-                file_writer.write(
-                    f"script_lib.run_python('{python_bin}', '{self.python_call.mod_func()}')"
-                )
-
-        else:
-            #if self.task_conf.command_before_launch_container is not None:
-            #    indent()
-            #    file_writer.write(self.task_conf.command_before_launch_container)
-            #    file_writer.write("\n\n")
-
-            indent()
-            #container_exec_cmd = f"singularity exec $__containers_dir/{container} {invocation_line}"
-            #file_writer.write(f'script_lib.run_script("{container_exec_cmd}")')
-
-            if python_bin is None:
-                file_writer.write(f"script_lib.run_script_in_singularity('{container}',{invocation_line})")
-            else:
-                file_writer.write(
-                    f"script_lib.run_python('{python_bin}', '{self.python_call.mod_func()}', '{container}')"
-                )
-
+            file_writer.write(line)
             file_writer.write("\n")
 
-            #indent()
-            #file_writer.write("__add_binding_for_singularity_if_required\n")
+        indented_line(
+            'state_file, step_number = script_lib.transition_to_step_started(state_file, step_number)'
+        )
 
+        if container is None:
+            container_arg = ""
+        else:
+            container_arg = f",'{container}'"
 
-        file_writer.write('\n')
+        if python_bin is not None:
+            indented_line(
+                f"script_lib.run_python('{python_bin}', '{self.python_call.mod_func()}'{container_arg})"
+            )
+        else:
+            if self.shell_snippet is not None:
+                script_or_snippet_file = \
+                    f"os.path.join(os.environ['__pipeline_instance_dir'], '{task.step_script_file(step_number)}')"
+                step_script = task.v_abs_step_script_file(step_number)
+                with open(step_script, "w") as _step_script:
+                    _step_script.write(self.shell_snippet)
+                os.chmod(step_script, 0o764)
+            elif self.shell_script is not None:
+                script_or_snippet_file = f"os.path.join(os.environ['__pipeline_code_dir'], '{self.shell_script}')"
+            else:
+                raise Exception("shouldn't have got here")
 
-        indent()
-        file_writer.write(
-            'state_file, step_number = script_lib.transition_to_step_completed(state_file, step_number)\n'
+            indented_line(f"script_lib.run_script({script_or_snippet_file}{container_arg})")
+
+        indented_line(
+            'state_file, step_number = script_lib.transition_to_step_completed(state_file, step_number)'
         )
 
         is_last_step = step_number == (len(task.task_steps) - 1)
 
         if is_last_step:
-            indent()
-            file_writer.write("script_lib.sign_files()\n")
+            indented_line("script_lib.sign_files()")
 
         file_writer.write("\n")
 
