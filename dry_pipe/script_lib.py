@@ -15,26 +15,6 @@ def python_shebang():
     return "#!/usr/bin/env python3"
 
 
-def script_header():
-    return f"{python_shebang()}\n" + textwrap.dedent(f"""            
-        import os
-        import sys 
-        import importlib.machinery
-        import importlib.util        
-
-        is_slurm = os.environ.get("__is_slurm") == "True"        
-        if is_slurm:
-            __script_location = os.environ['__script_location']
-        else:
-            __script_location = os.path.dirname(os.path.abspath(__file__))
-        script_lib_path = os.path.join(os.path.dirname(__script_location), 'script_lib.py')        
-        loader = importlib.machinery.SourceFileLoader('script_lib', script_lib_path)
-        spec = importlib.util.spec_from_loader(loader.name, loader)
-        script_lib = importlib.util.module_from_spec(spec)
-        loader.exec_module(script_lib)
-    """)
-
-
 def write_task_lib_script(file_handle):
     file_handle.write(
         f"{python_shebang()}\n" + textwrap.dedent(f"""            
@@ -64,12 +44,92 @@ def write_task_lib_script(file_handle):
             script_lib.launch_task_remote(task_key, is_slurm, wait_for_completion)
     """))
 
+
 def task_script_header():
-    return f"{script_header()}\n" + textwrap.dedent(f"""
+
+    return f"{python_shebang()}\n" + textwrap.dedent(f"""            
+        import os
+        import sys 
+        import importlib.machinery
+        import importlib.util        
+
+        is_slurm = os.environ.get("__is_slurm") == "True"        
+        if is_slurm:
+            __script_location = os.environ['__script_location']
+        else:
+            __script_location = os.path.dirname(os.path.abspath(__file__))
+        script_lib_path = os.path.join(os.path.dirname(__script_location), 'script_lib.py')        
+        loader = importlib.machinery.SourceFileLoader('script_lib', script_lib_path)
+        spec = importlib.util.spec_from_loader(loader.name, loader)
+        script_lib = importlib.util.module_from_spec(spec)
+        loader.exec_module(script_lib)
         env = script_lib.source_task_env(os.path.join(__script_location, 'task-env.sh'))
         script_lib.ensure_upstream_tasks_completed(env)
-        script_lib.register_timeout_handler()    
+        script_lib.register_timeout_handler()
     """)
+
+
+def run_python(python_bin, mod_func, container=None):
+    switches = "-u"
+    cmd = [
+        python_bin,
+        switches,
+        "-m",
+        "dry_pipe.cli",
+        "call",
+        mod_func
+    ]
+
+    if container is not None:
+        cmd = [
+            "singularity",
+            "exec",
+            os.path.join(os.environ['__containers_dir'], container)
+        ] + cmd
+
+    with open(os.environ['__out_log'], 'a') as out:
+        with open(os.environ['__err_log'], 'a') as err:
+            with subprocess.Popen(cmd, stdout=out, stderr=err) as p:
+                p.wait()
+                if p.returncode != 0:
+                    raise Exception(f"failed\n: {' '.join(cmd)}")
+
+
+def run_script_in_singularity(container, script):
+
+    cmd = [
+        "singularity",
+        "exec",
+        os.path.join(os.environ['__containers_dir'], container),
+        script
+    ]
+
+    singularity_bindings = []
+
+    root_dir_of_script = _root_dir(script)
+
+    if _fs_type(root_dir_of_script) in ["autofs", "nfs", "zfs"]:
+        singularity_bindings.append(f"{root_dir_of_script}:{root_dir_of_script}")
+
+    if os.environ.get("__is_slurm"):
+        scratch_dir = os.environ.get("__scratch_dir")
+        root_of_scratch_dir = _root_dir(scratch_dir)
+        singularity_bindings.append(f"{root_of_scratch_dir}:{root_of_scratch_dir}")
+
+    env = os.environ if len(singularity_bindings) == 0 else {
+        **os.environ, "SINGULARITY_BIND": ",".join(singularity_bindings)
+    }
+
+    with open(os.environ['__out_log'], 'a') as out:
+        with open(os.environ['__err_log'], 'a') as err:
+            with subprocess.Popen(
+                cmd,
+                stdout=out, stderr=err,
+                env=env
+            ) as p:
+                p.wait()
+                if p.returncode != 0:
+                    raise Exception(f"singularity exec failed\n: {' '.join(cmd)}")
 
 
 def ensure_upstream_tasks_completed(env):
@@ -307,8 +367,8 @@ def run_script(cmd):
 
     is_silent = "--is-silent" in sys.argv
 
-    with open(os.environ['__out_log'], 'w') as out:
-        with open(os.environ['__err_log'], 'w') as err:
+    with open(os.environ['__out_log'], 'a') as out:
+        with open(os.environ['__err_log'], 'a') as err:
 
             shell = True
             if cmd.endswith(".sh"):
@@ -330,53 +390,6 @@ def run_script(cmd):
                     exit(1)
 
 
-def launch_task(control_dir, is_slurm, wait_for_completion=False):
-
-    task_key = os.path.basename(control_dir)
-    pipeline_instance_dir = os.path.dirname(os.path.dirname(control_dir))
-
-    r_script, r_sbatch_script, r_out, r_err, r_out_sig_dir, r_state_file_glob, launch_state = map(
-        lambda f: os.path.join(control_dir, f), [
-            "task",
-            "sbatch-launcher.sh",
-            "out.log",
-            "err.log",
-            "out_sigs",
-            "state.*",
-            "state.launched.0"
-        ]
-    )
-
-    r_work_dir = os.path.join(pipeline_instance_dir, "publish", task_key)
-
-    Path(r_work_dir).mkdir(exist_ok=True)
-    Path(r_out_sig_dir).mkdir(exist_ok=True)
-
-    for f in glob.glob(r_state_file_glob):
-        os.remove(f)
-
-    touch(launch_state)
-
-    if not is_slurm:
-
-        ampersand_or_not = "&"
-
-        if wait_for_completion:
-            ampersand_or_not = ""
-
-        cmd = f"nohup bash -c '{r_script}  >{r_out} 2>{r_err}' {ampersand_or_not}"
-    else:
-
-        Path(os.path.join(r_work_dir, "scratch")).mkdir(exist_ok=True)
-
-        if wait_for_completion:
-            cmd = f"bash -c 'export SBATCH_WAIT=True && {r_sbatch_script}'"
-        else:
-            cmd = r_sbatch_script
-
-    print(f"res:{run_script(cmd)}")
-
-
 def launch_task_remote(task_key, is_slurm, wait_for_completion):
 
     pipeline_instance_dir = os.path.dirname(os.path.dirname(sys.argv[0]))
@@ -396,15 +409,18 @@ def launch_task_remote(task_key, is_slurm, wait_for_completion):
 
     touch(os.path.join(control_dir, 'state.launched.0'))
 
-    back_ground = "&"
-
-    if wait_for_completion:
-        back_ground = ""
+    env = os.environ
 
     if is_slurm:
         cmd = os.path.join(control_dir, 'sbatch-launcher.sh')
-        #cmd = ["nohup", "bash", "-c", f"python3 {cmd} {back_ground}"]
+        if wait_for_completion:
+            env = {**env, "SBATCH_EXTRA_ARGS": "--wait"}
+            cmd = ["bash", "-c", cmd]
     else:
+        if wait_for_completion:
+            back_ground = ""
+        else:
+            back_ground = "&"
         scr = os.path.join(control_dir, 'task')
         cmd = ["nohup", "bash", "-c", f"python3 {scr} {back_ground}"]
 
@@ -413,7 +429,8 @@ def launch_task_remote(task_key, is_slurm, wait_for_completion):
             with subprocess.Popen(
                 cmd,
                 stdout=out,
-                stderr=err
+                stderr=err,
+                env=env
             ) as p:
                 p.wait()
                 print(str(p.returncode))
@@ -456,3 +473,56 @@ def gen_input_var_exports(out=sys.stdout, env=os.environ):
             v = out_vars.get(name_in_producing_task)
             if v is not None:
                 print(f"export {var_name}={v}", file=out)
+
+
+def _root_dir(d):
+    p = Path(d)
+    return os.path.join(p.parts[0], p.parts[1])
+
+
+def _fs_type(file):
+
+    stat_cmd = f"stat -f -L -c %T {file}"
+    with subprocess.Popen(
+        stat_cmd.split(),
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE
+    ) as p:
+        p.wait()
+        if p.returncode != 0:
+            raise Exception(f"failed to stat for fs type: {stat_cmd}")
+        return p.stdout.read().decode("utf-8")
+
+
+def set_singularity_bindings():
+
+    def root_dir(d):
+        p = Path(d)
+        return os.path.join(p.parts[0], p.parts[1])
+
+    pipeline_code_dir = os.environ['__pipeline_code_dir']
+    root_of_pipeline_code_dir = root_dir(pipeline_code_dir)
+    stat_cmd = f"stat -f -L -c %T {root_of_pipeline_code_dir}"
+    with subprocess.Popen(
+        stat_cmd.split(),
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE
+    ) as p:
+        p.wait()
+        fs_type = p.stdout.read().decode("utf-8")
+        if p.returncode != 0:
+            raise Exception(f"failed to stat for fs type: {stat_cmd}")
+
+        bind_list = []
+
+        if fs_type in ["autofs", "nfs", "zfs"]:
+            bind_list.append(f"{root_of_pipeline_code_dir}:{root_of_pipeline_code_dir}")
+
+        if os.environ.get("__is_slurm"):
+            scratch_dir = os.environ.get("__scratch_dir")
+            root_of_scratch_dir = root_dir(scratch_dir)
+            bind_list.append(f"{root_of_scratch_dir}:{root_of_scratch_dir}")
+
+        prev_singularity_bind = os.environ.get("SINGULARITY_BIND")
+        if prev_singularity_bind is not None:
+            bind_list.append(prev_singularity_bind)
+
+        os.environ['SINGULARITY_BIND'] = ",".join(bind_list)

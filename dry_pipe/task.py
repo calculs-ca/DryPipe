@@ -706,7 +706,7 @@ class Task:
                      "    --export=__script_location=$__script_location,__is_slurm=True \\",
                      "    --signal=B:USR1@50 \\",
                      "    --parsable \\",
-                    f"    --job-name={self.key} \\",
+                    f"    --job-name={self.key} $SBATCH_EXTRA_ARGS \\",
                      "    $__script_location/task)"
                 ]))
 
@@ -1199,24 +1199,24 @@ class TaskStep:
         python_bin = self.task_conf.python_bin
 
         if self.shell_snippet is not None:
-            if container is not None:
-                invocation_line = task.v_exp_step_script_file(step_number)
-            else:
-                invocation_line = f"os.path.join(os.environ['__pipeline_instance_dir'], '{task.step_script_file(step_number)}')"
+            #if container is not None:
+            #    invocation_line = task.v_exp_step_script_file(step_number)
+            #else:
+            invocation_line = f"os.path.join(os.environ['__pipeline_instance_dir'], '{task.step_script_file(step_number)}')"
 
             step_script = task.v_abs_step_script_file(step_number)
             with open(step_script, "w") as _step_script:
                 _step_script.write(self.shell_snippet)
             os.chmod(step_script, 0o764)
         elif self.shell_script is not None:
-            if container is not None:
-                invocation_line = f"$__pipeline_code_dir/{self.shell_script}"
-            else:
-                invocation_line = f"os.path.join(os.environ['__pipeline_code_dir'], '{self.shell_script}')"
+            #if container is not None:
+            #    invocation_line = f"$__pipeline_code_dir/{self.shell_script}"
+            #else:
+            invocation_line = f"os.path.join(os.environ['__pipeline_code_dir'], '{self.shell_script}')"
         elif python_bin is not None:
 
             switches = " ".join(self.task_conf.python_interpreter_switches)
-            invocation_line = f"{python_bin} {switches} -m dry_pipe.cli call {self.python_call.mod_func()}"
+            invocation_line = f"'{python_bin} {switches} -m dry_pipe.cli call {self.python_call.mod_func()}'"
         else:
             raise Exception("shouldn't have got here")
 
@@ -1242,7 +1242,14 @@ class TaskStep:
             indent()
             if python_bin is not None:
                 invocation_line = f"'{invocation_line}'"
-            file_writer.write(f"script_lib.run_script({invocation_line})")
+
+            if python_bin is None:
+                file_writer.write(f"script_lib.run_script({invocation_line})")
+            else:
+                file_writer.write(
+                    f"script_lib.run_python('{python_bin}', '{self.python_call.mod_func()}')"
+                )
+
         else:
             #if self.task_conf.command_before_launch_container is not None:
             #    indent()
@@ -1250,8 +1257,15 @@ class TaskStep:
             #    file_writer.write("\n\n")
 
             indent()
-            container_exec_cmd = f"singularity exec $__containers_dir/{container} {invocation_line}"
-            file_writer.write(f'script_lib.run_script("{container_exec_cmd}")')
+            #container_exec_cmd = f"singularity exec $__containers_dir/{container} {invocation_line}"
+            #file_writer.write(f'script_lib.run_script("{container_exec_cmd}")')
+
+            if python_bin is None:
+                file_writer.write(f"script_lib.run_script_in_singularity('{container}',{invocation_line})")
+            else:
+                file_writer.write(
+                    f"script_lib.run_python('{python_bin}', '{self.python_call.mod_func()}', '{container}')"
+                )
 
             file_writer.write("\n")
 
