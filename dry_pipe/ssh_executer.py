@@ -21,6 +21,9 @@ class SftpFileNotFoundError(Exception):
     """
     pass
 
+class ScpUploadException(Exception):
+    pass
+
 
 class RemoteSSH(Executor):
 
@@ -73,11 +76,13 @@ class RemoteSSH(Executor):
         with perf_logger_timer("RemoteSSH.invoke_remote", cmd) as t:
             stdin, stdout, stderr = self.ssh_client.exec_command(cmd, timeout=self.ssh_timeout_in_seconds)
 
+            stderr_txt = stderr.read().decode("utf-8")
             stdout_txt = stdout.read().decode("utf-8")
 
+            #print(f"--->{cmd}\n'{stderr_txt}', {stdout_txt}")
+
         if not bash_error_ok and stdout.channel.recv_exit_status() != 0:
-            stderr = stderr.read().decode("utf-8")
-            raise Exception(f"remote call failed '{cmd}'\n{stderr}\non {self}")
+            raise Exception(f"remote call failed '{cmd}'\n{stderr_txt}\non {self}")
 
         logger_ssh.debug(f"invocation of '%s' at {self} returned '%s'", cmd, stdout_txt)
 
@@ -169,6 +174,26 @@ class RemoteSSH(Executor):
     def delete_remote_state_file(self, file):
 
         self.invoke_remote(f"rm {file}")
+
+    def _scp_upload(self, local_file, remote_file):
+        cmd = [
+            "scp", "-i", self.key_filename,
+            local_file,
+            f"{self.ssh_username}@{self.ssh_host}:{remote_file}",
+            "2>/dev/null",
+            "&&",
+            "echo 12345"
+        ]
+        with subprocess.Popen(
+            [" ".join(cmd)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            shell=True
+        ) as p:
+            out = p.stdout.read()
+            if out != "12345\n":
+                raise ScpUploadException(f"scp upload failed: {' '.join(cmd)}")
 
     def _rsync_with_args_and_remote_dir(self):
 
@@ -318,19 +343,17 @@ class RemoteSSH(Executor):
             _f.write("\n")
 
         with perf_logger_timer("RemoteSSH.upload_overrides") as t:
-
             r_work_dir = os.path.join(self.remote_base_dir, remote_pid_basename, ".drypipe")
             r_override_file = os.path.join(
                 r_work_dir,
                 "pipeline-env.sh"
             )
 
-            def upload_overrides():
-                self.invoke_remote(f"mkdir -p {r_work_dir}")
+            def _upload_overrides():
                 with self.ssh_client.open_sftp() as sftp:
 
                     # sftp.put fragile, Paramiko bug:  https://github.com/paramiko/paramiko/issues/149
-                    for i in range(1, 3):
+                    for i in range(1, 1):
                         try:
                             sftp.put(overrides_file_for_host, r_override_file, confirm=True)
                             logger_ssh.info(f"overrides loaded: '%s'", r_override_file)
@@ -370,8 +393,24 @@ class RemoteSSH(Executor):
                 self.invoke_remote(remote_cmd)
 
             #upload_overrides_work_around()
+            #upload_overrides()
 
-            upload_overrides()
+            self.invoke_remote(f"mkdir -p {r_work_dir}")
+            attempts = 1
+            while True:
+                time.sleep(2)
+                out = self.invoke_remote(f"cd {r_work_dir} && pwd", bash_error_ok=True)
+
+                if out == f"{r_work_dir}\n":
+                    break
+                logger_ssh.warning(f"sftp failure %s will sleep and retry", attempts)
+                if attempts > 3:
+                    raise Exception(f"command failed on {self.ssh_host}: mkdir -p {r_work_dir}")
+
+                attempts += 1
+                self.invoke_remote(f"mkdir -p {r_work_dir}", bash_error_ok=True)
+
+            self._scp_upload(overrides_file_for_host, r_override_file)
 
             pipeline_instance.set_remote_overrides_uploaded(self.server_connection_key())
 

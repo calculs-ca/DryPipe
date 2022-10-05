@@ -42,6 +42,8 @@ def write_task_lib_script(file_handle):
             is_slurm = "--is-slurm" in sys.argv
             wait_for_completion = "--wait-for-completion" in sys.argv
             script_lib.launch_task_remote(task_key, is_slurm, wait_for_completion)
+        else:
+            raise Exception('invalid args')
     """))
 
 

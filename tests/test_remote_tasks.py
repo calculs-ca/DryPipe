@@ -95,19 +95,23 @@ class RemoteTaskTests1(unittest.TestCase):
 
                 def fetch_containers_dir_in_pipeline_env(remote_executor, task_conf):
                     with remote_executor.ssh_client.open_sftp() as sftp:
-                        with sftp.open(os.path.join(
-                            task_conf.remote_base_dir,
-                            "RemoteTaskTests1.test_pipeline_with_two_remote_sites",
-                            ".drypipe",
-                            "pipeline-env.sh"
-                        )) as _f:
-                            res = [
-                                l.split("=")[1]
-                                for l in _f.read().decode("utf-8").split("\n")
-                                if l.startswith("export __containers_dir")
-                            ]
-                            self.assertEqual(len(res), 1)
-                            return res[0].strip()
+                        try:
+                            f = os.path.join(
+                                task_conf.remote_base_dir,
+                                "RemoteTaskTests1.test_pipeline_with_two_remote_sites",
+                                ".drypipe",
+                                "pipeline-env.sh"
+                            )
+                            with sftp.open(f) as _f:
+                                res = [
+                                    l.split("=")[1]
+                                    for l in _f.read().decode("utf-8").split("\n")
+                                    if l.startswith("export __containers_dir")
+                                ]
+                                self.assertEqual(len(res), 1)
+                                return res[0].strip()
+                        except FileNotFoundError as fnfe:
+                            raise Exception(f"{fnfe} while fetching {f} on {task_conf.ssh_specs}")
 
                 self.assertEqual(fetch_containers_dir_in_pipeline_env(remote_executor_ip32, tc1), "dummy1")
                 self.assertEqual(fetch_containers_dir_in_pipeline_env(remote_executor_ip29, tc2), "dummy2")
