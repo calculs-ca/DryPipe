@@ -966,11 +966,8 @@ class Task:
             raise Exception(f"how have we got here ?")
 
     def re_queue(self):
-
         task_state = self.get_state()
-        task_state.transition_to_prepared(self, force=True)
-        task_state = self.get_state()
-        task_state.transition_to_queued()
+        task_state.transition_to_prepared(force=True)
 
     def has_completed(self):
 

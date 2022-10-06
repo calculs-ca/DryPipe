@@ -429,15 +429,17 @@ class TaskState:
     def transition_to_waiting_for_deps(self):
         self._transition("waiting-for-deps")
 
-    def transition_to_prepared(self, task, force=False):
-        #task.prepare()
+    def transition_to_prepared(self, force=False):
+        #TODO: eliminate prepared state
         self._transition("prepared", f".{self.step_number()}", force=force)
 
-        #task_state = task.get_state()
-        #if task.is_remote():
-            #task_state.transition_to_queued_remote_upload()
-        #else:
-        #    task_state.transition_to_queued()
+        from dry_pipe import Task
+        task = Task.load_from_task_state(self)
+        task_state = task.get_state()
+        if task.is_remote():
+            task_state.transition_to_queued_remote_upload()
+        else:
+            task_state.transition_to_queued()
 
     def transition_to_queued_remote_upload(self):
         self._transition("queued-for-upload", ".0.0.3")

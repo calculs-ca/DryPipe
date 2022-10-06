@@ -364,130 +364,13 @@ def _janitor_ng(pipeline_instance, wait_for_completion=False, fail_silently=Fals
             if task_state.is_waiting_for_deps():
                 if task_state.is_all_deps_ready():
                     work_done += 1
-                    task_state.transition_to_prepared(None)
-                    task_state = task.get_state()
-                    if task.is_remote():
-                        work_done += 1
-                        task_state.transition_to_queued_remote_upload()
-                    else:
-                        work_done += 1
-                        task_state.transition_to_queued()
+                    task_state.transition_to_prepared()
             elif task_state.is_queued():
                 work_done += 1
                 executer = daemon_thread_helper.get_executer(task.task_conf)
                 task_state.transition_to_launched(executer, task, wait_for_completion, fail_silently=fail_silently)
 
     return work_done, work_done == 0
-
-
-def _janitor(daemon_thread_helper, pipeline_instance, wait_for_completion=False, fail_silently=False, logger=None):
-
-    if logger is None:
-        logger = module_logger
-
-    logger.debug("launching janitor on %s", pipeline_instance.pipeline_instance_dir)
-
-    pipeline_instance.regen_tasks_if_stale()
-
-    for task_conf in pipeline_instance.remote_sites_task_confs():
-        remote_executor = daemon_thread_helper.get_executer(task_conf)
-        remote_executor.upload_overrides(pipeline_instance, task_conf)
-
-    work_done = 0
-    tasks_total = 0
-    tasks_completed = 0
-    tasks_in_non_terminal_states = 0
-
-    for task in pipeline_instance.tasks:
-
-        tasks_total += 1
-
-        task_state = task.get_state()
-
-        if task_state is None:
-            logger.debug("will create state file for %s", task)
-            task.create_state_file_and_control_dir()
-            work_done += 1
-        else:
-
-            if task_state.state_name in NON_TERMINAL_STATES:
-                tasks_in_non_terminal_states += 1
-
-            if task_state.is_waiting_for_deps():
-
-                if not task.has_unsatisfied_deps():
-                    if task_state.is_prepared():
-                        continue
-                    else:
-                        task_state.transition_to_prepared(task)
-                        tasks_in_non_terminal_states += 1
-                        work_done += 1
-
-            elif task_state.is_completed():
-                if task_state.action_if_exists() is None:
-                    tasks_completed += 1
-
-    actions_performed = 0
-    for task_action in TaskAction.fetch_all_actions(pipeline_instance.pipeline_instance_dir):
-        actions_performed += 1
-        task_action.do_it(pipeline_instance, daemon_thread_helper)
-
-    if tasks_total == tasks_completed:
-        pipeline_state = pipeline_instance.get_state()
-        if not pipeline_state.is_completed():
-            pipeline_state.transition_to_completed()
-
-    if tasks_total == tasks_completed or tasks_in_non_terminal_states == 0:
-        if actions_performed == 0:
-            return work_done, True
-
-    for task_state in TaskState.prepared_task_states(pipeline_instance):
-        logger.debug("will queue %s", task_state.control_dir())
-        task_state.transition_to_queued()
-        work_done += 1
-
-    currently_running = TaskState.count_running_local(pipeline_instance)
-    cpu_count = len(psutil.Process().cpu_affinity())
-
-    launched_count = 0
-    throttled_count = 0
-    queued_count = 0
-
-    for task_state in TaskState.queued_task_states(pipeline_instance):
-
-        queued_count += 1
-
-        task = pipeline_instance.tasks[task_state.task_key]
-
-        if task.task_conf.is_process():
-            if currently_running >= cpu_count:
-                logger.info(
-                    "exceeded cpu load %s tasks running, will resume launching when below threshold", currently_running
-                )
-                throttled_count += 1
-                continue
-
-            currently_running += 1
-
-        logger.debug("will launch %s", task_state.control_dir())
-        executer = daemon_thread_helper.get_executer(task.task_conf)
-        task_state.transition_to_launched(executer, task, wait_for_completion, fail_silently=fail_silently)
-        launched_count += 1
-        work_done += 1
-
-    module_logger.debug(
-        "completed launch round (queued_count, throttled_count, launched_count): (%s %s %s), ",
-        queued_count, throttled_count, launched_count
-    )
-
-    for task_state in TaskState.completed_unsigned_task_states(pipeline_instance):
-
-        task = pipeline_instance.tasks[task_state.task_key]
-
-        logger.debug("will transition %s to complete", task_state.control_dir())
-        task_state.transition_to_completed(task)
-
-    return work_done, False
 
 
 def _upload_janitor(daemon_thread_helper, pipeline, logger):
