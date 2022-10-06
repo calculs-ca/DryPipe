@@ -5,8 +5,7 @@ import pipeline_for_ssh_crash_recovery_tests
 from dry_pipe import DryPipe, TaskConf
 from dry_pipe.janitors import Janitor
 from test_01_simple_static_pipeline.simple_static_pipeline import simple_static_pipeline, validate_pipeline_execution
-from test_04_remote_ssh_tasks.pipeline_with_remote_tasks import ensure_remote_dirs_dont_exist
-from test_utils import TestSandboxDir, copy_pre_existing_file_deps_from_code_dir
+from test_utils import TestSandboxDir, copy_pre_existing_file_deps_from_code_dir, ensure_remote_dirs_dont_exist
 import test_utils
 
 

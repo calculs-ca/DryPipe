@@ -1,16 +1,12 @@
-import glob
 import logging
 import os
-import socket
 import time
 from datetime import datetime
 from threading import Thread
 
-import psutil
-
 from dry_pipe import Task
-from dry_pipe.actions import TaskAction
-from dry_pipe.task_state import TaskState, NON_TERMINAL_STATES
+from dry_pipe.ssh_executer import RemoteSSH
+from dry_pipe.task_state import TaskState
 from dry_pipe.utils import send_email_error_report_if_configured
 
 module_logger = logging.getLogger(__name__)
@@ -100,20 +96,14 @@ class DaemonThreadHelper:
 
             os._exit(0)
 
-        self._reset_ssh_connections_if_applies(exception)
+        self._reset_ssh_connections_if_exception_recoverable(exception)
 
         self.last_exception_at = datetime.now()
         time.sleep(DaemonThreadHelper.SLEEP_SECONDS_AFTER_DAEMON_FAIL)
 
-    def _reset_ssh_connections_if_applies(self, ex):
+    def _reset_ssh_connections_if_exception_recoverable(self, ex):
 
-        from paramiko.buffered_pipe import PipeTimeout
-        from dry_pipe.ssh_executer import SftpFileNotFoundError
-        from paramiko.ssh_exception import SSHException
-        if isinstance(ex, PipeTimeout) or \
-           isinstance(ex, socket.timeout) or \
-           isinstance(ex, SSHException) or \
-           isinstance(ex, SftpFileNotFoundError):
+        if RemoteSSH.exception_is_recoverable_with_connection_reset(ex):
             self.logger.info(f"will reset ssh connections")
             try:
                 for ssh_executer in self.ssh_executer_per_remote_site_key.values():

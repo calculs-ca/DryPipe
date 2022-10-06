@@ -124,3 +124,13 @@ def zaz():
 
 if __name__ == '__main__':
     zaz()
+
+
+def ensure_remote_dirs_dont_exist(pipeline_instance):
+
+    remote_dir_for_test = pipeline_instance.instance_dir_base_name()
+
+    for task_conf in pipeline_instance.remote_sites_task_confs():
+        complete_remote_dir_for_test = f"{task_conf.remote_base_dir}/{remote_dir_for_test}"
+        with task_conf.create_executer() as rex:
+            rex.invoke_remote(f"rm -Rf {complete_remote_dir_for_test}")

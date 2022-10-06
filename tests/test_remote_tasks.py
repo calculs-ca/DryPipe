@@ -1,12 +1,14 @@
 import os
+import time
 import unittest
+import uuid
 
 from dry_pipe import TaskConf
 from pipeline_with_two_remote_sites import create_pipeline_generator_two_remote_sites
 from test_04_remote_ssh_tasks import pipeline_with_remote_tasks
 from test_04_remote_ssh_tasks.pipeline_with_remote_tasks import \
-    ensure_remote_dirs_dont_exist, complete_and_validate_pipeline_instance
-from test_utils import TestSandboxDir
+    complete_and_validate_pipeline_instance
+from test_utils import TestSandboxDir, ensure_remote_dirs_dont_exist
 
 
 class RemoteTaskTests1(unittest.TestCase):
@@ -75,10 +77,10 @@ class RemoteTaskTests1(unittest.TestCase):
             else:
                 raise Exception("!")
 
+        ensure_remote_dirs_dont_exist(pipeline_instance)
+
         with task_conf_ip32.create_executer() as remote_executor_ip32:
             with task_conf_ip29.create_executer() as remote_executor_ip29:
-
-                ensure_remote_dirs_dont_exist(pipeline_instance)
 
                 pipeline_instance.init_work_dir()
 
@@ -94,24 +96,24 @@ class RemoteTaskTests1(unittest.TestCase):
                     )
 
                 def fetch_containers_dir_in_pipeline_env(remote_executor, task_conf):
-                    with remote_executor.ssh_client.open_sftp() as sftp:
-                        try:
-                            f = os.path.join(
-                                task_conf.remote_base_dir,
-                                "RemoteTaskTests1.test_pipeline_with_two_remote_sites",
-                                ".drypipe",
-                                "pipeline-env.sh"
-                            )
-                            with sftp.open(f) as _f:
-                                res = [
-                                    l.split("=")[1]
-                                    for l in _f.read().decode("utf-8").split("\n")
-                                    if l.startswith("export __containers_dir")
-                                ]
-                                self.assertEqual(len(res), 1)
-                                return res[0].strip()
-                        except FileNotFoundError as fnfe:
-                            raise Exception(f"{fnfe} while fetching {f} on {task_conf.ssh_specs}")
+                    f = os.path.join(
+                        task_conf.remote_base_dir,
+                        "RemoteTaskTests1.test_pipeline_with_two_remote_sites",
+                        ".drypipe",
+                        "pipeline-env.sh"
+                    )
+
+                    try:
+                        content = remote_executor.fetch_remote_file_content(f)
+                        res = [
+                            l.split("=")[1]
+                            for l in content.split("\n")
+                            if l.startswith("export __containers_dir")
+                        ]
+                        self.assertEqual(len(res), 1)
+                        return res[0].strip()
+                    except FileNotFoundError as fnfe:
+                        raise Exception(f"{fnfe} while fetching {f} from {task_conf.ssh_specs}")
 
                 self.assertEqual(fetch_containers_dir_in_pipeline_env(remote_executor_ip32, tc1), "dummy1")
                 self.assertEqual(fetch_containers_dir_in_pipeline_env(remote_executor_ip29, tc2), "dummy2")

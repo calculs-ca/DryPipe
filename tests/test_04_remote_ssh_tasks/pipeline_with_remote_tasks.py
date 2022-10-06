@@ -60,20 +60,6 @@ def create_pipeline_with_remote_tasks(remote_task_conf):
     return p
 
 
-def ensure_remote_dirs_dont_exist(pipeline_instance):
-
-    remote_dir_for_test = pipeline_instance.instance_dir_base_name()
-
-    for task_conf in pipeline_instance.remote_sites_task_confs():
-        complete_remote_dir_for_test = f"{task_conf.remote_base_dir}/{remote_dir_for_test}"
-        rex = task_conf.create_executer()
-        try:
-            rex.connect()
-            rex.ssh_client.exec_command(f"rm -Rf {complete_remote_dir_for_test}")
-        finally:
-            rex.close()
-
-
 def complete_and_validate_pipeline_instance(pipeline_instance, test_case):
 
     pipeline_instance.run_sync()

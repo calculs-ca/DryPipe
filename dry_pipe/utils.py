@@ -1,5 +1,6 @@
 import logging
 import os
+import sys
 import traceback
 from contextlib import contextmanager
 from itertools import groupby
@@ -57,6 +58,9 @@ def elapsed_timer():
 
 
 logger_perf = logging.getLogger("dry_pipe.perf")
+
+#   logger_perf.setLevel(logging.DEBUG)
+#   logger_perf.addHandler(logging.StreamHandler(sys.stdout))
 
 @contextmanager
 def perf_logger_timer(group_label, details="", rounding_decimals=3, logger=logger_perf):

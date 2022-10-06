@@ -14,7 +14,7 @@ minimal_requirements = [
 
 extra_requirements = [
     'PyYAML==5.4.1',
-    'paramiko==2.11.0'
+    'parallel-ssh==2.12.0'
 ]
 
 is_full_req = os.environ.get("dry_pipe_is_full_req") == "True"

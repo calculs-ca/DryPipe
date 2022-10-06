@@ -1,10 +1,7 @@
 import os
 import subprocess
-import time
-from paramiko import SSHClient, AutoAddPolicy
+import tempfile
 import logging.config
-
-import threading
 
 from dry_pipe import Executor
 from dry_pipe.bash import bash_shebang
@@ -13,13 +10,6 @@ from dry_pipe.task_state import TaskState
 from dry_pipe.utils import perf_logger_timer
 
 logger_ssh = logging.getLogger(f"{__name__}.ssh")
-
-
-class SftpFileNotFoundError(Exception):
-    """
-     sftp.put fragile, Paramiko bug:  https://github.com/paramiko/paramiko/issues/149
-    """
-    pass
 
 class ScpUploadException(Exception):
     pass
@@ -41,6 +31,7 @@ class RemoteSSH(Executor):
         self.rsync_containers = True
         self.slurm = None
         self.ssh_timeout_in_seconds = 60
+        self.ssh_client = None
 
     def is_remote(self):
         return True
@@ -52,18 +43,15 @@ class RemoteSSH(Executor):
         return f"{self.ssh_username}-{self.ssh_host}"
 
     def connect(self):
+        from pssh.clients import SSHClient
         try:
-            self.ssh_client = SSHClient()
-            self.ssh_client.set_missing_host_key_policy(AutoAddPolicy)
-
             with perf_logger_timer("RemoteSSH.connect") as t:
-                self.ssh_client.connect(
+                self.ssh_client = SSHClient(
                     self.ssh_host,
-                    username=self.ssh_username,
-                    key_filename=os.path.expanduser(self.key_filename)
+                    self.ssh_username,
+                    pkey=os.path.expanduser(self.key_filename)
                         if self.key_filename is not None and self.key_filename.startswith("~")
-                        else self.key_filename,
-                    timeout=self.ssh_timeout_in_seconds
+                        else self.key_filename
                 )
             logger_ssh.info("new ssh connection established %s at %s", self.ssh_username, self.ssh_host)
         except Exception as ex:
@@ -74,15 +62,14 @@ class RemoteSSH(Executor):
         logger_ssh.debug("will invoke '%s' at %s", cmd, self.ssh_host)
 
         with perf_logger_timer("RemoteSSH.invoke_remote", cmd) as t:
-            stdin, stdout, stderr = self.ssh_client.exec_command(cmd, timeout=self.ssh_timeout_in_seconds)
 
-            stderr_txt = stderr.read().decode("utf-8")
-            stdout_txt = stdout.read().decode("utf-8")
+            host_out = self.ssh_client.run_command(cmd)
+            stdout_txt = "\n".join(list(host_out.stdout))
+            stderr_lines = list(host_out.stderr)
 
-            #print(f"--->{cmd}\n'{stderr_txt}', {stdout_txt}")
-
-        if not bash_error_ok and stdout.channel.recv_exit_status() != 0:
-            raise Exception(f"remote call failed '{cmd}'\n{stderr_txt}\non {self}")
+        if not bash_error_ok and host_out.exit_code != 0:
+            stderr_txt = "\n".join(stderr_lines)
+            raise Exception(f"remote call failed {host_out.exit_code}, '{cmd}'\n{stderr_txt}\non {self}")
 
         logger_ssh.debug(f"invocation of '%s' at {self} returned '%s'", cmd, stdout_txt)
 
@@ -96,7 +83,17 @@ class RemoteSSH(Executor):
         self.close()
 
     def close(self):
-        self.ssh_client.close()
+        self.ssh_client.disconnect()
+
+    @staticmethod
+    def exception_is_recoverable_with_connection_reset(ex):
+        from pssh.exceptions import SSHException, SSHError, SFTPError
+        if isinstance(ex, SSHException) or \
+           isinstance(ex, SFTPError) or \
+           isinstance(ex, SSHError):
+            return True
+        else:
+            return False
 
     def fetch_remote_task_states(self, pipeline):
         with perf_logger_timer("RemoteSSH.fetch_remote_task_states") as t:
@@ -300,6 +297,20 @@ class RemoteSSH(Executor):
 
             self._launch_command(cmd, error_msg)
 
+    def fetch_remote_file(self, remote_file, local_file):
+        with perf_logger_timer("RemoteSSH.fetch_remote_file") as t:
+            self.ssh_client.copy_remote_file(remote_file, local_file)
+
+    def fetch_remote_file_content(self, remote_file):
+        with tempfile.NamedTemporaryFile() as tmp:
+            self.fetch_remote_file(remote_file, tmp.name)
+            with open(tmp.name) as _f:
+                return _f.read()
+
+    def upload_file(self, local_file, remote_file):
+        with perf_logger_timer("RemoteSSH.upload_file") as t:
+            self.ssh_client.copy_file(local_file, remote_file)
+
     def upload_overrides(self, pipeline_instance, task_conf):
 
         if pipeline_instance.is_remote_overrides_uploaded(self.server_connection_key()):
@@ -342,77 +353,16 @@ class RemoteSSH(Executor):
             _f.writelines(remote_overrides)
             _f.write("\n")
 
-        with perf_logger_timer("RemoteSSH.upload_overrides") as t:
-            r_work_dir = os.path.join(self.remote_base_dir, remote_pid_basename, ".drypipe")
-            r_override_file = os.path.join(
-                r_work_dir,
-                "pipeline-env.sh"
-            )
+        r_work_dir = os.path.join(self.remote_base_dir, remote_pid_basename, ".drypipe")
+        r_override_file = os.path.join(
+            r_work_dir,
+            "pipeline-env.sh"
+        )
 
-            def _upload_overrides():
-                with self.ssh_client.open_sftp() as sftp:
+        #mkdir not necessary, SSHClient.copy_file does it automatically
+        self.upload_file(overrides_file_for_host, r_override_file)
 
-                    # sftp.put fragile, Paramiko bug:  https://github.com/paramiko/paramiko/issues/149
-                    for i in range(1, 1):
-                        try:
-                            sftp.put(overrides_file_for_host, r_override_file, confirm=True)
-                            logger_ssh.info(f"overrides loaded: '%s'", r_override_file)
-                            break
-                        except Exception as ex:
-                            if i >= 3:
-                                logger_ssh.warning(ex)
-                                raise SftpFileNotFoundError()
-                            else:
-                                logger_ssh.warning(f"sftp failure %s will sleep and retry", i)
-                                time.sleep(2)
-
-            # as a work around
-            def upload_overrides_work_around():
-
-                def lines_in_overrides_file():
-                    yield f"mkdir -p {r_work_dir}"
-                    yield f"echo '{bash_shebang()}' > {r_override_file}"
-                    if remote_pipeline_code_dir is not None:
-                        yield f'echo "export __pipeline_code_dir={remote_pipeline_code_dir}" >> {r_override_file}'
-                    if remote_containers_dir is not None:
-                        yield f'echo "export __containers_dir={remote_containers_dir}" >> {r_override_file}'
-
-                    yield f"chmod u+x {r_override_file}"
-
-                for i in range(1, 3):
-                    try:
-                        self.invoke_remote("pwd")
-                        break
-                    except Exception as ex:
-                        if i >= 3:
-                            raise ex
-                        else:
-                            time.sleep(2)
-
-                remote_cmd = " && ".join(lines_in_overrides_file())
-                self.invoke_remote(remote_cmd)
-
-            #upload_overrides_work_around()
-            #upload_overrides()
-
-            self.invoke_remote(f"mkdir -p {r_work_dir}")
-            attempts = 1
-            while True:
-                time.sleep(2)
-                out = self.invoke_remote(f"cd {r_work_dir} && pwd", bash_error_ok=True)
-
-                if out == f"{r_work_dir}\n":
-                    break
-                logger_ssh.warning(f"sftp failure %s will sleep and retry", attempts)
-                if attempts > 3:
-                    raise Exception(f"command failed on {self.ssh_host}: mkdir -p {r_work_dir}")
-
-                attempts += 1
-                self.invoke_remote(f"mkdir -p {r_work_dir}", bash_error_ok=True)
-
-            self._scp_upload(overrides_file_for_host, r_override_file)
-
-            pipeline_instance.set_remote_overrides_uploaded(self.server_connection_key())
+        pipeline_instance.set_remote_overrides_uploaded(self.server_connection_key())
 
     """
         Fetches log lines and history.txt for all tasks, done once every janitor run, instead of before each task
@@ -470,51 +420,3 @@ class RemoteSSH(Executor):
                 raise Exception(f"remote command {cmd} returned invalid result: {res}")
             if res_num != 0:
                 raise Exception(f"remote command {cmd} failed with return code: {res_num}")
-
-
-
-    def __execute(self, task, touch_pid_file_func, wait_for_completion=False, fail_silently=False):
-        with perf_logger_timer("RemoteSSH.execute") as t:
-            b4_command = ""
-            if self.before_execute_bash is not None:
-                b4_command = f"{self.before_execute_bash} &&"
-
-            remote_pid_basename = os.path.basename(task.pipeline_instance.pipeline_instance_dir)
-
-            def remote_base_dir(p):
-                return os.path.join(self.remote_base_dir, remote_pid_basename, p)
-
-            r_script, r_sbatch_script, r_out, r_err, r_work_dir, r_control_dir = map(remote_base_dir, [
-                task.script_file(),
-                task.sbatch_launch_script(),
-                task.out_log(),
-                task.err_log(),
-                task.work_dir(),
-                task.control_dir()
-            ])
-
-            self.invoke_remote(f"mkdir -p {r_work_dir}")
-            self.invoke_remote(f"mkdir -p {r_control_dir}/out_sigs")
-
-            if task.scratch_dir() is not None:
-                self.invoke_remote(f"mkdir -p {remote_base_dir(task.scratch_dir())}")
-
-            self.invoke_remote(f"rm {r_control_dir}/state.*", bash_error_ok=True)
-
-            self.invoke_remote(f"touch {r_control_dir}/state.launched.0")
-
-            if self.slurm is None:
-
-                ampersand_or_not = "&"
-
-                if wait_for_completion:
-                    ampersand_or_not = ""
-
-                cmd = f"nohup bash -c '{b4_command} . {r_script}  >{r_out} 2>{r_err}' {ampersand_or_not}"
-            else:
-                if wait_for_completion:
-                    cmd = f"bash -c 'export SBATCH_WAIT=True && {r_sbatch_script}'"
-                else:
-                    cmd = r_sbatch_script
-
-            self.invoke_remote(cmd)
