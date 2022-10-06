@@ -311,9 +311,9 @@ class RemoteSSH(Executor):
         with perf_logger_timer("RemoteSSH.upload_file") as t:
             self.ssh_client.copy_file(local_file, remote_file)
 
-    def upload_overrides(self, pipeline_instance, task_conf):
+    def premare_remote_instance_directory(self, pipeline_instance, task_conf):
 
-        if pipeline_instance.is_remote_overrides_uploaded(self.server_connection_key()):
+        if pipeline_instance.is_remote_instance_directory_prepared(self.server_connection_key()):
             return
 
         pipeline_instance_dir = pipeline_instance.pipeline_instance_dir
@@ -369,7 +369,7 @@ class RemoteSSH(Executor):
         self.upload_file(script_lib_l, script_lib_r)
         self.invoke_remote(f"chmod u+x {script_lib_r}")
 
-        pipeline_instance.set_remote_overrides_uploaded(self.server_connection_key())
+        pipeline_instance.set_remote_instance_directory_prepared(self.server_connection_key())
 
     """
         Fetches log lines and history.txt for all tasks, done once every janitor run, instead of before each task

@@ -321,7 +321,7 @@ def _janitor_ng(pipeline_instance, wait_for_completion=False, fail_silently=Fals
 
     for task_conf in pipeline_instance.remote_sites_task_confs():
         remote_executor = daemon_thread_helper.get_executer(task_conf)
-        remote_executor.upload_overrides(pipeline_instance, task_conf)
+        remote_executor.premare_remote_instance_directory(pipeline_instance, task_conf)
 
     work_done = 0
 
