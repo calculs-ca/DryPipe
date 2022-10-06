@@ -311,7 +311,7 @@ class RemoteSSH(Executor):
         with perf_logger_timer("RemoteSSH.upload_file") as t:
             self.ssh_client.copy_file(local_file, remote_file)
 
-    def premare_remote_instance_directory(self, pipeline_instance, task_conf):
+    def prepare_remote_instance_directory(self, pipeline_instance, task_conf):
 
         if pipeline_instance.is_remote_instance_directory_prepared(self.server_connection_key()):
             return

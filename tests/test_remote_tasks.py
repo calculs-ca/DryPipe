@@ -84,8 +84,8 @@ class RemoteTaskTests1(unittest.TestCase):
 
                 pipeline_instance.init_work_dir()
 
-                remote_executor_ip29.premare_remote_instance_directory(pipeline_instance, task_conf_ip29)
-                remote_executor_ip32.premare_remote_instance_directory(pipeline_instance, task_conf_ip32)
+                remote_executor_ip29.prepare_remote_instance_directory(pipeline_instance, task_conf_ip29)
+                remote_executor_ip32.prepare_remote_instance_directory(pipeline_instance, task_conf_ip32)
 
                 pipeline_instance.run_sync()
 

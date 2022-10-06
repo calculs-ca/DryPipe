@@ -4,6 +4,8 @@ import time
 from datetime import datetime
 from threading import Thread
 
+import psutil
+
 from dry_pipe import Task
 from dry_pipe.ssh_executer import RemoteSSH
 from dry_pipe.task_state import TaskState
@@ -321,7 +323,7 @@ def _janitor_ng(pipeline_instance, wait_for_completion=False, fail_silently=Fals
 
     for task_conf in pipeline_instance.remote_sites_task_confs():
         remote_executor = daemon_thread_helper.get_executer(task_conf)
-        remote_executor.premare_remote_instance_directory(pipeline_instance, task_conf)
+        remote_executor.prepare_remote_instance_directory(pipeline_instance, task_conf)
 
     work_done = 0
 
@@ -334,6 +336,10 @@ def _janitor_ng(pipeline_instance, wait_for_completion=False, fail_silently=Fals
             task.create_state_file_and_control_dir()
             task.prepare()
             # assert task.get_state().is_waiting_for_deps()
+
+    currently_running = TaskState.count_running_local(pipeline_instance)
+    cpu_count = len(psutil.Process().cpu_affinity())
+    throttled_count = 0
 
     for task_state in TaskState.fetch_all(pipeline_instance.pipeline_instance_dir):
 
@@ -357,6 +363,18 @@ def _janitor_ng(pipeline_instance, wait_for_completion=False, fail_silently=Fals
                     task_state.transition_to_prepared()
             elif task_state.is_queued():
                 work_done += 1
+
+                if task.task_conf.is_process():
+                    if currently_running >= cpu_count:
+                        daemon_thread_helper.logger.info(
+                            "exceeded cpu load %s tasks running, will resume launching when below threshold",
+                            currently_running
+                        )
+                        throttled_count += 1
+                        continue
+
+                    currently_running += 1
+
                 executer = daemon_thread_helper.get_executer(task.task_conf)
                 task_state.transition_to_launched(executer, task, wait_for_completion, fail_silently=fail_silently)
 
