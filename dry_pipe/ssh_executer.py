@@ -344,23 +344,30 @@ class RemoteSSH(Executor):
             if v is not None
         ]
 
-        if len(remote_overrides) == 0:
-            logger_ssh.info(f"no overrides to upload")
-            return
-
-        with open(overrides_file_for_host, "w") as _f:
-            _f.write(f"{bash_shebang()}\n\n")
-            _f.writelines(remote_overrides)
-            _f.write("\n")
-
         r_work_dir = os.path.join(self.remote_base_dir, remote_pid_basename, ".drypipe")
-        r_override_file = os.path.join(
-            r_work_dir,
-            "pipeline-env.sh"
-        )
 
-        #mkdir not necessary, SSHClient.copy_file does it automatically
-        self.upload_file(overrides_file_for_host, r_override_file)
+        if len(remote_overrides) > 0:
+            logger_ssh.info(f"no overrides to upload")
+
+            with open(overrides_file_for_host, "w") as _f:
+                _f.write(f"{bash_shebang()}\n\n")
+                _f.writelines(remote_overrides)
+                _f.write("\n")
+
+            r_override_file = os.path.join(
+                r_work_dir,
+                "pipeline-env.sh"
+            )
+
+            self.upload_file(overrides_file_for_host, r_override_file)
+
+        def local_to_remote(file):
+            return os.path.join(pipeline_instance.work_dir, file), os.path.join(r_work_dir, file)
+
+        self.upload_file(*local_to_remote('script_lib.py'))
+        script_lib_l, script_lib_r = local_to_remote('script_lib')
+        self.upload_file(script_lib_l, script_lib_r)
+        self.invoke_remote(f"chmod u+x {script_lib_r}")
 
         pipeline_instance.set_remote_overrides_uploaded(self.server_connection_key())
 

@@ -743,9 +743,6 @@ class Task:
                     f.write(self.sbatch_launch_script())
                     f.write("\n")
 
-                f.write(".drypipe/script_lib.py\n")
-                f.write(".drypipe/script_lib\n")
-
             remote_outputs = os.path.join(self.v_abs_control_dir(), "remote-outputs.txt")
 
             with open(remote_outputs, "w") as f:
@@ -764,9 +761,6 @@ class Task:
                 f.write("\n")
                 f.write(self.out_log())
                 f.write("\n")
-
-
-        return None
 
     def seconds_since_last_activity(self):
 
