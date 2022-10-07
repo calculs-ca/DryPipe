@@ -283,21 +283,24 @@ class Local(Executor):
 
     def execute(self, task, touch_pid_file_func, wait_for_completion=False, fail_silently=False):
 
-        ts = task.get_state()
+        cmd = ["nohup", "bash", "-c", task.v_abs_script_file()]
 
-        #drypipe_cmds = os.path.join(ts.pipeline_instance_dir(), ".drypipe", "dryfuncs")
-
-        is_slurm = "False"
-
-        cmd = task.v_abs_script_file()
+        if not wait_for_completion:
+            cmd = cmd + ["&"]
 
         with open(task.v_abs_out_log(), 'w') as out:
             with open(task.v_abs_err_log(), 'w') as err:
                 with subprocess.Popen(
-                    [cmd],
+                    cmd,
                     shell=False,
                     stdout=out,
-                    stderr=err
+                    stderr=err,
+                    env={
+                        **dict([
+                            (LOCAL_PROCESS_IDENTIFIER_VAR, f"____{task.key}")
+                        ]),
+                        **os.environ
+                    }
                 ) as p:
 
                     p.wait()
