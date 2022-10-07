@@ -7,9 +7,8 @@ import subprocess
 import sys
 import textwrap
 from fnmatch import fnmatch
-from functools import wraps
 
-from dry_pipe.bash import bash_shebang
+from dry_pipe.utils import bash_shebang
 from dry_pipe.internals import \
     Executor, Local, PreExistingFile, IndeterminateFile, ProducedFile, \
     Slurm, IncompleteVar, Val, OutputVar, \

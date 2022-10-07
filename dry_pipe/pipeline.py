@@ -6,8 +6,7 @@ import shutil
 import subprocess
 from itertools import groupby
 
-from dry_pipe import TaskConf, DryPipeDsl, TaskBuilder, script_lib
-from dry_pipe.bash import BASH_SIGN_FILES_IF_NEWER, BASH_TASK_FUNCS_AND_TRAPS, BASH_SIGN_FILES, bash_shebang
+from dry_pipe import TaskConf, DryPipeDsl, TaskBuilder, script_lib, bash_shebang
 from dry_pipe.internals import ValidationError, SubPipeline
 from dry_pipe.janitors import Janitor
 from dry_pipe.pipeline_state import PipelineState
@@ -331,14 +330,7 @@ class PipelineInstance:
             write_task_lib_script(script_lib_file_handle)
         os.chmod(script_lib_file, 0o764)
 
-        if not os.path.exists(self._recalc_hash_script()):
-            with open(self._recalc_hash_script(), "w") as f:
-                f.write(f"{bash_shebang()}\n\n")
-                f.write(BASH_SIGN_FILES_IF_NEWER)
-                f.write("\n__sign_files\n")
-            os.chmod(self._recalc_hash_script(), 0o764)
-
-        self.calc_pre_existing_files_signatures()
+        #self.calc_pre_existing_files_signatures()
         self.get_state().touch()
 
     def remote_sites_task_confs(self):

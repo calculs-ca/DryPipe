@@ -14,7 +14,7 @@ import textwrap
 
 from dry_pipe.script_lib import parse_in_out_meta
 from dry_pipe.actions import TaskAction
-from dry_pipe.bash import bash_shebang
+from dry_pipe import bash_shebang
 from dry_pipe.internals import \
     IndeterminateFile, ProducedFile, IncompleteVar, Val, \
     OutputVar, InputFile, InputVar, FileSet, TaskMatcher, OutFileSet, ValidationError, flatten, TaskProps

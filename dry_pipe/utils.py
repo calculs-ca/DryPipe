@@ -105,3 +105,7 @@ def analyze_perf_log(log_file, rounding_decimals=2):
             str(s) for s in stat
         ]
         print("\t".join(stat))
+
+
+def bash_shebang():
+    return "#!/usr/bin/env bash"

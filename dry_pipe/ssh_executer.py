@@ -3,8 +3,7 @@ import subprocess
 import tempfile
 import logging.config
 
-from dry_pipe import Executor
-from dry_pipe.bash import bash_shebang
+from dry_pipe import Executor, bash_shebang
 from dry_pipe.internals import flatten
 from dry_pipe.task_state import TaskState
 from dry_pipe.utils import perf_logger_timer

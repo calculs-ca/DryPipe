@@ -7,7 +7,6 @@ from base_tests import BaseTests, NonTrivialPipelineTests, NonTrivialPipelineLoc
     NonTrivialPipelineLocalWithSingularityContainerTests, NonTrivialPipelineSlurmContainerlessTests, \
     NonTrivialPipelineSlurmWithSingularityContainerTests
 from ground_level_tests import GroundLevelTests, TaskSignatureTests
-from test_bash_funcs import BaseFuncTests
 from test_corner_case_failure_handling import CornerCasesFailureTests
 from test_daemon_mode import DaemonModeTests
 from test_in_out_hashing import InOutHashingTests
@@ -31,7 +30,6 @@ def low_level_tests():
         ScriptLibTests,
         MinimalistPipelinesTests,
         SingleTaskPipelinesTests,
-        BaseFuncTests,
         NonTrivialPipelineTests,
         NonTrivialPipelineLocalContainerlessTests,
         TaskSignatureTests,
@@ -50,7 +48,6 @@ def quick_sanity_tests():
         NonTrivialPipelineLocalContainerlessTests,
         TaskSignatureTests,
         GroundLevelTests,
-        BaseFuncTests,
         AggregateTaskTests,
         # InOutHashingTests,
         PipelineCompositionTests
