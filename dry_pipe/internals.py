@@ -10,75 +10,7 @@ import logging.config
 import psutil
 from psutil import AccessDenied
 
-from dry_pipe import env_variables
-
 LOCAL_PROCESS_IDENTIFIER_VAR = "____DRY_PIPE_TASK"
-
-log_conf_file = env_variables.log_config()
-
-
-def DEBUG_CONFIG(main_level, drypype_level, root_level):
-    return {
-        'version': 1,
-        'disable_existing_loggers': False,
-        'formatters': {
-            'standard': {
-                'format': '%(asctime)s [%(levelname)s] %(name)s: %(message)s'
-            },
-        },
-        'handlers': {
-            'console': {
-                'level': 'DEBUG',
-                'formatter': 'standard',
-                'class': 'logging.StreamHandler',
-                'stream': 'ext://sys.stdout',
-            },
-        },
-        'loggers': {
-
-            'zoz': {  # root logger
-                'handlers': ['console'],
-                'level': root_level,
-                'propagate': False
-            },
-            'drypipe.*': {
-                'handlers': ['console'],
-                'level': drypype_level,
-                'propagate': False
-            },
-            '__main__': {
-                'handlers': ['console'],
-                'level': main_level,
-                'propagate': False
-            }
-        }
-    }
-
-
-def setup_debug_log_config(drypype_level="INFO", root_level="INFO", main_level="INFO", extra_loggers={}):
-    print("DEBUG CONFIG")
-
-    conf = DEBUG_CONFIG(main_level, drypype_level, root_level)
-
-    conf["loggers"] = {
-        ** conf["loggers"],
-        ** extra_loggers
-    }
-
-    logging.config.dictConfig(conf)
-
-if log_conf_file is not None:
-    import yaml
-    if log_conf_file == "DEBUG_CONFIG":
-        setup_debug_log_config()
-    else:
-        with open(log_conf_file) as f:
-
-            print(f"log config: {log_conf_file}")
-            config = yaml.load(f, Loader=yaml.FullLoader)
-            logging.config.dictConfig(config)
-
-
 logger = logging.getLogger(__name__)
 
 

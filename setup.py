@@ -13,7 +13,6 @@ minimal_requirements = [
 ]
 
 extra_requirements = [
-    'PyYAML==5.4.1',
     'parallel-ssh==2.12.0'
 ]
 
