@@ -1,3 +1,4 @@
+import logging
 import os
 import time
 import traceback
@@ -13,6 +14,8 @@ from rich.align import Align
 from dry_pipe.monitoring import PipelineMetricsTable, fetch_task_group_metrics
 from dry_pipe.pipeline import PipelineInstance
 from dry_pipe.task_state import TaskState
+
+logger = logging.getLogger(__name__)
 
 
 class CliScreen:
@@ -86,12 +89,15 @@ class CliScreen:
             else:
                 self._set_selected_failed_task(c - 1)
 
+    def stop_listening_keys(self):
+        logger.info("stop listening to keys")
+        stop_listening()
 
     def press(self, key):
         try:
             if key == "q":
                 self.quit = True
-                stop_listening()
+                self.stop_listening_keys()
             elif key == "f":
                 self.cancel_prompt()
                 self.screen = "errors"
@@ -113,8 +119,9 @@ class CliScreen:
                 self.cancel_prompt()
                 self.task_down()
         except Exception:
+            logger.exception(f"failed on key command {key}")
             self.error_msg.append(traceback.format_exc())
-            stop_listening()
+            self.stop_listening_keys()
 
     def is_prompt_restart_task(self):
         return self.prompt == "restart-task"
@@ -133,11 +140,14 @@ class CliScreen:
                         self.update_screen(live)
                         time.sleep(1)
                 except Exception:
+                    logger.exception(f"failed in refresh loop")
                     self.error_msg.append(traceback.format_exc())
-                    stop_listening()
+                    self.stop_listening_keys()
 
+        logger.info("will start screen refresher thread")
         Thread(target=refresher).start()
 
+        logger.info("will start listen_keyboard")
         listen_keyboard(on_press=lambda key: self.press(key))
 
         if len(self.error_msg) > 0:
@@ -263,6 +273,7 @@ class CliScreen:
         return layout
 
     def update_screen(self, live):
+        logger.debug("will update screen %s", self.screen)
         if self.screen == 'summary':
             l = self._status_table()
         elif self.screen == "errors":
@@ -270,6 +281,9 @@ class CliScreen:
             l = self._errors_screen()
         elif self.screen == "restart-task":
             l = self._errors_screen()
+        else:
+            raise Exception(f"unknown screen {self.screen}")
 
         live.update(Panel(l, border_style="blue"))
+        logger.debug("screen %s updated", self.screen)
 

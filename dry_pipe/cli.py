@@ -2,6 +2,8 @@ import glob
 import importlib
 import inspect
 import json
+import logging
+import logging.config
 import pathlib
 import re
 import sys
@@ -35,6 +37,17 @@ def _bad_entrypoint(ctx):
         return True
 
     return False
+
+
+def _configure_logging(log_conf_file):
+
+    if log_conf_file is None:
+        log_conf_file = os.environ.get("DRYPIPE_LOGGING_CONF")
+
+    if log_conf_file is not None:
+        with open(log_conf_file) as f:
+            logging.config.dictConfig(json.loads(f.read()))
+
 
 @click.command()
 @click.pass_context
@@ -205,7 +218,10 @@ def mon(pipeline, instance_dir):
 @click.option('--restart-failed', is_flag=True)
 @click.option('--reset-failed', is_flag=True)
 @click.option('--no-confirm', is_flag=True)
-def run(pipeline, instance_dir, web_mon, port, bind, clean, single, restart_failed, reset_failed, no_confirm):
+@click.option('--logging-conf', type=click.Path(), default=None, help="log configuration file (json)")
+def run(pipeline, instance_dir, web_mon, port, bind, clean, single, restart_failed, reset_failed, no_confirm, logging_conf):
+
+    _configure_logging(logging_conf)
 
     pipeline_mod_func = pipeline
 
