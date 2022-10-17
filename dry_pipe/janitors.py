@@ -4,12 +4,11 @@ import time
 from datetime import datetime
 from threading import Thread
 
-import psutil
 
 from dry_pipe import Task
 from dry_pipe.ssh_executer import RemoteSSH
 from dry_pipe.task_state import TaskState
-from dry_pipe.utils import send_email_error_report_if_configured
+from dry_pipe.utils import send_email_error_report_if_configured, count_cpus
 
 module_logger = logging.getLogger(__name__)
 
@@ -317,7 +316,7 @@ def _janitor_ng(pipeline_instance, wait_for_completion=False, fail_silently=Fals
             # assert task.get_state().is_waiting_for_deps()
 
     currently_running = TaskState.count_running_local(pipeline_instance)
-    cpu_count = len(psutil.Process().cpu_affinity())
+    cpu_count = count_cpus()
     throttled_count = 0
 
     for task_state in TaskState.fetch_all(pipeline_instance.pipeline_instance_dir):

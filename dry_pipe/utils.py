@@ -1,5 +1,6 @@
 import logging
 import os
+import subprocess
 import sys
 import traceback
 from contextlib import contextmanager
@@ -109,3 +110,19 @@ def analyze_perf_log(log_file, rounding_decimals=2):
 
 def bash_shebang():
     return "#!/usr/bin/env bash"
+
+
+def count_cpus():
+
+    cmd = ["grep", "-c", "^processor", "/proc/cpuinfo"]
+    with subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True
+    ) as p:
+        p.wait()
+        if p.returncode != 0:
+            raise Exception(f"cmd failed {cmd} {p.stderr.read()}")
+
+        return int(p.stdout.read())

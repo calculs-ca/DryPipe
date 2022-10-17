@@ -6,7 +6,6 @@ minimal_requirements = [
     'click==8.1.3',
     'uvicorn==0.17.6',
     'python-socketio==5.6.0',
-    'psutil==5.9.1',
     'rich==12.6.0',
     'requests==2.27.1',
     'sshkeyboard==2.3.1'

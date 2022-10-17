@@ -7,8 +7,7 @@ import sys
 import getpass
 import logging.config
 
-import psutil
-from psutil import AccessDenied
+from dry_pipe.utils import count_cpus
 
 LOCAL_PROCESS_IDENTIFIER_VAR = "____DRY_PIPE_TASK"
 logger = logging.getLogger(__name__)
@@ -138,6 +137,18 @@ class Executor:
     def is_remote(self):
         return False
 
+
+def _process_iter(names):
+    import psutil
+
+    for it in psutil.process_iter(['pid', 'exe', 'username', 'environ']):
+        yield it
+
+
+def _is_access_denied(ex):
+    from psutil import AccessDenied
+    return isinstance(ex, AccessDenied)
+
 class Local(Executor):
 
     def count_running_tasks(self):
@@ -146,7 +157,7 @@ class Local(Executor):
 
         c = 0
 
-        for it in psutil.process_iter(['pid', 'exe', 'username', 'environ']):
+        for it in _process_iter(['pid', 'exe', 'username', 'environ']):
 
             if it.username() != current_user:
                 continue
@@ -160,8 +171,9 @@ class Local(Executor):
                 if v is not None: # and v.startswith("____"):
                     c += 1
 
-            except AccessDenied:
-                pass
+            except Exception as ex:
+                if not _is_access_denied(ex):
+                    raise ex
 
         return c
 
@@ -169,7 +181,7 @@ class Local(Executor):
 
         current_user = getpass.getuser()
 
-        for it in psutil.process_iter(['pid', 'exe', 'username', 'environ']):
+        for it in _process_iter(['pid', 'exe', 'username', 'environ']):
 
             if it.username() != current_user:
                 continue
@@ -184,8 +196,9 @@ class Local(Executor):
                     if v == f"____{task_key}":
                         it.kill()
 
-            except AccessDenied:
-                pass
+            except Exception as ex:
+                if not _is_access_denied(ex):
+                    raise ex
 
         #pids = list(get_pids())
         #print(f"pids: {pids}")
@@ -194,7 +207,7 @@ class Local(Executor):
 
     def __init__(self, before_execute_bash):
         self.before_execute_bash = before_execute_bash
-        self.cpu_count = len(psutil.Process().cpu_affinity())
+        self.cpu_count = count_cpus()
 
     def has_cpu_capacity_to_launch(self):
 
