@@ -7,7 +7,7 @@ minimal_requirements = [
     'uvicorn==0.17.6',
     'python-socketio==5.6.0',
     'psutil==5.9.1',
-    'rich==12.4.4',
+    'rich==12.6.0',
     'requests==2.27.1',
     'sshkeyboard==2.3.1'
 ]
@@ -23,7 +23,7 @@ if is_full_req:
 
 setup(
     name='dry_pipe',
-    version='0.3.0',
+    version='0.3.1',
     packages=['dry_pipe'],
     install_requires=minimal_requirements,
     extras_require={"full": extra_requirements},
