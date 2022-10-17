@@ -339,8 +339,16 @@ def run_script(script, container=None):
             root_of_scratch_dir = _root_dir(scratch_dir)
             singularity_bindings.append(f"{root_of_scratch_dir}:{root_of_scratch_dir}")
 
-        if len(singularity_bindings) == 0:
-            env["SINGULARITY_BIND"] = ",".join(singularity_bindings)
+        if len(singularity_bindings) > 0:
+
+            prev_singularity_bindings = env.get("SINGULARITY_BIND")
+
+            if prev_singularity_bindings is not None and prev_singularity_bindings != "":
+                bindings_prefix = f"{prev_singularity_bindings},"
+            else:
+                bindings_prefix = ""
+
+            env["SINGULARITY_BIND"] = f"{bindings_prefix}{','.join(singularity_bindings)}"
 
     with open(os.environ['__out_log'], 'a') as out:
         with open(os.environ['__err_log'], 'a') as err:
