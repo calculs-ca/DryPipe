@@ -163,12 +163,13 @@ class Janitor:
     def is_shutdown(self):
         return self._shutdown
 
-    def iterate_main_work(self, do_upload_and_download=False, sync_mode=False, fail_silently=False, stay_alive_when_no_more_work=False):
+    def iterate_main_work(self, sync_mode=False, fail_silently=False):
+
+        stay_alive_when_no_more_work = not sync_mode
 
         daemon_thread_helper = DaemonThreadHelper(
             janitor_sub_logger("main_d"), self.min_sleep, self.max_sleep, self.pipelines, sync_mode
         )
-        strike = 0
 
         while True:
 
@@ -176,54 +177,33 @@ class Janitor:
 
             try:
 
-                no_more_work = False
-
-                active_pipelines = 0
+                work_done = 0
 
                 for pipeline in daemon_thread_helper.iterate_on_pipelines():
 
-                    active_pipelines += 1
-
                     pipeline.init_work_dir()
 
-                    work_done, no_more_work = _janitor_ng(
+                    work_done_on_pipeline_instance = _janitor_ng(
                         pipeline,
                         wait_for_completion=sync_mode,
                         fail_silently=fail_silently,
                         daemon_thread_helper=daemon_thread_helper
                     )
 
-                    if do_upload_and_download:
+                    if sync_mode:
                         _upload_janitor(daemon_thread_helper, pipeline, daemon_thread_helper.logger)
                         _download_janitor(daemon_thread_helper, pipeline)
 
+                    if work_done_on_pipeline_instance > 0:
+                        work_done += work_done_on_pipeline_instance
+                        daemon_thread_helper.register_work()
+
                     yield True
 
-                    if work_done > 0:
-                        daemon_thread_helper.register_work()
-                    else:
-
-                        if no_more_work and not stay_alive_when_no_more_work:
-                            daemon_thread_helper.logger.info("no more work")
-                            yield False
-                        else:
-                            strike = 0
-
-                if no_more_work:
-                    strike += 1
-
-                if strike >= 4 and sync_mode:
-                    if not stay_alive_when_no_more_work:
-                        yield False
+                if sync_mode and not stay_alive_when_no_more_work and work_done == 0:
+                    yield False
 
                 daemon_thread_helper.end_round()
-
-                if active_pipelines == 0 and sync_mode:
-                    if not stay_alive_when_no_more_work:
-                        yield False
-
-#                if active_pipelines == 1 and no_more_work:
-#                    break
 
             except Exception as ex:
                 daemon_thread_helper.logger.exception(ex)
@@ -231,14 +211,10 @@ class Janitor:
                     raise ex
                 daemon_thread_helper.handle_exception_in_daemon_loop(ex)
 
-    def start(self, stay_alive_when_no_more_work=False):
+    def start(self):
 
         def work():
-            work_iterator = self.iterate_main_work(
-                do_upload_and_download=False,
-                sync_mode=False,
-                stay_alive_when_no_more_work=stay_alive_when_no_more_work
-            )
+            work_iterator = self.iterate_main_work(sync_mode=False)
 
             has_work = next(work_iterator)
             while has_work:
@@ -326,8 +302,11 @@ def _janitor_ng(pipeline_instance, wait_for_completion=False, fail_silently=Fals
         remote_executor.prepare_remote_instance_directory(pipeline_instance, task_conf)
 
     work_done = 0
+    total_tasks = 0
+    tasks_completed = 0
 
     for task in pipeline_instance.tasks:
+        total_tasks += 1
 
         task_state = task.get_state()
 
@@ -350,7 +329,10 @@ def _janitor_ng(pipeline_instance, wait_for_completion=False, fail_silently=Fals
             work_done += 1
             action.do_it(task, task.executer)
 
-        if task_state.is_completed() or task_state.is_failed():
+        if task_state.is_completed():
+            tasks_completed += 1
+            continue
+        if task_state.is_failed():
             continue
         elif task_state.is_completed_unsigned():
             work_done += 1
@@ -378,7 +360,12 @@ def _janitor_ng(pipeline_instance, wait_for_completion=False, fail_silently=Fals
                 executer = daemon_thread_helper.get_executer(task.task_conf)
                 task_state.transition_to_launched(executer, task, wait_for_completion, fail_silently=fail_silently)
 
-    return work_done, work_done == 0
+    if total_tasks == tasks_completed:
+        pipeline_state = pipeline_instance.get_state()
+        if not pipeline_state.is_completed():
+            pipeline_state.transition_to_completed()
+
+    return work_done
 
 
 def _upload_janitor(daemon_thread_helper, pipeline, logger):

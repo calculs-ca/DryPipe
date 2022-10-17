@@ -247,12 +247,32 @@ class PipelineInstance:
         self.dag_determining_tasks_ids = set()
         self.tasks = self.pipeline.task_set_generator(self)
         self._is_remote_instance_directory_prepared = set()
+        self._preparation_completed = 0
 
     def set_remote_instance_directory_prepared(self, server_key):
         self._is_remote_instance_directory_prepared.add(server_key)
 
     def is_remote_instance_directory_prepared(self, server_key):
         return server_key in self._is_remote_instance_directory_prepared
+
+    def is_preparation_completed(self):
+
+        if self._preparation_completed >= 2:
+            return True
+
+        def is_task_preparation_completed():
+            for task in self.tasks:
+                task_state = task.get_state()
+                if task_state is None:
+                    return False
+                if task.key in self.dag_determining_tasks_ids and not task_state.is_completed():
+                    return False
+            return True
+
+        if is_task_preparation_completed():
+            self._preparation_completed += 1
+
+        return self._preparation_completed >= 2
 
     @staticmethod
     def _hint_file(instance_dir):
@@ -502,7 +522,7 @@ class PipelineInstance:
 
         return total_changed
 
-    def run_sync(self, tmp_env_vars={}, fail_silently=False, stay_alive_when_no_more_work=False, sync=True):
+    def run_sync(self, tmp_env_vars={}, fail_silently=False):
 
         for k, v in tmp_env_vars.items():
             os.environ[k] = v
@@ -510,10 +530,7 @@ class PipelineInstance:
         self.init_work_dir()
 
         j = Janitor(pipeline_instance=self)
-        i = j.iterate_main_work(
-            do_upload_and_download=True,
-            sync_mode=sync, fail_silently=fail_silently, stay_alive_when_no_more_work=stay_alive_when_no_more_work
-        )
+        i = j.iterate_main_work(sync_mode=True, fail_silently=fail_silently)
         has_work = next(i)
         while has_work:
             has_work = next(i)

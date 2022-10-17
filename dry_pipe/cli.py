@@ -247,7 +247,7 @@ def run(pipeline, instance_dir, web_mon, port, bind, clean, single, restart_fail
         max_sleep=5
     )
 
-    janitor.start(stay_alive_when_no_more_work=True)
+    janitor.start()
     janitor.start_remote_janitors()
 
     if web_mon:
@@ -339,7 +339,7 @@ def watch(ctx, pipeline, env, instances_dir):
 
     janitor = Janitor(pipeline, pipeline_instances_dir=instances_dir)
 
-    thread = janitor.start(stay_alive_when_no_more_work=True)
+    thread = janitor.start()
 
     janitor.start_remote_janitors()
 

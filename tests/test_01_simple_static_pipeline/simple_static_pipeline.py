@@ -96,6 +96,9 @@ def validate_pipeline_execution(pipeline_instance, test_case):
 
     blast, report_task, python_much_fancier_report, python_much_much_fancier_report = pipeline_instance.tasks
 
+    if not pipeline_instance.get_state().is_completed():
+        raise Exception(f"expected pipeline state to be completed")
+
     for t in [blast, report_task, python_much_fancier_report, python_much_much_fancier_report]:
         state = t.get_state()
         if not state.is_completed():

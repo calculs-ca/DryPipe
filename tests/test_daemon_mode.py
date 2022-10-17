@@ -91,7 +91,10 @@ class LongRunningDaemonModeTests(unittest.TestCase):
 
         ensure_remote_dirs_dont_exist(pipeline_instance)
 
-        pipeline_instance.run_sync(stay_alive_when_no_more_work=True, sync=False)
+        janitor = Janitor(pipeline_instance=pipeline_instance)
+        thread = janitor.start()
+        janitor.start_remote_janitors()
+        thread.join()
 
         # socat tcp-listen:7775,bind=127.0.0.1,fork tcp:maxl@ip29.ccs.usherbrooke.ca:22
         # sudo tc qdisc add dev wlp1s0 root netem loss 30%
