@@ -171,14 +171,14 @@ def _pipeline_from_modul_func(instance_dir, module_func_pipeline, write_hint_fil
     return pipeline
 
 
-def _pipeline_instance_creater(instance_dir, pipeline_spec):
+def _pipeline_instance_creater(instance_dir, pipeline_spec, env_vars):
 
     if pipeline_spec is None:
         pipeline_spec = PipelineInstance.guess_pipeline_from_hints(instance_dir)
 
     pipeline = _pipeline_from_modul_func(instance_dir, pipeline_spec)
 
-    return lambda: pipeline.create_pipeline_instance(instance_dir)
+    return lambda: pipeline.create_pipeline_instance(instance_dir, env_vars=env_vars)
 
 
 @click.command()
@@ -219,7 +219,11 @@ def mon(pipeline, instance_dir):
 @click.option('--reset-failed', is_flag=True)
 @click.option('--no-confirm', is_flag=True)
 @click.option('--logging-conf', type=click.Path(), default=None, help="log configuration file (json)")
-def run(pipeline, instance_dir, web_mon, port, bind, clean, single, restart_failed, reset_failed, no_confirm, logging_conf):
+@click.option('--env', type=click.STRING, default=None)
+def run(
+    pipeline, instance_dir, web_mon, port, bind,
+    clean, single, restart_failed, reset_failed, no_confirm, logging_conf, env
+):
 
     _configure_logging(logging_conf)
 
@@ -234,7 +238,14 @@ def run(pipeline, instance_dir, web_mon, port, bind, clean, single, restart_fail
                 click.echo("no pipeline instance created, exiting.")
                 return
 
-    pipeline_instance = _pipeline_instance_creater(instance_dir, pipeline_mod_func)()
+    env_vars = None
+    if env is not None:
+        env_vars = {}
+        for k_v in env.split(","):
+            k, v = k_v.split("=")
+            env_vars[k] = v
+
+    pipeline_instance = _pipeline_instance_creater(instance_dir, pipeline_mod_func, env_vars)()
 
     if clean:
         pipeline_instance.clean()
