@@ -1208,7 +1208,7 @@ class TaskStep:
         else:
             container_arg = f",'{container}'"
 
-        if python_bin is not None:
+        if self.python_call is not None:
             indented_line(
                 f"script_lib.run_python('{python_bin}', '{self.python_call.mod_func()}'{container_arg})"
             )
