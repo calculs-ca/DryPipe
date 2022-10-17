@@ -457,7 +457,7 @@ def _fs_type(file):
         p.wait()
         if p.returncode != 0:
             raise Exception(f"failed to stat for fs type: {stat_cmd}")
-        return p.stdout.read().decode("utf-8")
+        return p.stdout.read().decode("utf-8").strip()
 
 
 def set_singularity_bindings():
