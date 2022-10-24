@@ -284,7 +284,6 @@ class CliScreen:
         else:
             raise Exception(f"unknown screen {self.screen}")
 
-        live.update(Panel(l, border_style="blue"))
-        live.refresh()
+        live.update(Panel(l, border_style="blue"), refresh=True)
         logger.debug("screen %s updated", self.screen)
 
