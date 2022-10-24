@@ -134,11 +134,11 @@ class CliScreen:
 
     def start_and_wait(self):
         def refresher():
-            with Live(refresh_per_second=2) as live:
+            with Live(auto_refresh=False) as live:
                 try:
                     while not self.quit:
                         self.update_screen(live)
-                        time.sleep(1)
+                        time.sleep(3)
                 except Exception:
                     logger.exception(f"failed in refresh loop")
                     self.error_msg.append(traceback.format_exc())
@@ -285,5 +285,6 @@ class CliScreen:
             raise Exception(f"unknown screen {self.screen}")
 
         live.update(Panel(l, border_style="blue"))
+        live.refresh()
         logger.debug("screen %s updated", self.screen)
 
