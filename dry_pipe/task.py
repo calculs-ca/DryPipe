@@ -615,7 +615,6 @@ class Task:
                 #    yield f"{name}_python", consuming_input_var.output_var.format_for_python(v)
 
             elif not consuming_input_var.output_var.may_be_none:
-                print("")
                 msg = f"unmet dependency: {consuming_task}._consumes(" + \
                       f"{consuming_input_var.var_name_in_consuming_task}={self.key}.out." + \
                       f"{var_name_in_this_producing_task})" + \

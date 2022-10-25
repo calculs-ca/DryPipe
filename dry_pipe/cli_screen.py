@@ -31,6 +31,7 @@ class CliScreen:
         self.selected_failed_task = None
         self.prompt = None
         self.error_msg = []
+        self.loop_counter = 0
 
         class ShallowPipelineInstance:
             def __init__(self):
@@ -203,9 +204,9 @@ class CliScreen:
 
         pipeline_mod_func = self.pipeline_hints.get("pipeline")
         if self.is_monitor_mode:
-            console_mode = "  [bright_yellow]console in monitor mode (no launching)[/]"
+            console_mode = f"  [bright_yellow]console in monitor mode (no launching)[/]  ({self.loop_counter})"
         else:
-            console_mode = "  [bright_yellow]console in launcher mode[/]"
+            console_mode = f"  [bright_yellow]console in launcher mode[/]  ({self.loop_counter})"
 
         if pipeline_mod_func is not None:
             title = f"[bold]DryPipe([green1]{pipeline_mod_func}[/], "
@@ -273,7 +274,8 @@ class CliScreen:
         return layout
 
     def update_screen(self, live):
-        logger.debug("will update screen %s", self.screen)
+        self.loop_counter += 1
+        logger.debug("will update screen %s, %s", self.loop_counter, self.screen)
         if self.screen == 'summary':
             l = self._status_table()
         elif self.screen == "errors":
