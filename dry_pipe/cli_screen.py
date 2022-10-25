@@ -32,10 +32,10 @@ class CliScreen:
         self.prompt = None
         self.error_msg = []
         self.loop_counter = 0
-        self.rich_live_auto_refresh = False
+        self.rich_live_auto_refresh = True
 
-        if os.environ.get("DRYPIPE_CLI_AUTO_REFRESH") == "True":
-            self.rich_live_auto_refresh = True
+        if os.environ.get("DRYPIPE_CLI_AUTO_REFRESH") == "False":
+            self.rich_live_auto_refresh = False
 
         class ShallowPipelineInstance:
             def __init__(self):
