@@ -32,6 +32,10 @@ class CliScreen:
         self.prompt = None
         self.error_msg = []
         self.loop_counter = 0
+        self.rich_live_auto_refresh = False
+
+        if os.environ.get("DRYPIPE_CLI_AUTO_REFRESH") == "True":
+            self.rich_live_auto_refresh = True
 
         class ShallowPipelineInstance:
             def __init__(self):
@@ -135,7 +139,10 @@ class CliScreen:
 
     def start_and_wait(self):
         def refresher():
-            with Live(auto_refresh=False) as live:
+            refresh_per_second = 4
+            if self.rich_live_auto_refresh:
+                refresh_per_second = 1
+            with Live(auto_refresh=self.rich_live_auto_refresh, refresh_per_second=refresh_per_second) as live:
                 try:
                     while not self.quit:
                         self.update_screen(live)
@@ -286,6 +293,6 @@ class CliScreen:
         else:
             raise Exception(f"unknown screen {self.screen}")
 
-        live.update(Panel(l, border_style="blue"), refresh=True)
+        live.update(Panel(l, border_style="blue"), refresh=not self.rich_live_auto_refresh)
         logger.debug("screen %s updated", self.screen)
 
