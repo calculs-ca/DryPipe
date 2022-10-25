@@ -37,6 +37,11 @@ class CliScreen:
         if os.environ.get("DRYPIPE_CLI_AUTO_REFRESH") == "False":
             self.rich_live_auto_refresh = False
 
+        self.listen_keyboard_enabled = True
+
+        if os.environ.get("DRYPIPE_CLI_LISTEN_KEYBOARD_ENABLED") == "False":
+            self.listen_keyboard_enabled = False
+
         class ShallowPipelineInstance:
             def __init__(self):
                 self.pipeline_instance_dir = pipeline_instance_dir
@@ -95,8 +100,9 @@ class CliScreen:
                 self._set_selected_failed_task(c - 1)
 
     def stop_listening_keys(self):
-        logger.info("stop listening to keys")
-        stop_listening()
+        if self.listen_keyboard_enabled:
+            logger.info("stop listening to keys")
+            stop_listening()
 
     def press(self, key):
         try:
@@ -153,10 +159,16 @@ class CliScreen:
                     self.stop_listening_keys()
 
         logger.info("will start screen refresher thread")
-        Thread(target=refresher).start()
+        refresh_thread = Thread(target=refresher)
+        refresh_thread.start()
 
-        logger.info("will start listen_keyboard")
-        listen_keyboard(on_press=lambda key: self.press(key))
+        if self.listen_keyboard_enabled:
+            logger.info("will start listen_keyboard")
+            listen_keyboard(on_press=lambda key: self.press(key))
+        else:
+            logger.info("will NOT listen_keyboard")
+            refresh_thread.join()
+
 
         if len(self.error_msg) > 0:
             return self.error_msg[0]
