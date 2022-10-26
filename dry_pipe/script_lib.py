@@ -94,14 +94,22 @@ def run_python(python_bin, mod_func, container=None):
     if os.environ.get("__is_slurm"):
         env['__scratch_dir'] = os.environ['SLURM_TMPDIR']
 
+    has_failed = False
+
     with open(os.environ['__out_log'], 'a') as out:
         with open(os.environ['__err_log'], 'a') as err:
             with subprocess.Popen(cmd, stdout=out, stderr=err) as p:
-                p.wait()
-                if p.returncode != 0:
-                    step_number, control_dir, state_file, state_name = read_task_state()
-                    _transition_state_file(state_file, "failed", step_number)
-                    exit(1)
+                try:
+                    p.wait()
+                    has_failed = p.returncode != 0
+                except Exception as _:
+                    has_failed = True
+                finally:
+                    if has_failed:
+                        step_number, control_dir, state_file, state_name = read_task_state()
+                        _transition_state_file(state_file, "failed", step_number)
+    if has_failed:
+        exit(1)
 
 
 def ensure_upstream_tasks_completed(env):
@@ -350,6 +358,7 @@ def run_script(script, container=None):
 
             env["SINGULARITY_BIND"] = f"{bindings_prefix}{','.join(singularity_bindings)}"
 
+    has_failed = False
     with open(os.environ['__out_log'], 'a') as out:
         with open(os.environ['__err_log'], 'a') as err:
             with subprocess.Popen(
@@ -358,12 +367,17 @@ def run_script(script, container=None):
                 env=env,
                 shell=shell
             ) as p:
-                p.wait()
-                if p.returncode != 0:
-                    step_number, control_dir, state_file, state_name = read_task_state()
-                    _transition_state_file(state_file, "failed", step_number)
-                    exit(1)
-
+                try:
+                    p.wait()
+                    has_failed = p.returncode != 0
+                except Exception as _:
+                    has_failed = True
+                finally:
+                    if has_failed:
+                        step_number, control_dir, state_file, state_name = read_task_state()
+                        _transition_state_file(state_file, "failed", step_number)
+    if has_failed:
+        exit(1)
 
 def launch_task_remote(task_key, is_slurm, wait_for_completion):
 
