@@ -324,9 +324,7 @@ def run_script(script, container=None):
 
     if container is None:
         cmd = script
-        shell = True
     else:
-        shell = False
         cmd = [
             "singularity",
             "exec",
@@ -364,8 +362,7 @@ def run_script(script, container=None):
             with subprocess.Popen(
                 cmd,
                 stdout=out, stderr=err,
-                env=env,
-                shell=shell
+                env=env
             ) as p:
                 try:
                     p.wait()

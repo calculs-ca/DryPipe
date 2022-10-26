@@ -98,7 +98,7 @@ class ScriptLibTests(unittest.TestCase):
             #!/usr/bin/env bash
             echo "the end"
             echo "err123" >&2
-        """)
+        """).strip()
 
         control_dir, task_script = self._single_step_bash_template(d, script_code)
 
@@ -123,7 +123,7 @@ class ScriptLibTests(unittest.TestCase):
             #!/usr/bin/env bash
             echo "a" > $__work_dir/a.txt
             echo "b" > $__work_dir/b.txt
-        """)
+        """).strip()
 
         control_dir, task_script = self._single_step_bash_template(d, script_code)
 
@@ -144,7 +144,7 @@ class ScriptLibTests(unittest.TestCase):
             echo "the end"
             echo "err99999" >&2
             exit 1            
-        """)
+        """).strip()
 
         control_dir, task_script = self._single_step_bash_template(d, script_code)
 
@@ -172,7 +172,7 @@ class ScriptLibTests(unittest.TestCase):
                 echo "--:>$i"
                 sleep 2
             done                        
-        """)
+        """).strip()
 
         control_dir, task_script = self._single_step_bash_template(d, script_code)
 
