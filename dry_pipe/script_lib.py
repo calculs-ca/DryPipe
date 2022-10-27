@@ -11,6 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from itertools import groupby
 from pathlib import Path
+from threading import Thread
 
 
 def create_task_logger(task_control_dir):
@@ -494,6 +495,25 @@ def launch_task_remote(task_key, is_slurm, wait_for_completion):
             ) as p:
                 p.wait()
                 print(str(p.returncode))
+
+
+def launch_task(task_func, wait_for_completion):
+
+    def task_func_wrapper():
+        try:
+            task_func()
+            logger.info("task completed")
+        except Exception as ex:
+            logger.exception(ex)
+
+    if wait_for_completion:
+        task_func_wrapper()
+    else:
+        if os.fork() != 0:
+            exit(0)
+        register_signal_handlers()
+        Thread(target=task_func_wrapper).start()
+        signal.pause()
 
 
 def gen_input_var_exports(out=sys.stdout, env=os.environ):

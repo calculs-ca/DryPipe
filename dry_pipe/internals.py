@@ -228,64 +228,20 @@ class Local(Executor):
         ]
 
     def execute(self, task, touch_pid_file_func, wait_for_completion=False, fail_silently=False):
-
         if wait_for_completion:
             cmd = [task.v_abs_script_file(), "--wait"]
         else:
             cmd = [task.v_abs_script_file()]
 
-        with open(task.v_abs_out_log(), 'w') as out:
-            with open(task.v_abs_err_log(), 'w') as err:
-                with subprocess.Popen(
-                    cmd,
-                    stdout=out,
-                    stderr=err,
-                    env={
-                        **dict([
-                            (LOCAL_PROCESS_IDENTIFIER_VAR, f"____{task.key}")
-                        ]),
-                        **os.environ
-                    }
-                ) as p:
+        logger.debug("will launch task %s", ' '.join(cmd))
 
-                    p.wait()
-
-                    if p.returncode != 0:
-                        # If we were in async mode, we wouldn't see the error...
-                        if wait_for_completion:
-                            if fail_silently:
-                                return
-
-                            if Local.fail_silently_for_test:
-                                return
-
-                            task_state = task.get_state()
-                            err_if_failed = task_state.tail_err_if_failed(5)
-
-                            if err_if_failed is not None:
-                                raise Exception(
-                                    f"task {task.key} failed \n{err_if_failed}\n further details in {task.v_abs_err_log()}"
-                                )
-                            else:
-                                return
-
-                        raise Exception(
-                            f"the command for {task} returned non zero result, " +
-                            f"see logs at {task.v_abs_out_log()} and {task.v_abs_err_log()}.\n",
-                            f"cmd: {cmd}"
-                        )
-                    #else:
-                        #out = p.stdout.read().strip().decode("utf-8")
-                        #if ":" not in out:
-                        #    raise Exception(f"bad output {out}")
-                        #ignore, return_code = out.split(":")
-                        #if return_code.strip() != "0":
-                        #    raise Exception(f"task returned non zero code {return_code}")
-
-                    touch_pid_file_func(p.pid)
-
-
-
+        with subprocess.Popen(
+                cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL
+        ) as p:
+            p.wait()
+            logger.info("task ended with returncode: %s", p.returncode)
 
     def _execute(self, task, touch_pid_file_func, wait_for_completion=False, fail_silently=False):
         b4_command = ""
