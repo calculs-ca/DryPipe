@@ -22,7 +22,7 @@ def create_task_logger(task_control_dir):
         logging_level = logging.DEBUG
     h.setLevel(logging_level)
     _logger.setLevel(logging_level)
-    h.setFormatter(logging.Formatter("%(asctime)s - %(message)s"))
+    h.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
     _logger.addHandler(h)
     return _logger
 
