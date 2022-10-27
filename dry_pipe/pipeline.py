@@ -10,7 +10,7 @@ from dry_pipe import TaskConf, DryPipeDsl, TaskBuilder, script_lib, bash_shebang
 from dry_pipe.internals import ValidationError, SubPipeline
 from dry_pipe.janitors import Janitor
 from dry_pipe.pipeline_state import PipelineState
-from dry_pipe.script_lib import write_task_lib_script
+from dry_pipe.script_lib import write_pipeline_lib_script
 from dry_pipe.task import Task
 
 logger = logging.getLogger(__name__)
@@ -347,7 +347,7 @@ class PipelineInstance:
 
         script_lib_file = os.path.join(self.work_dir, "script_lib")
         with open(script_lib_file, "w") as script_lib_file_handle:
-            write_task_lib_script(script_lib_file_handle)
+            write_pipeline_lib_script(script_lib_file_handle)
         os.chmod(script_lib_file, 0o764)
 
         #self.calc_pre_existing_files_signatures()

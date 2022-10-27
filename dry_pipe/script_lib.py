@@ -5,17 +5,44 @@ import signal
 import subprocess
 import sys
 import textwrap
+import logging
+import logging.config
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from itertools import groupby
 from pathlib import Path
 
 
+def create_task_logger(task_control_dir):
+    _logger = logging.getLogger()
+    h = logging.FileHandler(filename=os.path.join(task_control_dir, "drypipe.log"))
+    if DRYPIPE_TASK_DEBUG != "True":
+        logging_level = logging.INFO
+    else:
+        logging_level = logging.DEBUG
+    h.setLevel(logging_level)
+    _logger.setLevel(logging_level)
+    h.setFormatter(logging.Formatter("%(asctime)s - %(message)s"))
+    _logger.addHandler(h)
+    return _logger
+
+
+__script_location = os.environ.get("__script_location")
+
+
+if __script_location is None:
+    logger = logging.getLogger(__name__)
+else:
+    DRYPIPE_TASK_DEBUG = os.environ.get("DRYPIPE_TASK_DEBUG")
+    logger = create_task_logger(__script_location)
+
+
+
 def python_shebang():
     return "#!/usr/bin/env python3"
 
 
-def write_task_lib_script(file_handle):
+def write_pipeline_lib_script(file_handle):
     file_handle.write(
         f"{python_shebang()}\n" + textwrap.dedent(f"""            
             import os
@@ -52,6 +79,8 @@ def task_script_header():
     return f"{python_shebang()}\n" + textwrap.dedent(f"""            
         import os
         import sys 
+        import signal
+        from threading import Thread
         import importlib.machinery
         import importlib.util        
 
@@ -60,14 +89,14 @@ def task_script_header():
             __script_location = os.environ['__script_location']
         else:
             __script_location = os.path.dirname(os.path.abspath(__file__))
+            os.environ["__script_location"] = __script_location
         script_lib_path = os.path.join(os.path.dirname(__script_location), 'script_lib.py')        
         loader = importlib.machinery.SourceFileLoader('script_lib', script_lib_path)
         spec = importlib.util.spec_from_loader(loader.name, loader)
         script_lib = importlib.util.module_from_spec(spec)
         loader.exec_module(script_lib)
-        env = script_lib.source_task_env(os.path.join(__script_location, 'task-env.sh'))
-        script_lib.ensure_upstream_tasks_completed(env)
-        script_lib.register_timeout_handler()
+        env = script_lib.source_task_env(os.path.join(__script_location, 'task-env.sh'))        
+        script_lib.ensure_upstream_tasks_completed(env)        
     """)
 
 
@@ -96,14 +125,17 @@ def run_python(python_bin, mod_func, container=None):
 
     has_failed = False
 
+    logger.info("run_python: %s", ' '.join(cmd))
+
     with open(os.environ['__out_log'], 'a') as out:
         with open(os.environ['__err_log'], 'a') as err:
             with subprocess.Popen(cmd, stdout=out, stderr=err) as p:
                 try:
                     p.wait()
                     has_failed = p.returncode != 0
-                except Exception as _:
+                except Exception as ex:
                     has_failed = True
+                    logger.exception(ex)
                 finally:
                     if has_failed:
                         step_number, control_dir, state_file, state_name = read_task_state()
@@ -124,6 +156,29 @@ def _fail_safe_stderr(process):
     except Exception as _e:
         err = ""
     return err
+
+
+def terminate_descendants(p1, p2):
+
+    logger.info("signal SIGTERM received, will terminate descendants")
+
+    this_pid = str(os.getpid())
+    with subprocess.Popen(
+        ['ps', '-opid', '--no-headers', '--ppid', this_pid],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE
+    ) as p:
+        p.wait()
+        pids = [
+            int(line.decode("utf-8").strip())
+            for line in p.stdout.readlines()
+        ]
+        pids = [pid for pid in pids if pid != p.pid]
+        logger.debug("descendants of %s: %s", this_pid, pids)
+        for pid in pids:
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except Exception as _:
+                pass
 
 
 def env_from_sourcing(env_file):
@@ -250,6 +305,8 @@ def _transition_state_file(state_file, next_state_name, step_number=None, inc_st
 
     next_state_file = os.path.join(control_dir, next_state_basename)
 
+    logger.debug("will transition to: %s", next_state_basename)
+
     os.rename(
         state_file,
         next_state_file
@@ -267,14 +324,20 @@ def transition_to_step_started(state_file, step_number):
 def transition_to_step_completed(state_file, step_number):
     return _transition_state_file(state_file, "step-completed", step_number, inc_step_number=True)
 
-def register_timeout_handler(sig=signal.SIGUSR1):
+def register_signal_handlers():
 
     def timeout_handler(s, frame):
         step_number, control_dir, state_file, state_name = read_task_state()
         _transition_state_file(state_file, "timed-out", step_number)
         exit(1)
 
-    signal.signal(sig, timeout_handler)
+    logger.debug("will register signal handlers")
+
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+    signal.signal(signal.SIGHUP, signal.SIG_IGN)
+
+    signal.signal(signal.SIGUSR1, timeout_handler)
+    signal.signal(signal.SIGTERM, terminate_descendants)
 
 
 def sign_files():
@@ -323,7 +386,7 @@ def run_script(script, container=None):
     env = {**os.environ}
 
     if container is None:
-        cmd = script
+        cmd = [script]
     else:
         cmd = [
             "singularity",
@@ -356,6 +419,7 @@ def run_script(script, container=None):
 
             env["SINGULARITY_BIND"] = f"{bindings_prefix}{','.join(singularity_bindings)}"
 
+    logger.info("run_script: %s", ' '.join(cmd))
     has_failed = False
     with open(os.environ['__out_log'], 'a') as out:
         with open(os.environ['__err_log'], 'a') as err:
@@ -367,7 +431,8 @@ def run_script(script, container=None):
                 try:
                     p.wait()
                     has_failed = p.returncode != 0
-                except Exception as _:
+                except Exception as ex:
+                    logger.exception(ex)
                     has_failed = True
                 finally:
                     if has_failed:
@@ -376,11 +441,15 @@ def run_script(script, container=None):
     if has_failed:
         exit(1)
 
+
 def launch_task_remote(task_key, is_slurm, wait_for_completion):
 
     pipeline_instance_dir = os.path.dirname(os.path.dirname(sys.argv[0]))
 
     control_dir = os.path.join(pipeline_instance_dir, '.drypipe', task_key)
+
+    logger = create_task_logger(control_dir)
+
     out_sigs_dir = os.path.join(control_dir, 'out_sigs')
     touch(os.path.join(control_dir, 'output_vars'))
 
@@ -409,6 +478,8 @@ def launch_task_remote(task_key, is_slurm, wait_for_completion):
             back_ground = "&"
         scr = os.path.join(control_dir, 'task')
         cmd = ["nohup", "bash", "-c", f"python3 {scr} {back_ground}"]
+
+    logger.info("launching from remote: %s", ' '.join(cmd))
 
     with open(os.path.join(control_dir, 'out.log'), 'w') as out:
         with open(os.path.join(control_dir, 'err.log'), 'w') as err:

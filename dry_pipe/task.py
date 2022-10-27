@@ -668,20 +668,25 @@ class Task:
         with open(shell_script_file, "w") as f:
             f.write(task_script_header())
 
-            f.write("\nstep_number, control_dir, state_file, state_name = script_lib.read_task_state()\n")
-
-            def write_before_first_step(indent):
-                #f.write(f"{indent}mkdir -p $__work_dir\n")
-                pass
+            f.write("\n\ndef go():\n")
+            f.write("\n    step_number, control_dir, state_file, state_name = script_lib.read_task_state()\n")
 
             step_number = 0
             for task_step in self.task_steps:
-                task_step.write_invocation(
-                    f, self, step_number, write_before_first_step
-                )
+                task_step.write_invocation(f, self, step_number)
                 step_number += 1
 
-            f.write('script_lib.transition_to_completed(state_file)\n')
+            f.write('    script_lib.transition_to_completed(state_file)\n\n\n')
+
+            f.write('wait_for_completion = "--wait" in sys.argv\n')
+            f.write('if wait_for_completion:\n')
+            f.write('    go()\n')
+            f.write('else:\n')
+            f.write('    if os.fork() != 0:\n')
+            f.write('        exit(0)\n')
+            f.write('    script_lib.register_signal_handlers()\n')
+            f.write('    Thread(target=go).start()\n')
+            f.write('    signal.pause()\n')
 
         os.chmod(shell_script_file, 0o764)
 
@@ -1183,18 +1188,15 @@ class TaskStep:
         self.python_call = python_call
         self.shell_snippet = shell_snippet
 
-    def write_invocation(self, file_writer, task, step_number, write_before_first_step):
+    def write_invocation(self, file_writer, task, step_number):
 
         container = self.task_conf.container
         python_bin = self.task_conf.python_bin
 
-        file_writer.write(f"\nif step_number <= {step_number}:\n")
-
-        if step_number == 0:
-            write_before_first_step(indent="    ")
+        file_writer.write(f"\n    if step_number <= {step_number}:\n")
 
         def indented_line(line):
-            file_writer.write("    ")
+            file_writer.write("        ")
             file_writer.write(line)
             file_writer.write("\n")
 

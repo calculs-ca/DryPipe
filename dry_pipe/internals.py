@@ -229,22 +229,17 @@ class Local(Executor):
 
     def execute(self, task, touch_pid_file_func, wait_for_completion=False, fail_silently=False):
 
-        cmd = ["nohup", task.v_abs_script_file()]
-
-        if not wait_for_completion:
-            cmd = cmd + ["&"]
-
-        def preexec_fn():
-            signal.signal(signal.SIGINT, signal.SIG_IGN)
+        if wait_for_completion:
+            cmd = [task.v_abs_script_file(), "--wait"]
+        else:
+            cmd = [task.v_abs_script_file()]
 
         with open(task.v_abs_out_log(), 'w') as out:
             with open(task.v_abs_err_log(), 'w') as err:
                 with subprocess.Popen(
                     cmd,
-                    shell=False,
                     stdout=out,
                     stderr=err,
-                    preexec_fn=preexec_fn,
                     env={
                         **dict([
                             (LOCAL_PROCESS_IDENTIFIER_VAR, f"____{task.key}")
