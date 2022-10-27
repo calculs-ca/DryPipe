@@ -89,8 +89,9 @@ STATE_EQUIVALENCE_FOR_DISPLAY = {
 
     "failed":              "failed",
     "timed-out":           "timed-out",
-    "ignored":             "ignored",
-    "crashed":             "crashed"
+    "killed":              "killed",
+#    "ignored":             "ignored",
+#    "crashed":             "crashed"
 }
 
 STATE_EQUIVALENCE_FOR_DISPLAY_WEB = {

@@ -215,14 +215,16 @@ def mon(pipeline, instance_dir):
 @click.option('--clean', is_flag=True)
 @click.option('--single', type=click.STRING, default=None,
               help="launches a single task, specified by the task key, in foreground, ex.: launch --single=TASK_KEY")
-@click.option('--restart-failed', is_flag=True)
+@click.option('--restart', is_flag=True, help="restart failed or killed tasks")
+@click.option('--restart-failed', is_flag=True, help="restart failed tasks")
+@click.option('--restart-killed', is_flag=True, help="restart killed tasks")
 @click.option('--reset-failed', is_flag=True)
 @click.option('--no-confirm', is_flag=True)
 @click.option('--logging-conf', type=click.Path(), default=None, help="log configuration file (json)")
 @click.option('--env', type=click.STRING, default=None)
 def run(
     pipeline, instance_dir, web_mon, port, bind,
-    clean, single, restart_failed, reset_failed, no_confirm, logging_conf, env
+    clean, single, restart, restart_failed, restart_killed, reset_failed, no_confirm, logging_conf, env
 ):
 
     _configure_logging(logging_conf)
@@ -262,10 +264,14 @@ def run(
         task_state = task.get_state()
         if task_state is not None:
 
-            if task_state.is_failed() and not task.has_unsatisfied_deps():
+            if (task_state.is_failed() or task_state.is_killed()) and not task.has_unsatisfied_deps():
                 task.prepare()
 
-                if restart_failed:
+                if restart:
+                    task.re_queue()
+                elif restart_failed and task_state.is_failed():
+                    task.re_queue()
+                elif restart_killed and task_state.is_killed():
                     task.re_queue()
 
     janitor = Janitor(
