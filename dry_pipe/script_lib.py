@@ -309,7 +309,7 @@ def _transition_state_file(state_file, next_state_name, step_number=None, inc_st
 
     next_state_file = os.path.join(control_dir, next_state_basename)
 
-    logger.debug("will transition to: %s", next_state_basename)
+    logger.info("will transition to: %s", next_state_basename)
 
     os.rename(
         state_file,
