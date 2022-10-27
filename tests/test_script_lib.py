@@ -162,7 +162,7 @@ class ScriptLibTests(unittest.TestCase):
         self.assertEqual(step_number, 0)
         self.assertEqual(os.path.basename(state_file), "state.failed.0")
 
-    def test_bash_timeout(self):
+    def _test_bash_timeout(self):
         d = TestSandboxDir(self)
         script_code = textwrap.dedent("""
             #!/usr/bin/env bash            

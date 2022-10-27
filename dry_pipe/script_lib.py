@@ -64,11 +64,12 @@ def write_pipeline_lib_script(file_handle):
     
         if "gen-input-var-exports" in sys.argv:
             script_lib.gen_input_var_exports()
-        elif "launch-task-remote" in sys.argv:
+        elif "launch-task-from-remote" in sys.argv:
             task_key = sys.argv[2]
             is_slurm = "--is-slurm" in sys.argv
             wait_for_completion = "--wait-for-completion" in sys.argv
-            script_lib.launch_task_remote(task_key, is_slurm, wait_for_completion)
+            drypipe_task_debug = "--drypipe-task-debug" in sys.argv
+            script_lib.launch_task_from_remote(task_key, is_slurm, wait_for_completion, drypipe_task_debug)
         else:
             raise Exception('invalid args')
     """))
@@ -193,11 +194,14 @@ def _terminate_descendants_and_exit(p1, p2):
     finally:
         _exit_process()
 
+
 def env_from_sourcing(env_file):
 
     p = os.path.abspath(sys.executable)
 
     dump_with_python_script = f'{p} -c "import os, json; print(json.dumps(dict(os.environ)))"'
+
+    logger.debug("will source file: %s", env_file)
 
     with subprocess.Popen(
             ['/bin/bash', '-c', f". {env_file} && {dump_with_python_script}"],
@@ -206,6 +210,7 @@ def env_from_sourcing(env_file):
         p.wait()
         out = p.stdout.read().decode("utf-8")
         if p.returncode != 0:
+            logger.error("failed to source file: %s", env_file)
             raise Exception(f"Failed sourcing env file: {env_file}\n{_fail_safe_stderr(p)}")
         return json.loads(out)
 
@@ -306,6 +311,8 @@ def _append_to_history(control_dir, state_name, step_number=None):
 
 def _transition_state_file(state_file, next_state_name, step_number=None):
 
+    logger.debug("_transition_state_file: %s", state_file)
+
     control_dir = os.path.dirname(state_file)
 
     if step_number is None:
@@ -318,6 +325,7 @@ def _transition_state_file(state_file, next_state_name, step_number=None):
     next_state_file = os.path.join(control_dir, next_state_basename)
 
     logger.info("will transition to: %s", next_state_basename)
+    logger.debug("next_state_file: %s", next_state_file)
 
     os.rename(
         state_file,
@@ -325,6 +333,8 @@ def _transition_state_file(state_file, next_state_name, step_number=None):
     )
 
     _append_to_history(control_dir, next_state_name, step_number)
+
+    logger.debug("_transition_state_file completed")
 
     return next_state_file, next_step_number
 
@@ -352,6 +362,8 @@ def register_signal_handlers():
 
     signal.signal(signal.SIGUSR1, timeout_handler)
     signal.signal(signal.SIGTERM, _terminate_descendants_and_exit)
+
+    logger.debug("signal handlers registered")
 
 
 def sign_files():
@@ -400,12 +412,15 @@ def run_script(script, container=None):
     env = {**os.environ}
 
     if container is None:
+        logger.debug("run_script %s", script)
         cmd = [script]
     else:
+        container_full_path = os.path.join(os.environ['__containers_dir'], container)
+        logger.debug("run_script %s in container %s", script, container_full_path)
         cmd = [
             "singularity",
             "exec",
-            os.path.join(os.environ['__containers_dir'], container),
+            container_full_path,
             script
         ]
 
@@ -456,7 +471,7 @@ def run_script(script, container=None):
         _exit_process()
 
 
-def launch_task_remote(task_key, is_slurm, wait_for_completion):
+def launch_task_from_remote(task_key, is_slurm, wait_for_completion, drypipe_task_debug):
 
     pipeline_instance_dir = os.path.dirname(os.path.dirname(sys.argv[0]))
 
@@ -483,7 +498,7 @@ def launch_task_remote(task_key, is_slurm, wait_for_completion):
     if is_slurm:
         cmd = os.path.join(control_dir, 'sbatch-launcher.sh')
         if wait_for_completion:
-            env = {**env, "SBATCH_EXTRA_ARGS": "--wait"}
+            env = {**env, "SBATCH_EXTRA_ARGS": "--wait", "DRYPIPE_TASK_DEBUG": str(drypipe_task_debug)}
             cmd = ["bash", "-c", cmd]
     else:
         if wait_for_completion:
@@ -511,6 +526,7 @@ def launch_task(task_func, wait_for_completion):
 
     def task_func_wrapper():
         try:
+            logger.debug("task func started")
             task_func()
             logger.info("task completed")
         except Exception as ex:
@@ -521,14 +537,17 @@ def launch_task(task_func, wait_for_completion):
     if wait_for_completion:
         task_func_wrapper()
     else:
-        if os.fork() != 0:
+        if os.environ.get("__is_slurm") != "True" and os.fork() != 0:
             exit(0)
         else:
-            kill_script = os.path.join(os.environ['__script_location'], "kill")
-            with open(kill_script, "w") as f:
-                f.write("#!/bin/sh\n")
-                f.write(f"kill -{signal.SIGTERM} {os.getpid()}\n")
-            os.chmod(kill_script, 0o764)
+            if os.environ.get("__is_slurm") == "True":
+                logger.info("slurm job started")
+            else:
+                kill_script = os.path.join(os.environ['__script_location'], "kill")
+                with open(kill_script, "w") as f:
+                    f.write("#!/bin/sh\n")
+                    f.write(f"kill -{signal.SIGTERM} {os.getpid()}\n")
+                os.chmod(kill_script, 0o764)
 
             os.setpgrp()
             register_signal_handlers()

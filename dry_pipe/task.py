@@ -700,7 +700,7 @@ class Task:
                     f"    --account={self.task_conf.slurm_account} \\",
                      "    --output=$__script_location/out.log \\",
                      "    --error=$__script_location/err.log \\",
-                     "    --export=__script_location=$__script_location,__is_slurm=True \\",
+                     "    --export=__script_location=$__script_location,__is_slurm=True,DRYPIPE_TASK_DEBUG=$DRYPIPE_TASK_DEBUG \\",
                      "    --signal=B:USR1@50 \\",
                      "    --parsable \\",
                     f"    --job-name={self.key} $SBATCH_EXTRA_ARGS \\",
@@ -710,6 +710,8 @@ class Task:
                 f.write("\n\n")
 
                 f.write("echo $__job_id > $__script_location/slurm_job_id\n")
+                f.write('echo "scancel --signal=SIGTERM $__job_id" > $__script_location/kill\n')
+                f.write('chmod u+x $__script_location/kill\n')
 
             os.chmod(self.v_abs_sbatch_launch_script(), 0o764)
 

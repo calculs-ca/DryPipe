@@ -410,12 +410,15 @@ class RemoteSSH(Executor):
             'script_lib'
         )
 
+        drypipe_task_debug = os.environ.get("DRYPIPE_TASK_DEBUG") == "True"
+
         cmd = " ".join([
             remote_script_lib_path,
-            "launch-task-remote",
+            "launch-task-from-remote",
             task.key,
             "--is-slurm" if task.task_conf.is_slurm() else "",
-            "--wait-for-completion" if wait_for_completion else ""
+            "--wait-for-completion" if wait_for_completion else "",
+            "--drypipe-task-debug" if drypipe_task_debug else ""
         ])
 
         with perf_logger_timer("RemoteSSH.execute") as t:
