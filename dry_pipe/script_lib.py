@@ -165,11 +165,12 @@ def _fail_safe_stderr(process):
 
 def _terminate_descendants_and_exit(p1, p2):
 
-    logger.info("signal SIGTERM received, will transition to failed and terminate descendants")
-    step_number, control_dir, state_file, state_name = read_task_state()
-    _transition_state_file(state_file, "failed", step_number)
-    logger.info("will terminate descendants")
     try:
+        logger.info("signal SIGTERM received, will transition to failed and terminate descendants")
+        step_number, control_dir, state_file, state_name = read_task_state()
+        _transition_state_file(state_file, "failed", step_number)
+        logger.info("will terminate descendants")
+
         this_pid = str(os.getpid())
         with subprocess.Popen(
             ['ps', '-opid', '--no-headers', '--ppid', this_pid],
@@ -187,6 +188,8 @@ def _terminate_descendants_and_exit(p1, p2):
                     os.kill(pid, signal.SIGTERM)
                 except Exception as _:
                     pass
+    except Exception as ex:
+        logger.exception(ex)
     finally:
         _exit_process()
 
