@@ -99,6 +99,10 @@ def task_script_header():
     """)
 
 
+def terminate_process():
+    os.kill(os.getpid(), signal.SIGTERM)
+
+
 def run_python(python_bin, mod_func, container=None):
     switches = "-u"
     cmd = [
@@ -140,7 +144,7 @@ def run_python(python_bin, mod_func, container=None):
                         step_number, control_dir, state_file, state_name = read_task_state()
                         _transition_state_file(state_file, "failed", step_number)
     if has_failed:
-        exit(1)
+        terminate_process()
 
 
 def ensure_upstream_tasks_completed(env):
@@ -328,7 +332,7 @@ def register_signal_handlers():
     def timeout_handler(s, frame):
         step_number, control_dir, state_file, state_name = read_task_state()
         _transition_state_file(state_file, "timed-out", step_number)
-        exit(1)
+        terminate_process()
 
     logger.debug("will register signal handlers")
 
@@ -438,7 +442,7 @@ def run_script(script, container=None):
                         step_number, control_dir, state_file, state_name = read_task_state()
                         _transition_state_file(state_file, "failed", step_number)
     if has_failed:
-        exit(1)
+        terminate_process()
 
 
 def launch_task_remote(task_key, is_slurm, wait_for_completion):
