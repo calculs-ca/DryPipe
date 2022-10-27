@@ -114,8 +114,8 @@ class ScriptLibTests(unittest.TestCase):
 
         step_number, control_dir, state_file, state_name = script_lib.read_task_state(control_dir)
 
-        self.assertEqual(step_number, 1)
-        self.assertEqual(os.path.basename(state_file), "state.step-completed.1")
+        self.assertEqual(step_number, 0)
+        self.assertEqual(os.path.basename(state_file), "state.step-completed.0")
 
     def test_file_sign(self):
         d = TestSandboxDir(self)

@@ -100,8 +100,13 @@ def task_script_header():
     """)
 
 
+class ExitTaskFunc(Exception):
+    pass
+
+
 def terminate_process():
     os.kill(os.getpid(), signal.SIGTERM)
+    raise ExitTaskFunc()
 
 
 def run_python(python_bin, mod_func, container=None):
@@ -133,7 +138,7 @@ def run_python(python_bin, mod_func, container=None):
 
     with open(os.environ['__out_log'], 'a') as out:
         with open(os.environ['__err_log'], 'a') as err:
-            with subprocess.Popen(cmd, stdout=out, stderr=err) as p:
+            with subprocess.Popen(cmd, stdout=out, stderr=err, preexec_fn=set_ignore_signals) as p:
                 try:
                     p.wait()
                     has_failed = p.returncode != 0
@@ -296,7 +301,7 @@ def _append_to_history(control_dir, state_name, step_number=None):
         f.write("\n")
 
 
-def _transition_state_file(state_file, next_state_name, step_number=None, inc_step_number=False):
+def _transition_state_file(state_file, next_state_name, step_number=None):
 
     control_dir = os.path.dirname(state_file)
 
@@ -304,7 +309,7 @@ def _transition_state_file(state_file, next_state_name, step_number=None, inc_st
         next_step_number = None
         next_state_basename = f"state.{next_state_name}"
     else:
-        next_step_number = step_number + 1 if inc_step_number else step_number
+        next_step_number = step_number
         next_state_basename = f"state.{next_state_name}.{next_step_number}"
 
     next_state_file = os.path.join(control_dir, next_state_basename)
@@ -326,7 +331,9 @@ def transition_to_step_started(state_file, step_number):
 
 
 def transition_to_step_completed(state_file, step_number):
-    return _transition_state_file(state_file, "step-completed", step_number, inc_step_number=True)
+    state_file, step_number = _transition_state_file(state_file, "step-completed", step_number)
+    return state_file, step_number + 1
+
 
 def register_signal_handlers():
 
@@ -381,6 +388,11 @@ def sign_files():
             assert b
 
 
+def set_ignore_signals():
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+    signal.signal(signal.SIGHUP, signal.SIG_IGN)
+
+
 def transition_to_completed(state_file):
     return _transition_state_file(state_file, "completed-unsigned")
 
@@ -430,7 +442,8 @@ def run_script(script, container=None):
             with subprocess.Popen(
                 cmd,
                 stdout=out, stderr=err,
-                env=env
+                env=env,
+                preexec_fn=set_ignore_signals
             ) as p:
                 try:
                     p.wait()
@@ -503,6 +516,8 @@ def launch_task(task_func, wait_for_completion):
         try:
             task_func()
             logger.info("task completed")
+        except ExitTaskFunc as _:
+            pass
         except Exception as ex:
             logger.exception(ex)
 
