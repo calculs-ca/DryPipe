@@ -28,3 +28,10 @@ def never_ending_pipeline(task_conf):
 
 def pipeline():
     return DryPipe.create_pipeline(never_ending_pipeline(TaskConf.default()))
+
+
+def pipeline_with_container():
+    return DryPipe.create_pipeline(never_ending_pipeline(TaskConf(
+        container="singularity-test-container.sif"
+    )))
+

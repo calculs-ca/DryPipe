@@ -138,7 +138,7 @@ def run_python(python_bin, mod_func, container=None):
 
     with open(os.environ['__out_log'], 'a') as out:
         with open(os.environ['__err_log'], 'a') as err:
-            with subprocess.Popen(cmd, stdout=out, stderr=err, preexec_fn=set_ignore_signals) as p:
+            with subprocess.Popen(cmd, stdout=out, stderr=err) as p:
                 try:
                     p.wait()
                     has_failed = p.returncode != 0
@@ -388,11 +388,6 @@ def sign_files():
             assert b
 
 
-def set_ignore_signals():
-    signal.signal(signal.SIGINT, signal.SIG_IGN)
-    signal.signal(signal.SIGHUP, signal.SIG_IGN)
-
-
 def transition_to_completed(state_file):
     return _transition_state_file(state_file, "completed-unsigned")
 
@@ -442,8 +437,7 @@ def run_script(script, container=None):
             with subprocess.Popen(
                 cmd,
                 stdout=out, stderr=err,
-                env=env,
-                preexec_fn=set_ignore_signals
+                env=env
             ) as p:
                 try:
                     p.wait()
@@ -526,9 +520,17 @@ def launch_task(task_func, wait_for_completion):
     else:
         if os.fork() != 0:
             exit(0)
-        register_signal_handlers()
-        Thread(target=task_func_wrapper).start()
-        signal.pause()
+        else:
+            kill_script = os.path.join(os.environ['__script_location'], "kill")
+            with open(kill_script, "w") as f:
+                f.write("#!/bin/sh\n")
+                f.write(f"kill -15 {os.getpid()}\n")
+            os.chmod(kill_script, 0o764)
+
+            os.setpgrp()
+            register_signal_handlers()
+            Thread(target=task_func_wrapper).start()
+            signal.pause()
 
 
 def gen_input_var_exports(out=sys.stdout, env=os.environ):
