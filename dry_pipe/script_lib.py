@@ -16,7 +16,7 @@ from pathlib import Path
 def create_task_logger(task_control_dir):
     _logger = logging.getLogger()
     h = logging.FileHandler(filename=os.path.join(task_control_dir, "drypipe.log"))
-    if DRYPIPE_TASK_DEBUG != "True":
+    if os.environ.get("DRYPIPE_TASK_DEBUG") != "True":
         logging_level = logging.INFO
     else:
         logging_level = logging.DEBUG
@@ -33,7 +33,6 @@ __script_location = os.environ.get("__script_location")
 if __script_location is None:
     logger = logging.getLogger(__name__)
 else:
-    DRYPIPE_TASK_DEBUG = os.environ.get("DRYPIPE_TASK_DEBUG")
     logger = create_task_logger(__script_location)
 
 
