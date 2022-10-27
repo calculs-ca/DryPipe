@@ -514,6 +514,9 @@ def launch_task(task_func, wait_for_completion):
             pass
         except Exception as ex:
             logger.exception(ex)
+        finally:
+            logging.shutdown()
+            os._exit(0)
 
     if wait_for_completion:
         task_func_wrapper()
