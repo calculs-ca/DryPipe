@@ -524,7 +524,7 @@ def launch_task(task_func, wait_for_completion):
             kill_script = os.path.join(os.environ['__script_location'], "kill")
             with open(kill_script, "w") as f:
                 f.write("#!/bin/sh\n")
-                f.write(f"kill -15 {os.getpid()}\n")
+                f.write(f"kill -{signal.SIGTERM} {os.getpid()}\n")
             os.chmod(kill_script, 0o764)
 
             os.setpgrp()
