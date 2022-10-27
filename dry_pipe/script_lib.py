@@ -100,13 +100,9 @@ def task_script_header():
     """)
 
 
-class ExitTaskFunc(Exception):
-    pass
-
-
-def terminate_process():
-    os.kill(os.getpid(), signal.SIGTERM)
-    raise ExitTaskFunc()
+def _exit_process():
+    logging.shutdown()
+    os._exit(0)
 
 
 def run_python(python_bin, mod_func, container=None):
@@ -150,7 +146,7 @@ def run_python(python_bin, mod_func, container=None):
                         step_number, control_dir, state_file, state_name = read_task_state()
                         _transition_state_file(state_file, "failed", step_number)
     if has_failed:
-        terminate_process()
+        _exit_process()
 
 
 def ensure_upstream_tasks_completed(env):
@@ -167,28 +163,29 @@ def _fail_safe_stderr(process):
     return err
 
 
-def terminate_descendants(p1, p2):
+def _terminate_descendants_and_exit(p1, p2):
 
     logger.info("signal SIGTERM received, will terminate descendants")
-
-    this_pid = str(os.getpid())
-    with subprocess.Popen(
-        ['ps', '-opid', '--no-headers', '--ppid', this_pid],
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE
-    ) as p:
-        p.wait()
-        pids = [
-            int(line.decode("utf-8").strip())
-            for line in p.stdout.readlines()
-        ]
-        pids = [pid for pid in pids if pid != p.pid]
-        logger.debug("descendants of %s: %s", this_pid, pids)
-        for pid in pids:
-            try:
-                os.kill(pid, signal.SIGTERM)
-            except Exception as _:
-                pass
-
+    try:
+        this_pid = str(os.getpid())
+        with subprocess.Popen(
+            ['ps', '-opid', '--no-headers', '--ppid', this_pid],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE
+        ) as p:
+            p.wait()
+            pids = [
+                int(line.decode("utf-8").strip())
+                for line in p.stdout.readlines()
+            ]
+            pids = [pid for pid in pids if pid != p.pid]
+            logger.debug("descendants of %s: %s", this_pid, pids)
+            for pid in pids:
+                try:
+                    os.kill(pid, signal.SIGTERM)
+                except Exception as _:
+                    pass
+    finally:
+        _exit_process()
 
 def env_from_sourcing(env_file):
 
@@ -340,7 +337,7 @@ def register_signal_handlers():
     def timeout_handler(s, frame):
         step_number, control_dir, state_file, state_name = read_task_state()
         _transition_state_file(state_file, "timed-out", step_number)
-        terminate_process()
+        _exit_process()
 
     logger.debug("will register signal handlers")
 
@@ -348,7 +345,7 @@ def register_signal_handlers():
     signal.signal(signal.SIGHUP, signal.SIG_IGN)
 
     signal.signal(signal.SIGUSR1, timeout_handler)
-    signal.signal(signal.SIGTERM, terminate_descendants)
+    signal.signal(signal.SIGTERM, _terminate_descendants_and_exit)
 
 
 def sign_files():
@@ -450,7 +447,7 @@ def run_script(script, container=None):
                         step_number, control_dir, state_file, state_name = read_task_state()
                         _transition_state_file(state_file, "failed", step_number)
     if has_failed:
-        terminate_process()
+        _exit_process()
 
 
 def launch_task_remote(task_key, is_slurm, wait_for_completion):
@@ -510,13 +507,10 @@ def launch_task(task_func, wait_for_completion):
         try:
             task_func()
             logger.info("task completed")
-        except ExitTaskFunc as _:
-            pass
         except Exception as ex:
             logger.exception(ex)
         finally:
-            logging.shutdown()
-            os._exit(0)
+            _exit_process()
 
     if wait_for_completion:
         task_func_wrapper()
