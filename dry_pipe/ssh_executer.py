@@ -1,10 +1,10 @@
 import os
-import subprocess
 import tempfile
 import logging.config
 
 from dry_pipe import Executor, bash_shebang
 from dry_pipe.internals import flatten
+from dry_pipe.script_lib import PortablePopen
 from dry_pipe.task_state import TaskState
 from dry_pipe.utils import perf_logger_timer
 
@@ -171,26 +171,6 @@ class RemoteSSH(Executor):
 
         self.invoke_remote(f"rm {file}")
 
-    def _scp_upload(self, local_file, remote_file):
-        cmd = [
-            "scp", "-i", self.key_filename,
-            local_file,
-            f"{self.ssh_username}@{self.ssh_host}:{remote_file}",
-            "2>/dev/null",
-            "&&",
-            "echo 12345"
-        ]
-        with subprocess.Popen(
-            [" ".join(cmd)],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            shell=True
-        ) as p:
-            out = p.stdout.read()
-            if out != "12345\n":
-                raise ScpUploadException(f"scp upload failed: {' '.join(cmd)}")
-
     def _rsync_with_args_and_remote_dir(self):
 
         ssh_args = f"-e 'ssh -q -i {self.key_filename} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'"
@@ -204,17 +184,8 @@ class RemoteSSH(Executor):
 
     def _launch_command(self, command, exception_func=lambda stderr_text: stderr_text):
 
-        with subprocess.Popen(
-            command,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            shell=True,
-            text=True
-        ) as p:
-            p.wait()
-
-            if p.returncode != 0:
-                raise exception_func(p.stderr.read().strip())
+        with PortablePopen(command,shell=True) as p:
+            p.wait_and_raise_if_non_zero()
 
     def do_rsync_container(self, image_path):
 

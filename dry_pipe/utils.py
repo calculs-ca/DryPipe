@@ -1,12 +1,12 @@
 import logging
 import os
-import subprocess
-import sys
 import traceback
 from contextlib import contextmanager
 from itertools import groupby
 from timeit import default_timer
 import requests
+
+from dry_pipe.script_lib import PortablePopen
 
 
 def send_email_error_report_if_configured(subject_line, exception=None, details=None):
@@ -113,16 +113,6 @@ def bash_shebang():
 
 
 def count_cpus():
-
-    cmd = ["grep", "-c", "^processor", "/proc/cpuinfo"]
-    with subprocess.Popen(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True
-    ) as p:
-        p.wait()
-        if p.returncode != 0:
-            raise Exception(f"cmd failed {cmd} {p.stderr.read()}")
-
-        return int(p.stdout.read())
+    with PortablePopen(["grep", "-c", "^processor", "/proc/cpuinfo"]) as p:
+        p.wait_and_raise_if_non_zero()
+        return int(p.stdout_as_string())

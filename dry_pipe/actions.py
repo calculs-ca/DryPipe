@@ -2,7 +2,8 @@ import glob
 import logging
 import os
 import pathlib
-import subprocess
+
+from dry_pipe.script_lib import PortablePopen
 
 TASK_ACTIONS = {
 
@@ -201,13 +202,7 @@ class TaskAction:
 
 def call_scancel(job_id):
 
-    with subprocess.Popen(
-        ["scancel", job_id],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True
+    with PortablePopen(
+        ["scancel", job_id]
     ) as p:
-        p.wait()
-
-        if p.returncode != 0:
-            raise Exception(f"scancel call failed, return code: {p.returncode}\n{p.stderr}")
+        p.wait_and_raise_if_non_zero()

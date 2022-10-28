@@ -1,6 +1,5 @@
 import glob
 import os
-import subprocess
 import time
 import pathlib
 import mmap
@@ -9,7 +8,7 @@ from datetime import datetime
 from itertools import groupby
 
 from dry_pipe.actions import TaskAction
-from dry_pipe.script_lib import parse_in_out_meta
+from dry_pipe.script_lib import parse_in_out_meta, PortablePopen
 
 """
 
@@ -590,21 +589,11 @@ def tail(filename, lines=20, line_limit=1000):
 
     cmd = f"tail -{lines} {filename}"
 
-    with subprocess.Popen(
-            cmd.split(" "),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            shell=False,
-            text=True
-    ) as p:
-        p.wait()
-
-        if p.returncode != 0:
-            err = p.stderr.read().strip()
-            raise Exception(f"tail failed:\n{cmd}\n{err}")
-
+    with PortablePopen(cmd.split(" ")) as p:
+        p.wait_and_raise_if_non_zero()
         def read():
-            for l in p.stdout.readlines():
+            for l in p.popen.stdout.readlines():
+                l = l.decode("utf8")
                 if len(l) <= line_limit:
                     yield l
                 else:

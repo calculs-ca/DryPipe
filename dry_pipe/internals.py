@@ -1,13 +1,11 @@
 import glob
 import inspect
-import json
 import os
-import signal
 import subprocess
-import sys
 import getpass
 import logging.config
 
+from dry_pipe.script_lib import PortablePopen
 from dry_pipe.utils import count_cpus
 
 LOCAL_PROCESS_IDENTIFIER_VAR = "____DRY_PIPE_TASK"
@@ -235,68 +233,16 @@ class Local(Executor):
 
         logger.debug("will launch task %s", ' '.join(cmd))
 
-        with subprocess.Popen(
-                cmd,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL
+        with PortablePopen(
+            cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL
         ) as p:
             p.wait()
-            logger.info("task ended with returncode: %s", p.returncode)
-
-    def _execute(self, task, touch_pid_file_func, wait_for_completion=False, fail_silently=False):
-        b4_command = ""
-        if self.before_execute_bash is not None:
-            b4_command = f"{self.before_execute_bash} &&"
-
-        back_ground = "&"
-
-        if wait_for_completion:
-            back_ground = ""
-
-        with subprocess.Popen(
-                [f"nohup bash -c '{b4_command} . {task.v_abs_script_file()} " +
-                 f"  >{task.v_abs_out_log()} 2>{task.v_abs_err_log()}' {back_ground}"],
-                shell=True,
-                text=True,
-                env={
-                    **dict([
-                        (LOCAL_PROCESS_IDENTIFIER_VAR, f"____{task.key}")
-                    ]),
-                    **os.environ
-                },
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL
-        ) as p:
-
-            p.wait()
-
-            if p.returncode != 0:
-
-                # If we were in async mode, we wouldn't see the error...
-                if wait_for_completion:
-                    if fail_silently:
-                        return
-
-                    if Local.fail_silently_for_test:
-                        return
-
-                    task_state = task.get_state()
-                    err_if_failed = task_state.tail_err_if_failed(5)
-
-                    if err_if_failed is not None:
-                        raise Exception(
-                            f"task {task.key} failed \n{err_if_failed}\n further details in {task.v_abs_err_log()}"
-                        )
-                    else:
-                        return
-
-                raise Exception(
-                    f"the command for {task} returned non zero result, " +
-                    f"see logs at {task.v_abs_out_log()} and {task.v_abs_err_log()}.\n",
-                    f"invocation script: {task.v_abs_script_file()}"
-                )
-
-            touch_pid_file_func(p.pid)
+            if p.popen.returncode != 0:
+                logger.warning("task ended with non zero code: %s", p.popen.returncode)
+            else:
+                logger.debug("task ended with returncode: %s", p.popen.returncode)
 
 
 class Slurm(Executor):
@@ -320,19 +266,12 @@ class Slurm(Executor):
         else:
             cmd = [task.v_abs_sbatch_launch_script()]
 
-        with subprocess.Popen(
+        with PortablePopen(
             cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
             shell=True,
-            env=env,
-            text=True
+            env=env
         ) as p:
-            p.wait()
-
-            if p.returncode != 0:
-                err = p.stderr.read().strip()
-                raise Exception(f"call to sbatch failed: {cmd}\n {err}")
+            p.wait_and_raise_if_non_zero()
 
 
 class IndeterminateFile:
@@ -459,23 +398,6 @@ class InputFile:
     def __init__(self, produced_file, var_name_in_consuming_task):
         self.produced_file = produced_file
         self.var_name_in_consuming_task = var_name_in_consuming_task
-
-def env_from_sourcing(env_file):
-
-    p = os.path.abspath(sys.executable)
-
-    dump_with_python_script = f'{p} -c "import os, json; print(json.dumps(dict(os.environ)))"'
-
-    with subprocess.Popen(
-            ['/bin/bash', '-c', f". {env_file} && {dump_with_python_script}"],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
-    ) as pipe:
-        pipe.wait()
-        err = pipe.stderr.read()
-        out = pipe.stdout.read()
-        if pipe.returncode != 0:
-            raise Exception(f"Failed sourcing env file: {env_file}\n{err}")
-        return json.loads(out)
 
 
 class PythonCall:

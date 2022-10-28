@@ -37,6 +37,58 @@ else:
     logger = create_task_logger(__script_location)
 
 
+class PortablePopen:
+
+    def __init__(self, process_args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=None, shell=False):
+
+        if stdout is None:
+            raise Exception(f"stdout can't be None")
+
+        if stderr is None:
+            raise Exception(f"stderr can't be None")
+
+        self.process_args = [str(p) for p in process_args]
+        self.popen = subprocess.Popen(
+            process_args,
+            stdout=stdout,
+            stderr=stderr,
+            shell=shell,
+            env=env
+        )
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.popen.__exit__(exc_type, exc_val, exc_tb)
+
+    def wait(self, timeout=None):
+        return self.popen.wait(timeout)
+
+    def stderr_as_string(self):
+        return self.popen.stderr.read().decode("utf8")
+
+    def stdout_as_string(self):
+        return self.popen.stdout.read().decode("utf8")
+
+    def safe_stderr_as_string(self):
+        try:
+            return self.stderr_as_string()
+        except Exception as _:
+            return ""
+
+    def raise_if_non_zero(self):
+        r = self.popen.returncode
+        if r != 0:
+            invocation = ' '.join(self.process_args)
+            raise Exception(
+                f"process invocation returned non zero {r}: {invocation}\nstderr: {self.safe_stderr_as_string()}"
+            )
+
+    def wait_and_raise_if_non_zero(self):
+        self.popen.wait()
+        self.raise_if_non_zero()
+
 
 def python_shebang():
     return "#!/usr/bin/env python3"
@@ -135,10 +187,10 @@ def run_python(python_bin, mod_func, container=None):
 
     with open(os.environ['__out_log'], 'a') as out:
         with open(os.environ['__err_log'], 'a') as err:
-            with subprocess.Popen(cmd, stdout=out, stderr=err) as p:
+            with PortablePopen(cmd, stdout=out, stderr=err) as p:
                 try:
                     p.wait()
-                    has_failed = p.returncode != 0
+                    has_failed = p.popen.returncode != 0
                 except Exception as ex:
                     has_failed = True
                     logger.exception(ex)
@@ -173,14 +225,13 @@ def _terminate_descendants_and_exit(p1, p2):
         logger.info("will terminate descendants")
 
         this_pid = str(os.getpid())
-        with subprocess.Popen(
-            ['ps', '-opid', '--no-headers', '--ppid', this_pid],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE
+        with PortablePopen(
+            ['ps', '-opid', '--no-headers', '--ppid', this_pid]
         ) as p:
-            p.wait()
+            p.wait_and_raise_if_non_zero()
             pids = [
                 int(line.decode("utf-8").strip())
-                for line in p.stdout.readlines()
+                for line in p.popen.stdout.readlines()
             ]
             pids = [pid for pid in pids if pid != p.pid]
             logger.debug("descendants of %s: %s", this_pid, pids)
@@ -203,15 +254,9 @@ def env_from_sourcing(env_file):
 
     logger.debug("will source file: %s", env_file)
 
-    with subprocess.Popen(
-            ['/bin/bash', '-c', f". {env_file} && {dump_with_python_script}"],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE
-    ) as p:
-        p.wait()
-        out = p.stdout.read().decode("utf-8")
-        if p.returncode != 0:
-            logger.error("failed to source file: %s", env_file)
-            raise Exception(f"Failed sourcing env file: {env_file}\n{_fail_safe_stderr(p)}")
+    with PortablePopen(['/bin/bash', '-c', f". {env_file} && {dump_with_python_script}"]) as p:
+        p.wait_and_raise_if_non_zero()
+        out = p.stdout_as_string()
         return json.loads(out)
 
 
@@ -385,15 +430,9 @@ def sign_files():
         bf = os.path.basename(f)
         sig_file = os.path.join(sig_dir, f"{bf}.sig")
         cmd = f"sha1sum {f}"
-        with subprocess.Popen(
-            cmd.split(" "),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE
-        ) as p:
-            p.wait()
-            if p.returncode != 0:
-                raise Exception(f"failed: '{cmd}'")
-            sha1sum = p.stdout.read().strip().decode("utf8")
+        with PortablePopen(cmd.split(" ")) as p:
+            p.wait_and_raise_if_non_zero()
+            sha1sum = p.stdout_as_string()
             with open(sig_file, "w") as f:
                 f.write(sha1sum)
             return True
@@ -452,14 +491,14 @@ def run_script(script, container=None):
     has_failed = False
     with open(os.environ['__out_log'], 'a') as out:
         with open(os.environ['__err_log'], 'a') as err:
-            with subprocess.Popen(
+            with PortablePopen(
                 cmd,
                 stdout=out, stderr=err,
                 env=env
             ) as p:
                 try:
                     p.wait()
-                    has_failed = p.returncode != 0
+                    has_failed = p.popen.returncode != 0
                 except Exception as ex:
                     logger.exception(ex)
                     has_failed = True
@@ -512,14 +551,16 @@ def launch_task_from_remote(task_key, is_slurm, wait_for_completion, drypipe_tas
 
     with open(os.path.join(control_dir, 'out.log'), 'w') as out:
         with open(os.path.join(control_dir, 'err.log'), 'w') as err:
-            with subprocess.Popen(
+            with PortablePopen(
                 cmd,
                 stdout=out,
                 stderr=err,
                 env=env
             ) as p:
                 p.wait()
-                print(str(p.returncode))
+                if p.popen.returncode != 0:
+                    logger.error(f"remote task launch failed: %s", sys.argv)
+                print(str(p.popen.returncode))
 
 
 def launch_task(task_func, wait_for_completion):
@@ -602,14 +643,9 @@ def _root_dir(d):
 def _fs_type(file):
 
     stat_cmd = f"stat -f -L -c %T {file}"
-    with subprocess.Popen(
-        stat_cmd.split(),
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE
-    ) as p:
-        p.wait()
-        if p.returncode != 0:
-            raise Exception(f"failed to stat for fs type: {stat_cmd}")
-        return p.stdout.read().decode("utf-8").strip()
+    with PortablePopen(stat_cmd.split()) as p:
+        p.wait_and_raise_if_non_zero()
+        return p.stdout_as_string().strip()
 
 
 def set_singularity_bindings():
@@ -621,14 +657,9 @@ def set_singularity_bindings():
     pipeline_code_dir = os.environ['__pipeline_code_dir']
     root_of_pipeline_code_dir = root_dir(pipeline_code_dir)
     stat_cmd = f"stat -f -L -c %T {root_of_pipeline_code_dir}"
-    with subprocess.Popen(
-        stat_cmd.split(),
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE
-    ) as p:
-        p.wait()
-        fs_type = p.stdout.read().decode("utf-8")
-        if p.returncode != 0:
-            raise Exception(f"failed to stat for fs type: {stat_cmd}")
+    with PortablePopen(stat_cmd.split()) as p:
+        p.wait_and_raise_if_non_zero()
+        fs_type = p.stdout_as_string()
 
         bind_list = []
 
