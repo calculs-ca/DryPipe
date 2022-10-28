@@ -2,14 +2,12 @@ import sys
 
 from unittest import TextTestRunner, TestSuite, defaultTestLoader
 
-from aggregate_task_tests import AggregateTaskTests
 from base_tests import BaseTests, NonTrivialPipelineTests, NonTrivialPipelineLocalContainerlessTests, \
     NonTrivialPipelineLocalWithSingularityContainerTests, NonTrivialPipelineSlurmContainerlessTests, \
     NonTrivialPipelineSlurmWithSingularityContainerTests
 from ground_level_tests import GroundLevelTests, TaskSignatureTests
 from test_corner_case_failure_handling import CornerCasesFailureTests
 from test_daemon_mode import DaemonModeTests
-from test_in_out_hashing import InOutHashingTests
 from test_monitoring import MonitoringTests
 from test_multistep_tasks import MultipstepTaskTests
 from test_pipeline_composition import PipelineCompositionTests
@@ -48,8 +46,6 @@ def quick_sanity_tests():
         NonTrivialPipelineLocalContainerlessTests,
         TaskSignatureTests,
         GroundLevelTests,
-        AggregateTaskTests,
-        # InOutHashingTests,
         PipelineCompositionTests
     ]
 

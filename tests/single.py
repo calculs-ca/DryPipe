@@ -3,7 +3,7 @@ import sys
 from unittest import TextTestRunner, TestSuite, defaultTestLoader
 from suite import exhaustive_3, low_level_tests
 
-test_func = "test_run_two_instances_until_done"
+test_func = "test_remote_tasks_with_slurm"
 
 if __name__ == '__main__':
 
