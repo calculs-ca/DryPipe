@@ -60,18 +60,8 @@ def write_pipeline_lib_script(file_handle):
     )
 
     file_handle.write(textwrap.dedent(f"""        
-    if __name__ == '__main__':
-    
-        if "gen-input-var-exports" in sys.argv:
-            script_lib.gen_input_var_exports()
-        elif "launch-task-from-remote" in sys.argv:
-            task_key = sys.argv[2]
-            is_slurm = "--is-slurm" in sys.argv
-            wait_for_completion = "--wait-for-completion" in sys.argv
-            drypipe_task_debug = "--drypipe-task-debug" in sys.argv
-            script_lib.launch_task_from_remote(task_key, is_slurm, wait_for_completion, drypipe_task_debug)
-        else:
-            raise Exception('invalid args')
+    if __name__ == '__main__':        
+        script_lib.handle_script_lib_main()
     """))
 
 
@@ -80,8 +70,6 @@ def task_script_header():
     return f"{python_shebang()}\n" + textwrap.dedent(f"""            
         import os
         import sys 
-        import signal
-        from threading import Thread
         import importlib.machinery
         import importlib.util        
 
@@ -95,9 +83,7 @@ def task_script_header():
         loader = importlib.machinery.SourceFileLoader('script_lib', script_lib_path)
         spec = importlib.util.spec_from_loader(loader.name, loader)
         script_lib = importlib.util.module_from_spec(spec)
-        loader.exec_module(script_lib)
-        env = script_lib.source_task_env(os.path.join(__script_location, 'task-env.sh'))        
-        script_lib.ensure_upstream_tasks_completed(env)        
+        loader.exec_module(script_lib)        
     """)
 
 
@@ -645,3 +631,36 @@ def set_singularity_bindings():
             bind_list.append(prev_singularity_bind)
 
         os.environ['SINGULARITY_BIND'] = ",".join(bind_list)
+
+
+def terminate_all():
+    scancel_all()
+    segterm_all()
+
+
+def scancel_all():
+    pass
+
+
+def segterm_all():
+    pass
+
+
+def handle_script_lib_main():
+
+    if "gen-input-var-exports" in sys.argv:
+        gen_input_var_exports()
+    elif "launch-task-from-remote" in sys.argv:
+        task_key = sys.argv[2]
+        is_slurm = "--is-slurm" in sys.argv
+        wait_for_completion = "--wait-for-completion" in sys.argv
+        drypipe_task_debug = "--drypipe-task-debug" in sys.argv
+        launch_task_from_remote(task_key, is_slurm, wait_for_completion, drypipe_task_debug)
+    elif "terminate-all" in sys.argv:
+        terminate_all()
+    elif "scancel-all" in sys.argv:
+        terminate_all()
+    elif "segterm-all" in sys.argv:
+        segterm_all()
+    else:
+        raise Exception('invalid args')

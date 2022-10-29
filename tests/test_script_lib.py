@@ -75,7 +75,8 @@ class ScriptLibTests(unittest.TestCase):
         with open(task_script, 'w') as f:
             f.write(task_script_header())
             f.write(textwrap.dedent(
-                f"""                                        
+                f"""
+                env = script_lib.source_task_env(os.path.join(__script_location, 'task-env.sh'))                                        
                 script_lib.touch(os.path.join(env['__control_dir'], 'output_vars'))                                                
                 step_number, control_dir, state_file, read_task_state = script_lib.read_task_state()                                
                         
