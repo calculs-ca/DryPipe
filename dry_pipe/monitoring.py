@@ -130,26 +130,16 @@ class PipelineMetricsTable:
         return res
 
 
-def fetch_task_group_metrics(pipeline=None, pipeline_instance_dir=None, task_state_visitor=None):
-
-    if pipeline is None:
-        if pipeline_instance_dir is None:
-            raise Exception(f"pipeline_instance_dir and pipeline can't both be None")
-
-        class PipelinePlug:
-            def __init__(self):
-                self.pipeline_instance_dir = pipeline_instance_dir
-
-        pipeline = PipelinePlug()
+def fetch_task_group_metrics(pipeline_instance_dir, task_key_grouper, task_state_visitor=None):
 
     task_group_metrics = {}
 
-    for task_state in TaskState.fetch_all(pipeline.pipeline_instance_dir):
+    for task_state in TaskState.fetch_all(pipeline_instance_dir):
 
         if task_state_visitor is not None:
             task_state_visitor(task_state)
 
-        task_group_key = Task.key_grouper(task_state.task_key)
+        task_group_key = task_key_grouper(task_state.task_key)
 
         m = task_group_metrics.get(task_group_key)
 

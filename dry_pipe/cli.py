@@ -9,14 +9,13 @@ import re
 import sys
 import os
 import traceback
-from itertools import groupby
 
 import click
-from dry_pipe import DryPipe, Task
+from dry_pipe import DryPipe
 from dry_pipe.internals import env_from_sourcing, PythonCall
 from dry_pipe.janitors import Janitor
 from dry_pipe.monitoring import fetch_task_groups_stats
-from dry_pipe.pipeline import Pipeline, PipelineInstance
+from dry_pipe.pipeline import PipelineInstance, Pipeline
 from dry_pipe.pipeline_state import PipelineState
 from dry_pipe.task_state import NON_TERMINAL_STATES
 
@@ -149,34 +148,14 @@ def prepare(ctx, clean, instance_dir):
             pipeline_state.transition_to_completed()
 
 
-def _pipeline_from_modul_func(instance_dir, module_func_pipeline, write_hint_file_if_not_exists=True):
+def _pipeline_instance_creater(instance_dir, module_func_pipeline, env_vars):
 
-    mod, func_name = module_func_pipeline.split(":")
+    if module_func_pipeline is None:
+        module_func_pipeline = PipelineInstance.guess_pipeline_from_hints(instance_dir)
 
-    module = importlib.import_module(mod)
+    pipeline = Pipeline.load_from_module_func(module_func_pipeline)
 
-    func = getattr(module, func_name, None)
-
-    if func is None:
-        raise Exception(f"function {func_name} not found in module {mod}")
-
-    pipeline = func()
-
-    if not isinstance(pipeline, Pipeline):
-        raise Exception(f"function {func_name} in {mod} should return a Pipeline, not {type(pipeline).__name__}")
-
-    if write_hint_file_if_not_exists:
-        PipelineInstance.write_hint_file_if_not_exists(instance_dir, module_func_pipeline)
-
-    return pipeline
-
-
-def _pipeline_instance_creater(instance_dir, pipeline_spec, env_vars):
-
-    if pipeline_spec is None:
-        pipeline_spec = PipelineInstance.guess_pipeline_from_hints(instance_dir)
-
-    pipeline = _pipeline_from_modul_func(instance_dir, pipeline_spec)
+    PipelineInstance.write_hint_file_if_not_exists(instance_dir, module_func_pipeline)
 
     return lambda: pipeline.create_pipeline_instance(instance_dir, env_vars=env_vars)
 
@@ -222,9 +201,17 @@ def mon(pipeline, instance_dir):
 @click.option('--no-confirm', is_flag=True)
 @click.option('--logging-conf', type=click.Path(), default=None, help="log configuration file (json)")
 @click.option('--env', type=click.STRING, default=None)
+@click.option(
+    '--display-grouper', type=click.STRING, default=None,
+    help="""
+    <regex>,<format>
+    example: --display-grouper=.*\_(\w)\.(\d),group-{0}-{1}
+    """
+)
 def run(
     pipeline, instance_dir, web_mon, port, bind,
-    clean, single, restart, restart_failed, restart_killed, reset_failed, no_confirm, logging_conf, env
+    clean, single, restart, restart_failed, restart_killed, reset_failed,
+    no_confirm, logging_conf, env, display_grouper
 ):
 
     _configure_logging(logging_conf)
@@ -295,12 +282,49 @@ def run(
         #janitor.do_shutdown()
     else:
         from dry_pipe.cli_screen import CliScreen
-        rich_screen = CliScreen(pipeline_instance.pipeline_instance_dir, is_monitor_mode=False)
+
+        rich_screen = CliScreen(
+            pipeline_instance.pipeline_instance_dir,
+            None if display_grouper is None else _display_grouper_func_from_spec(display_grouper),
+            is_monitor_mode=False
+        )
         err_msg = rich_screen.start_and_wait()
         if err_msg is not None:
             click.echo(err_msg, err=True)
 
     os._exit(0)
+
+
+def _display_grouper_func_from_spec(display_grouper):
+    reg_fmt = display_grouper.split(",")
+    if len(reg_fmt) != 2:
+        raise Exception(
+            f"bad format for arg --display-grouper, expects <regex>,<format> got {display_grouper}"
+        )
+    reg, fmt = reg_fmt
+    try:
+        r = re.compile(reg)
+    except Exception as ex:
+        raise Exception(f"--display-grouper has bad regex: {reg} ")
+
+    fmt_insert_count = fmt.count("{")
+
+    if r.groups != fmt_insert_count:
+        raise Exception(
+            f"regex match group and placeholders in format must match, got: {r.groups} != {fmt_insert_count}"
+        )
+
+    def _regex_display_grouper(task_key):
+        m = r.search(task_key)
+        if m is None:
+            return "<Other Tasks>"
+        else:
+            gr = m.groups()
+            if len(gr) != fmt_insert_count:
+                return "<Other Tasks>"
+            else:
+                return fmt.format(*m.groups())
+    return  _regex_display_grouper
 
 
 def launch_single(pipeline, single):
@@ -365,7 +389,7 @@ def watch(ctx, pipeline, env, instances_dir):
             f"serve-multi requires mandatory option --instances-dir=<directory of pipeline instances>"
         )
 
-    pipeline = _pipeline_from_modul_func(None, pipeline, write_hint_file_if_not_exists=False)
+    pipeline = Pipeline.load_from_module_func(pipeline)
 
     if not os.path.exists(instances_dir):
         pathlib.Path(instances_dir).mkdir(parents=True)
@@ -623,7 +647,7 @@ def prepare_remote_sites(pipeline):
         click.echo("must specify pipeline, ex: -p <aModule>:<aPipelineFunction>")
         return
 
-    pipeline = _pipeline_from_modul_func(None, pipeline_spec, write_hint_file_if_not_exists=False)
+    pipeline = Pipeline.load_from_module_func(pipeline_spec)
 
     pipeline.prepare_remote_sites()
 

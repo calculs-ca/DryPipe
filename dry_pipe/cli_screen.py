@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 import time
 import traceback
 from threading import Thread
@@ -11,8 +12,10 @@ from rich.live import Live
 from rich.table import Table
 from rich.layout import Layout
 from rich.align import Align
+
+from dry_pipe import Task
 from dry_pipe.monitoring import PipelineMetricsTable, fetch_task_group_metrics
-from dry_pipe.pipeline import PipelineInstance
+from dry_pipe.pipeline import PipelineInstance, Pipeline
 from dry_pipe.task_state import TaskState
 
 logger = logging.getLogger(__name__)
@@ -20,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 class CliScreen:
 
-    def __init__(self, pipeline_instance_dir, is_monitor_mode):
+    def __init__(self, pipeline_instance_dir, display_grouper, is_monitor_mode):
         self.is_monitor_mode = is_monitor_mode
         self.pipeline_instance_dir = pipeline_instance_dir
         self.pipeline_hints = PipelineInstance.load_hints(pipeline_instance_dir)
@@ -33,6 +36,16 @@ class CliScreen:
         self.error_msg = []
         self.loop_counter = 0
         self.rich_live_auto_refresh = True
+
+        if display_grouper is None:
+            self.display_grouper = Task.key_grouper
+            pipeline = Pipeline.load_from_module_func(self.pipeline_hints["pipeline"])
+
+            if pipeline.display_grouper is not None:
+                self.display_grouper = pipeline.display_grouper
+        else:
+            self.display_grouper = display_grouper
+
 
         if os.environ.get("DRYPIPE_CLI_AUTO_REFRESH") == "False":
             self.rich_live_auto_refresh = False
@@ -256,7 +269,10 @@ class CliScreen:
         )
 
         header, body, footer = PipelineMetricsTable.summarized_table_from_task_group_metrics(
-            fetch_task_group_metrics(self.pipeline_instance)
+            fetch_task_group_metrics(
+                self.pipeline_instance.pipeline_instance_dir,
+                self.display_grouper
+            )
         )
 
         for h in header:
@@ -269,9 +285,11 @@ class CliScreen:
                 if v is None or v == 0:
                     row_cells.append("")
                 else:
-                    if c == 3:
+                    if c == 4:
                         row_cells.append(f"[green1]{v}[/]")
-                    elif c in [6, 7, 9]:
+                    elif c == 5:
+                        row_cells.append(f"[blue]{v}[/]")
+                    elif c in [6, 7, 8]:
                         row_cells.append(f"[red]{v}[/]")
                     elif c in [0, 1]:
                         row_cells.append(f"[yellow]{v}[/]")

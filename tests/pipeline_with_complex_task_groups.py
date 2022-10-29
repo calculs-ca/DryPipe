@@ -2,7 +2,12 @@ from dry_pipe import DryPipe
 
 
 def pipeline():
-    return DryPipe.create_pipeline(pipeline_task_generator)
+
+    def display_grouper(task_key):
+        task_type, suffix = task_key.split(".")
+        return f"group-{task_type[-1]}"
+
+    return DryPipe.create_pipeline(pipeline_task_generator, display_grouper=display_grouper)
 
 
 @DryPipe.python_call()
@@ -50,7 +55,7 @@ def pipeline_task_generator(dsl):
     for task_matcher in dsl.with_completed_matching_tasks("group_*"):
 
         yield dsl.task(
-            key="grand_total"
+            key="grand_total.end"
         ).consumes(
             all_n_x_2=dsl.val(",".join(
                 map(str, task_matcher.out.n2.fetch())

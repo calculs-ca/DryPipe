@@ -28,15 +28,15 @@ class DryPipe:
 
     @staticmethod
     def create_pipeline(
-            generator_of_tasks,
-            pipeline_code_dir=None,
-            task_conf=None,
-            containers_dir=None,
-            env_vars=None,
-            remote_task_confs=None
+        generator_of_tasks,
+        pipeline_code_dir=None,
+        task_conf=None,
+        containers_dir=None,
+        env_vars=None,
+        remote_task_confs=None,
+        display_grouper=Task.key_grouper
     ):
         """
-
         :param generator_of_tasks:
         :param pipeline_code_dir:
         :param task_conf:
@@ -44,11 +44,15 @@ class DryPipe:
         :param env_vars:
         :param remote_task_confs: when a list of TaskConf is given, drypipe prepare-remote-sites will
                upload (rsync) $containers_dir and $pipeline_code_dir to all remote sites
+        :param display_grouper a str->str function that groups task_keys, affects monitoring display
         """
 
         from dry_pipe.pipeline import Pipeline
 
-        return Pipeline(generator_of_tasks, pipeline_code_dir, task_conf, containers_dir, env_vars, remote_task_confs)
+        return Pipeline(
+            generator_of_tasks, pipeline_code_dir, task_conf, containers_dir, env_vars, remote_task_confs,
+            display_grouper
+        )
 
     @staticmethod
     def pipeline_code_dir_for(task_generator_func):

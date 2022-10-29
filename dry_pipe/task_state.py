@@ -73,9 +73,6 @@ STATE_EQUIVALENCE_FOR_DISPLAY = {
     "launched":            "scheduled",
     "scheduled":           "scheduled",
 
-    "completed-unsigned":  "running",
-    "step-started":        "running",
-
     "download-started":    "transit",
     "upload-started":      "transit",
     "queued-for-upload":   "transit",
@@ -84,6 +81,9 @@ STATE_EQUIVALENCE_FOR_DISPLAY = {
     "download-completed":  "transit",
     "queued":              "transit",
     "step-completed":      "transit",
+
+    "completed-unsigned": "running",
+    "step-started": "running",
 
     "completed":           "completed",
 

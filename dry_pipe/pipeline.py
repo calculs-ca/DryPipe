@@ -1,3 +1,4 @@
+import importlib
 import inspect
 import logging
 import os
@@ -48,6 +49,32 @@ class TaskSet:
 
 class Pipeline:
 
+    @staticmethod
+    def load_from_module_func(module_func_pipeline):
+        """
+        :param module_func_pipeline:
+            <a_module_path>:<function_name>
+            a_python_module.python_file:function_returns_a_pipeine
+            a_module_path must be in PYTHONPATH
+        :return an instance of dry_pipe.Pipeline:
+        """
+
+        mod, func_name = module_func_pipeline.split(":")
+
+        module = importlib.import_module(mod)
+
+        func = getattr(module, func_name, None)
+
+        if func is None:
+            raise Exception(f"function {func_name} not found in module {mod}")
+
+        pipeline = func()
+
+        if not isinstance(pipeline, Pipeline):
+            raise Exception(f"function {func_name} in {mod} should return a Pipeline, not {type(pipeline).__name__}")
+
+        return pipeline
+
     def __init__(
             self,
             generator_of_tasks,
@@ -55,7 +82,8 @@ class Pipeline:
             task_conf=None,
             containers_dir=None,
             env_vars=None,
-            remote_task_confs=None
+            remote_task_confs=None,
+            display_grouper=None
     ):
         if pipeline_code_dir is None:
             pipeline_code_dir = os.path.dirname(os.path.abspath(inspect.getmodule(generator_of_tasks).__file__))
@@ -157,6 +185,22 @@ class Pipeline:
         self.generator_of_tasks = generator_of_tasks
         self.env_vars = env_vars
         self.remote_task_confs = remote_task_confs
+
+        def _display_grouper(task_key):
+
+            if task_key.count(".") != 1:
+                raise Exception(f"task key {task_key} violates naming convention: <prefix>.<suffix>")
+
+            try:
+                return display_grouper(task_key)
+            except Exception as ex:
+                raise Exception(
+                    f"display_grouper {display_grouper.__module__}:{display_grouper.__name__} failed " +
+                    f"on task_key: {task_key}\n{ex}"
+                )
+
+        self.display_grouper = _display_grouper
+
 
     def create_pipeline_instance(self, pipeline_instance_dir=None, task_conf=None, containers_dir=None, env_vars=None):
 

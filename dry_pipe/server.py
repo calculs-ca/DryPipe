@@ -227,8 +227,8 @@ def all_task_states_as_tsv(pipeline_instance_dir, task_state_visitor=None):
 
     header, table_body, footer = PipelineMetricsTable.detailed_table_from_task_group_metrics(
         fetch_task_group_metrics(
-            #pipeline=pipeline,
-            pipeline_instance_dir=pipeline_instance_dir,
+            pipeline_instance_dir,
+            Task.key_grouper,
             task_state_visitor=task_state_visitor
         )
     )

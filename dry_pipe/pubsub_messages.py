@@ -1,6 +1,7 @@
 import os
 import time
 
+from dry_pipe import Task
 from dry_pipe.actions import TaskAction
 from dry_pipe.monitoring import PipelineMetricsTable, fetch_task_group_metrics
 from dry_pipe.pipeline_state import PipelineState
@@ -81,12 +82,11 @@ def pipeline_counts_message(instances_dir, pid):
             "snapshot_time": snapshot_time
         }
 
-
     def all_task_states_as_tsv(pipeline_instance_dir, task_state_visitor=None):
         header, table_body, footer = PipelineMetricsTable.detailed_table_from_task_group_metrics(
             fetch_task_group_metrics(
-                # pipeline=pipeline,
-                pipeline_instance_dir=pipeline_instance_dir,
+                pipeline_instance_dir,
+                Task.key_grouper,
                 task_state_visitor=task_state_visitor
             )
         )
