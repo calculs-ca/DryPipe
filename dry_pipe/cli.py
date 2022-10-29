@@ -515,10 +515,10 @@ def call(ctx, mod_func, task_env):
         traceback.print_exc()
         exit(1)
 
-    if not isinstance(out_vars, dict):
+    if out_vars is not None and not isinstance(out_vars, dict):
         raise Exception(
             f"function {python_task.mod_func()} called by task {os.environ.get('__task_key')} {type(out_vars)}" +
-            f"@DryPipe.python_call() can only return a python dict"
+            f"@DryPipe.python_call() can only return a python dict, or None"
         )
 
     # TODO: complain if missing task __X vars
