@@ -70,20 +70,27 @@ class OutputVar:
         supported = [str, int, float]
 
         if type not in supported:
-            raise ValidationError(f"var {name} can't be of type {type} supported types are: {','.join(supported)}")
+            raise ValidationError(
+                f"var {name} in {producing_task} has invalid type. Supported types are: " +
+                ', '.join([OutputVar._type_str(t) for t in supported])
+            )
 
         self.name = name
         self.type = type
         self.producing_task = producing_task
         self.may_be_none = may_be_none
 
-    def type_str(self):
-        if self.type == int:
+    @staticmethod
+    def _type_str(t):
+        if t == int:
             return "int"
-        elif self.type == str:
+        elif t == str:
             return "str"
-        elif self.type == float:
+        elif t == float:
             return "float"
+
+    def type_str(self):
+        return OutputVar._type_str(self.type)
 
     def format_for_python(self, v):
 

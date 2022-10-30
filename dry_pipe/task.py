@@ -666,6 +666,8 @@ class Task:
 
         with open(shell_script_file, "w") as f:
             f.write(task_script_header())
+            f.write("env = script_lib.source_task_env(os.path.join(__script_location, 'task-env.sh'))\n")
+            f.write("script_lib.ensure_upstream_tasks_completed(env)\n\n")
 
             f.write("\n\ndef go():\n")
             f.write("\n    step_number, control_dir, state_file, state_name = script_lib.read_task_state()\n")

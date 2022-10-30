@@ -22,7 +22,7 @@ if is_full_req:
 
 setup(
     name='dry_pipe',
-    version='0.3.1',
+    version='0.4.0',
     packages=['dry_pipe'],
     install_requires=minimal_requirements,
     extras_require={"full": extra_requirements},
