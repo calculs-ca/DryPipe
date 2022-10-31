@@ -159,6 +159,9 @@ class Janitor:
         self.max_sleep = max_sleep
         self._shutdown = False
 
+    def request_shutdown(self):
+        self._shutdown = True
+
     def is_shutdown(self):
         return self._shutdown
 
@@ -171,6 +174,10 @@ class Janitor:
         )
 
         while True:
+
+            if self._shutdown:
+                daemon_thread_helper.logger.info("shutdown requested, will exit main loop")
+                break
 
             daemon_thread_helper.begin_round()
 
@@ -287,9 +294,6 @@ class Janitor:
         dtread.start()
 
         return dtread, utread
-
-    def do_shutdown(self):
-        self._shutdown = True
 
 
 def _janitor_ng(pipeline_instance, wait_for_completion=False, fail_silently=False, daemon_thread_helper=None):

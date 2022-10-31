@@ -1,10 +1,10 @@
 import logging
 import os
-import re
 import time
 import traceback
 from threading import Thread
-from sshkeyboard import listen_keyboard, stop_listening
+
+import readchar
 from rich.columns import Columns
 from rich.panel import Panel
 from rich.text import Text
@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 class CliScreen:
 
-    def __init__(self, pipeline_instance_dir, display_grouper, is_monitor_mode):
+    def __init__(self, pipeline_instance_dir, display_grouper, is_monitor_mode, quit_listener=None):
         self.is_monitor_mode = is_monitor_mode
         self.pipeline_instance_dir = pipeline_instance_dir
         self.pipeline_hints = PipelineInstance.load_hints(pipeline_instance_dir)
@@ -36,6 +36,7 @@ class CliScreen:
         self.error_msg = []
         self.loop_counter = 0
         self.rich_live_auto_refresh = True
+        self.quit_listener = quit_listener
 
         if display_grouper is None:
             self.display_grouper = Task.key_grouper
@@ -45,7 +46,6 @@ class CliScreen:
                 self.display_grouper = pipeline.display_grouper
         else:
             self.display_grouper = display_grouper
-
 
         if os.environ.get("DRYPIPE_CLI_AUTO_REFRESH") == "False":
             self.rich_live_auto_refresh = False
@@ -112,16 +112,18 @@ class CliScreen:
             else:
                 self._set_selected_failed_task(c - 1)
 
-    def stop_listening_keys(self):
-        if self.listen_keyboard_enabled:
-            logger.info("stop listening to keys")
-            stop_listening()
+    def request_quit(self):
+        self.quit = True
 
     def press(self, key):
+        logger.debug("key pressed: %s", key)
         try:
             if key == "q":
-                self.quit = True
-                self.stop_listening_keys()
+                self.request_quit()
+            elif key == readchar.key.UP:
+                logger.debug("UP")
+            elif key == readchar.key.DOWN:
+                logger.debug("DOWN")
             elif key == "f":
                 self.cancel_prompt()
                 self.screen = "errors"
@@ -145,7 +147,6 @@ class CliScreen:
         except Exception:
             logger.exception(f"failed on key command {key}")
             self.error_msg.append(traceback.format_exc())
-            self.stop_listening_keys()
 
     def is_prompt_restart_task(self):
         return self.prompt == "restart-task"
@@ -156,7 +157,7 @@ class CliScreen:
     def cancel_prompt(self):
         self.prompt = None
 
-    def start_and_wait(self):
+    def start(self):
         def refresher():
             refresh_per_second = 4
             if self.rich_live_auto_refresh:
@@ -165,28 +166,36 @@ class CliScreen:
                 try:
                     while not self.quit:
                         self.update_screen(live)
-                        time.sleep(3)
+                        if not self.quit:
+                            time.sleep(3)
                 except Exception:
                     logger.exception(f"failed in refresh loop")
                     self.error_msg.append(traceback.format_exc())
-                    self.stop_listening_keys()
+
+            logger.info(f"out of Live loop")
+
+            self.quit_listener()
 
         logger.info("will start screen refresher thread")
         refresh_thread = Thread(target=refresher)
         refresh_thread.start()
 
         if self.listen_keyboard_enabled:
-            logger.info("will start listen_keyboard")
-            listen_keyboard(on_press=lambda key: self.press(key))
+
+            def _listen_keyboard():
+                logger.info("_listen_keyboard thread started")
+                while True:
+                    c = readchar.readkey()
+                    self.press(c)
+                    if self.quit:
+                        break
+                    if c == "q":
+                        break
+
+            listen_keyboard_thread = Thread(target=_listen_keyboard)
+            listen_keyboard_thread.start()
         else:
             logger.info("will NOT listen_keyboard")
-            refresh_thread.join()
-
-
-        if len(self.error_msg) > 0:
-            return self.error_msg[0]
-        else:
-            return None
 
     def _errors_screen(self):
 

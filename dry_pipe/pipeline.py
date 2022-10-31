@@ -186,9 +186,8 @@ class Pipeline:
         self.remote_task_confs = remote_task_confs
 
         def _display_grouper(task_key):
-
-            if task_key.count(".") != 1:
-                raise Exception(f"task key {task_key} violates naming convention: <prefix>.<suffix>")
+            #if task_key.count(".") != 1:
+            #    raise Exception(f"task key {task_key} violates naming convention: <prefix>.<suffix>")
 
             try:
                 return display_grouper(task_key)

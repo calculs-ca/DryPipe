@@ -6,9 +6,11 @@ import logging
 import logging.config
 import pathlib
 import re
+import signal
 import sys
 import os
 import traceback
+from threading import Thread
 
 import click
 from dry_pipe import DryPipe
@@ -19,6 +21,8 @@ from dry_pipe.pipeline import PipelineInstance, Pipeline
 from dry_pipe.pipeline_state import PipelineState
 from dry_pipe.script_lib import env_from_sourcing
 from dry_pipe.task_state import NON_TERMINAL_STATES
+
+logger = logging.getLogger(__name__)
 
 
 @click.group()
@@ -44,9 +48,15 @@ def _configure_logging(log_conf_file):
     if log_conf_file is None:
         log_conf_file = os.environ.get("DRYPIPE_LOGGING_CONF")
 
+    loggin_conf_in_current_dir = os.path.join(os.getcwd(), "drypipe-logging-conf.json")
+
+    if log_conf_file is None and os.path.exists(loggin_conf_in_current_dir):
+        log_conf_file = loggin_conf_in_current_dir
+
     if log_conf_file is not None:
         with open(log_conf_file) as f:
             logging.config.dictConfig(json.loads(f.read()))
+        logger.info("using logging conf: %s", log_conf_file)
 
 
 @click.command()
@@ -179,11 +189,7 @@ def mon(pipeline, instance_dir):
     #pipeline_instance = _pipeline_instance_creater(instance_dir, pipeline)()
 
     screen_state = CliScreen(instance_dir, is_monitor_mode=True)
-
-    err_msg = screen_state.start_and_wait()
-
-    if err_msg is not None:
-        click.echo(err_msg, err=True)
+    screen_state.start()
 
 
 @click.command()
@@ -284,16 +290,33 @@ def run(
     else:
         from dry_pipe.cli_screen import CliScreen
 
-        rich_screen = CliScreen(
+        def _quit_listener():
+            logger.debug("quit listener")
+            logging.shutdown()
+            os._exit(0)
+
+        cli_screen = CliScreen(
             pipeline_instance.pipeline_instance_dir,
             None if display_grouper is None else _display_grouper_func_from_spec(display_grouper),
-            is_monitor_mode=False
+            is_monitor_mode=False,
+            quit_listener=_quit_listener
         )
-        err_msg = rich_screen.start_and_wait()
-        if err_msg is not None:
-            click.echo(err_msg, err=True)
 
-    os._exit(0)
+        cli_screen.start()
+        def _sigint(p1, p2):
+            logger.info("received SIGINT")
+
+            if janitor is not None:
+                janitor.request_shutdown()
+            cli_screen.request_quit()
+
+        signal.signal(signal.SIGINT, _sigint)
+        signal.pause()
+
+        logging.shutdown()
+        exit(0)
+
+    #os._exit(0)
 
 
 def _display_grouper_func_from_spec(display_grouper):

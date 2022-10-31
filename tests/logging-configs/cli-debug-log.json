@@ -28,9 +28,11 @@
   "loggers": {
     "dry_pipe.cli_screen": {
       "level": "DEBUG",
-      "handlers": [
-        "file"
-      ]
+      "handlers": ["file"]
+    },
+    "dry_pipe.cli": {
+      "level": "DEBUG",
+      "handlers": ["file"]
     }
   }
 }
