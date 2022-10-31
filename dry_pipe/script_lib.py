@@ -39,7 +39,7 @@ else:
 
 class PortablePopen:
 
-    def __init__(self, process_args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=None, shell=False):
+    def __init__(self, process_args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=None, shell=False, stdin=None):
 
         if stdout is None:
             raise Exception(f"stdout can't be None")
@@ -53,7 +53,8 @@ class PortablePopen:
             stdout=stdout,
             stderr=stderr,
             shell=shell,
-            env=env
+            env=env,
+            stdin=stdin
         )
 
     def __enter__(self):
@@ -219,7 +220,7 @@ def _terminate_descendants_and_exit(p1, p2):
                 int(line.decode("utf-8").strip())
                 for line in p.popen.stdout.readlines()
             ]
-            pids = [pid for pid in pids if pid != p.pid]
+            pids = [pid for pid in pids if pid != p.popen.pid]
             logger.debug("descendants of %s: %s", this_pid, pids)
             for pid in pids:
                 try:
@@ -364,8 +365,6 @@ def _transition_state_file(state_file, next_state_name, step_number=None):
     )
 
     _append_to_history(control_dir, next_state_name, step_number)
-
-    logger.debug("_transition_state_file completed")
 
     return next_state_file, next_step_number
 
@@ -549,10 +548,43 @@ def launch_task_from_remote(task_key, is_slurm, wait_for_completion, drypipe_tas
                 print(str(p.popen.returncode))
 
 
-def launch_task(task_func):
+def handle_main(task_func):
 
+    is_tail_command = "tail" in sys.argv
     wait_for_completion = "--wait" in sys.argv
-    is_tail = "--tail" in sys.argv
+
+    is_run_command = not is_tail_command
+
+    if is_run_command:
+        _launch_task(task_func, wait_for_completion)
+    else:
+
+        def quit_command(p1, p2):
+            logging.shutdown()
+            exit(0)
+
+        signal.signal(signal.SIGINT, quit_command)
+
+        if is_tail_command:
+            _tail_command()
+
+
+def _tail_command():
+
+    script_location = os.environ["__script_location"]
+
+    all_logs = [
+        os.path.join(script_location, log)
+        for log in ["drypipe.log", "out.log", "err.log"]
+    ]
+
+    tail_cmd = ["tail", "-f"] + all_logs
+
+    with PortablePopen(tail_cmd, stdout=sys.stdout, stderr=sys.stderr, stdin=sys.stdin) as p:
+        p.wait()
+
+
+def _launch_task(task_func, wait_for_completion):
 
     def task_func_wrapper():
         try:
