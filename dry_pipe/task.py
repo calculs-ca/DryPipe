@@ -679,8 +679,7 @@ class Task:
 
             f.write('    script_lib.transition_to_completed(state_file)\n\n\n')
 
-            f.write('wait_for_completion = "--wait" in sys.argv\n')
-            f.write('script_lib.launch_task(go, wait_for_completion)\n')
+            f.write('script_lib.launch_task(go)\n')
 
         os.chmod(shell_script_file, 0o764)
 

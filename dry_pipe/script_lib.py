@@ -549,7 +549,10 @@ def launch_task_from_remote(task_key, is_slurm, wait_for_completion, drypipe_tas
                 print(str(p.popen.returncode))
 
 
-def launch_task(task_func, wait_for_completion):
+def launch_task(task_func):
+
+    wait_for_completion = "--wait" in sys.argv
+    is_tail = "--tail" in sys.argv
 
     def task_func_wrapper():
         try:
@@ -564,13 +567,15 @@ def launch_task(task_func, wait_for_completion):
     if wait_for_completion:
         task_func_wrapper()
     else:
-        if os.environ.get("__is_slurm") != "True" and os.fork() != 0:
+        is_slurm = os.environ.get("__is_slurm") == "True"
+        if (not is_slurm) and os.fork() != 0:
             exit(0)
         else:
-            if os.environ.get("__is_slurm") == "True":
-                logger.info("slurm job started")
+            if is_slurm:
+                slurm_job_id = os.environ.get("SLURM_JOB_ID")
+                logger.info("slurm job started, slurm_job_id=%s", slurm_job_id)
             else:
-                kill_script = os.path.join(os.environ['__script_location'], "kill")
+                kill_script = os.path.join(os.environ['__script_location'], "terminate")
                 with open(kill_script, "w") as f:
                     f.write("#!/bin/sh\n")
                     f.write(f"kill -{signal.SIGTERM} {os.getpid()}\n")
