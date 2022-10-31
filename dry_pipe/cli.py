@@ -209,16 +209,22 @@ def mon(pipeline, instance_dir):
 @click.option('--logging-conf', type=click.Path(), default=None, help="log configuration file (json)")
 @click.option('--env', type=click.STRING, default=None)
 @click.option(
-    '--display-grouper', type=click.STRING, default=None,
+    '--group-by', type=click.STRING, default="by_task_type",
+    help="""
+    name of grouper in Drypipe.create_pipeline(...,task_groupers={'my_custom_grouper': group_func})
+    """
+)
+@click.option(
+    '--regex-grouper', type=click.STRING, default=None,
     help="""
     <regex>,<format>
-    example: --display-grouper=.*\_(\w)\.(\d),group-{0}-{1}
+    example: --regex-grouper=.*\_(\w)\.(\d),group-{0}-{1}
     """
 )
 def run(
     pipeline, instance_dir, web_mon, port, bind,
     clean, single, restart, restart_failed, restart_killed, reset_failed,
-    no_confirm, logging_conf, env, display_grouper
+    no_confirm, logging_conf, env, regex_grouper, group_by
 ):
 
     _configure_logging(logging_conf)
@@ -297,9 +303,10 @@ def run(
 
         cli_screen = CliScreen(
             pipeline_instance.pipeline_instance_dir,
-            None if display_grouper is None else _display_grouper_func_from_spec(display_grouper),
+            None if regex_grouper is None else _display_grouper_func_from_spec(regex_grouper),
             is_monitor_mode=False,
-            quit_listener=_quit_listener
+            quit_listener=_quit_listener,
+            group_by=group_by
         )
 
         cli_screen.start()
@@ -315,6 +322,8 @@ def run(
 
         logging.shutdown()
         exit(0)
+
+
 
     #os._exit(0)
 

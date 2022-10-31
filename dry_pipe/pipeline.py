@@ -82,7 +82,7 @@ class Pipeline:
             containers_dir=None,
             env_vars=None,
             remote_task_confs=None,
-            display_grouper=None
+            task_groupers=None
     ):
         if pipeline_code_dir is None:
             pipeline_code_dir = os.path.dirname(os.path.abspath(inspect.getmodule(generator_of_tasks).__file__))
@@ -185,19 +185,24 @@ class Pipeline:
         self.env_vars = env_vars
         self.remote_task_confs = remote_task_confs
 
-        def _display_grouper(task_key):
+        def _wrap_task_grouper(grouper_name, grouper_func):
             #if task_key.count(".") != 1:
             #    raise Exception(f"task key {task_key} violates naming convention: <prefix>.<suffix>")
 
-            try:
-                return display_grouper(task_key)
-            except Exception as ex:
-                raise Exception(
-                    f"display_grouper {display_grouper.__module__}:{display_grouper.__name__} failed " +
-                    f"on task_key: {task_key}\n{ex}"
-                )
+            def g(task_key):
+                try:
+                    return grouper_func(task_key)
+                except Exception as ex:
+                    raise Exception(f"task grouper {grouper_name} failed on task_key: {task_key}\n{ex}")
+            return g
 
-        self.display_grouper = _display_grouper
+        self.task_groupers = {
+            ** {
+                n: _wrap_task_grouper(n, g)
+                for n, g in task_groupers.items()
+            },
+            "by_task_type": Task.key_grouper
+        }
 
 
     def create_pipeline_instance(self, pipeline_instance_dir=None, task_conf=None, containers_dir=None, env_vars=None):
@@ -208,7 +213,8 @@ class Pipeline:
                 pipeline_code_dir=self.pipeline_code_dir,
                 task_conf=task_conf or self.task_conf,
                 containers_dir=containers_dir or self.containers_dir,
-                env_vars=env_vars or self.env_vars
+                env_vars=env_vars or self.env_vars,
+                task_groupers=self.task_groupers
             )
         else:
             p = self

@@ -33,7 +33,9 @@ class DryPipe:
         containers_dir=None,
         env_vars=None,
         remote_task_confs=None,
-        display_grouper=Task.key_grouper
+        task_groupers={
+            "by_task_type": Task.key_grouper
+        }
     ):
         """
         :param generator_of_tasks:
@@ -43,14 +45,18 @@ class DryPipe:
         :param env_vars:
         :param remote_task_confs: when a list of TaskConf is given, drypipe prepare-remote-sites will
                upload (rsync) $containers_dir and $pipeline_code_dir to all remote sites
-        :param display_grouper a str->str function that groups task_keys, affects monitoring display
+        :param task_groupers:
+        example:
+            task_groupers={
+                "group_by_task_key_last_char": lambda task_key: task_key[-1]
+            }
         """
 
         from dry_pipe.pipeline import Pipeline
 
         return Pipeline(
             generator_of_tasks, pipeline_code_dir, task_conf, containers_dir, env_vars, remote_task_confs,
-            display_grouper
+            task_groupers
         )
 
     @staticmethod

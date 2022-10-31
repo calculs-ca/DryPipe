@@ -13,7 +13,6 @@ from rich.table import Table
 from rich.layout import Layout
 from rich.align import Align
 
-from dry_pipe import Task
 from dry_pipe.monitoring import PipelineMetricsTable, fetch_task_group_metrics
 from dry_pipe.pipeline import PipelineInstance, Pipeline
 from dry_pipe.task_state import TaskState
@@ -23,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 class CliScreen:
 
-    def __init__(self, pipeline_instance_dir, display_grouper, is_monitor_mode, quit_listener=None):
+    def __init__(self, pipeline_instance_dir, regex_grouper, is_monitor_mode, quit_listener=None, group_by=None):
         self.is_monitor_mode = is_monitor_mode
         self.pipeline_instance_dir = pipeline_instance_dir
         self.pipeline_hints = PipelineInstance.load_hints(pipeline_instance_dir)
@@ -38,14 +37,14 @@ class CliScreen:
         self.rich_live_auto_refresh = True
         self.quit_listener = quit_listener
 
-        if display_grouper is None:
-            self.display_grouper = Task.key_grouper
-            pipeline = Pipeline.load_from_module_func(self.pipeline_hints["pipeline"])
+        pipeline = Pipeline.load_from_module_func(self.pipeline_hints["pipeline"])
+        self.task_groupers = pipeline.task_groupers
 
-            if pipeline.display_grouper is not None:
-                self.display_grouper = pipeline.display_grouper
+        if regex_grouper is not None:
+            self.task_groupers["regex_grouper"] = regex_grouper
+            self.selected_grouper_name = "regex_grouper"
         else:
-            self.display_grouper = display_grouper
+            self.selected_grouper_name = "by_type"
 
         if os.environ.get("DRYPIPE_CLI_AUTO_REFRESH") == "False":
             self.rich_live_auto_refresh = False
@@ -54,6 +53,15 @@ class CliScreen:
 
         if os.environ.get("DRYPIPE_CLI_LISTEN_KEYBOARD_ENABLED") == "False":
             self.listen_keyboard_enabled = False
+
+        if group_by is not None:
+
+            g = pipeline.task_groupers.get(group_by)
+            if g is None:
+                raise Exception(
+                    f"pipeline was not instantiated with task_groupers dict containing {group_by}"
+                )
+            self.selected_grouper_name = group_by
 
         class ShallowPipelineInstance:
             def __init__(self):
@@ -118,7 +126,7 @@ class CliScreen:
     def press(self, key):
         logger.debug("key pressed: %s", key)
         try:
-            if key == "q":
+            if key == "q" or key == readchar.key.CTRL_C:
                 self.request_quit()
             elif key == readchar.key.UP:
                 logger.debug("UP")
@@ -182,15 +190,20 @@ class CliScreen:
 
         if self.listen_keyboard_enabled:
 
+            readchar.config.INTERRUPT_KEYS = []
+
             def _listen_keyboard():
                 logger.info("_listen_keyboard thread started")
                 while True:
                     c = readchar.readkey()
                     self.press(c)
+
                     if self.quit:
                         break
                     if c == "q":
                         break
+
+                logger.debug("out of _listen_keyboard loop")
 
             listen_keyboard_thread = Thread(target=_listen_keyboard)
             listen_keyboard_thread.start()
@@ -277,10 +290,12 @@ class CliScreen:
             expand=True
         )
 
+        task_grouper = self.task_groupers[self.selected_grouper_name]
+
         header, body, footer = PipelineMetricsTable.summarized_table_from_task_group_metrics(
             fetch_task_group_metrics(
                 self.pipeline_instance.pipeline_instance_dir,
-                self.display_grouper
+                task_grouper
             )
         )
 

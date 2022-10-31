@@ -3,11 +3,16 @@ from dry_pipe import DryPipe
 
 def pipeline():
 
-    def display_grouper(task_key):
+    def group_by_last_char_of_type(task_key):
         task_type, suffix = task_key.split(".")
         return f"group-{task_type[-1]}"
 
-    return DryPipe.create_pipeline(pipeline_task_generator, display_grouper=display_grouper)
+    return DryPipe.create_pipeline(
+        pipeline_task_generator,
+        task_groupers={
+            "last-c": group_by_last_char_of_type
+        }
+    )
 
 
 @DryPipe.python_call()
