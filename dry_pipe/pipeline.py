@@ -4,14 +4,13 @@ import logging
 import os
 import pathlib
 import shutil
-import subprocess
 from itertools import groupby
 
 from dry_pipe import TaskConf, DryPipeDsl, TaskBuilder, script_lib, bash_shebang
 from dry_pipe.internals import ValidationError, SubPipeline
 from dry_pipe.janitors import Janitor
 from dry_pipe.pipeline_state import PipelineState
-from dry_pipe.script_lib import write_pipeline_lib_script
+from dry_pipe.script_lib import write_pipeline_lib_script, PortablePopen
 from dry_pipe.task import Task
 
 logger = logging.getLogger(__name__)
@@ -520,21 +519,15 @@ class PipelineInstance:
 
             pathlib.Path(sig_dir).mkdir(parents=True, exist_ok=True)
 
-            with subprocess.Popen(
+            with PortablePopen(
                     f"{self.work_dir}/recalc-output-file-hashes.sh",
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True,
                     env={
                         "__control_dir": self.work_dir,
                         "__sig_dir": "in_sigs",
                         "__file_list_to_sign": ",".join(all_pre_existing_files)
                     }
             ) as p:
-                p.wait()
-                err = p.stderr.read()
-                if p.returncode != 0:
-                    raise Exception(f"Failed signing pre existing files: {err}")
+                p.wait_and_raise_if_non_zero()
 
     """
     Recompute output signatures (out.sig) of all tasks, and identifies tasks who's inputs has changed by 
@@ -593,19 +586,9 @@ def parse_status_from_squeue_line(squeue_line):
 def call_squeue_for_job_id(job_id, parser=None):
     cmd = f"squeue -h -j {job_id} -o '{SLURM_SQUEUE_FORMAT_SPEC}'"
 
-    with subprocess.Popen(
-            cmd.split(" "),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True
-    ) as p:
-
-        p.wait()
-
-        if p.returncode != 0:
-            raise Exception(f"call failed '{cmd}', return code: {p.returncode}\n{p.stderr}")
-
-        out_line = p.stdout.read().strip()
+    with PortablePopen(cmd.split(" ")) as p:
+        p.wait_and_raise_if_non_zero()
+        out_line = p.stdout_as_string().strip()
 
         if len(out_line) == 0:
             return None
@@ -622,16 +605,7 @@ def call_squeue_for_job_id(job_id, parser=None):
 
 def is_module_command_available():
     cmd = ["bash", "-c", "type -t module"]
-    with subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True
-    ) as p:
-        p.wait()
-        if p.returncode != 0:
-            raise Exception(f"Failed while checking if module available {cmd} ")
-
-        out = p.stdout.read().strip()
-
+    with PortablePopen(cmd) as p:
+        p.wait_and_raise_if_non_zero()
+        out = p.stdout_as_string().strip()
         return out == "function"

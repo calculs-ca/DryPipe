@@ -6,13 +6,12 @@ import json
 import os
 import pathlib
 import shutil
-import subprocess
 import time
 from itertools import groupby
 
 import textwrap
 
-from dry_pipe.script_lib import parse_in_out_meta
+from dry_pipe.script_lib import parse_in_out_meta, PortablePopen
 from dry_pipe.actions import TaskAction
 from dry_pipe import bash_shebang
 from dry_pipe.internals import \
@@ -680,8 +679,7 @@ class Task:
 
             f.write('    script_lib.transition_to_completed(state_file)\n\n\n')
 
-            f.write('wait_for_completion = "--wait" in sys.argv\n')
-            f.write('script_lib.launch_task(go, wait_for_completion)\n')
+            f.write('script_lib.launch_task(go)\n')
 
         os.chmod(shell_script_file, 0o764)
 
@@ -1152,23 +1150,15 @@ class Task:
     """
     def recompute_output_singature(self, recalc_hash_script):
 
-        with subprocess.Popen(
+        with PortablePopen(
             f"bash -c '. {self.v_abs_task_env_file()} && {recalc_hash_script}'",
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
             env={
                 "__sig_dir": "out_sigs",
                 "__pipeline_instance_dir": self.pipeline_instance.pipeline_instance_dir
             },
-            shell=True,
-            text=True
+            shell=True
         ) as p:
-            p.wait()
-
-            if p.returncode != 0:
-                err = p.stderr.read().strip()
-                raise Exception(f"Error while computing hash for task {self}\n {err}")
-
+            p.wait_and_raise_if_non_zero()
             previously_computed_out_sig = self.output_signature()
 
             up_to_date_sig, out_sig_file_writer = self._calc_output_signature()

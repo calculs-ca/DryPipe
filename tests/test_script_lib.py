@@ -1,6 +1,5 @@
 import os
 import signal
-import subprocess
 import textwrap
 import time
 import unittest
@@ -8,25 +7,21 @@ from pathlib import Path
 from threading import Thread
 
 from dry_pipe import bash_shebang, script_lib
-from dry_pipe.script_lib import task_script_header, touch
+from dry_pipe.script_lib import task_script_header, touch, PortablePopen
 from test_utils import TestSandboxDir
 
 
 def _run_script(script, send_signal=None):
 
-    with subprocess.Popen(
-            [script, "--is-silent"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE
-    ) as p:
+    with PortablePopen([script, "--is-silent"]) as p:
 
         if send_signal is not None:
             send_signal(p)
 
-        p.wait()
-        out = p.stdout.read().strip().decode("utf8")
-        err = p.stderr.read().strip().decode("utf8")
-        return p.returncode, out, err
+        p.popen.wait()
+        out = p.stdout_as_string()
+        err = p.stderr_as_string()
+        return p.popen.returncode, out, err
 
 
 

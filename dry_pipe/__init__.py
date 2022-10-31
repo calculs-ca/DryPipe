@@ -1,13 +1,12 @@
-import glob
 import inspect
 import json
 import os
 import re
-import subprocess
 import sys
 import textwrap
 from fnmatch import fnmatch
 
+from dry_pipe.script_lib import PortablePopen
 from dry_pipe.utils import bash_shebang
 from dry_pipe.internals import \
     Executor, Local, PreExistingFile, IndeterminateFile, ProducedFile, \
@@ -358,11 +357,8 @@ class TaskBuilder:
 
 def host_has_sbatch():
 
-    with subprocess.Popen(
-            ["which", "sbatch"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True
+    with PortablePopen(
+        ["which", "sbatch"]
     ) as p:
 
         p.wait()

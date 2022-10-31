@@ -12,11 +12,12 @@ import traceback
 
 import click
 from dry_pipe import DryPipe
-from dry_pipe.internals import env_from_sourcing, PythonCall
+from dry_pipe.internals import PythonCall
 from dry_pipe.janitors import Janitor
 from dry_pipe.monitoring import fetch_task_groups_stats
 from dry_pipe.pipeline import PipelineInstance, Pipeline
 from dry_pipe.pipeline_state import PipelineState
+from dry_pipe.script_lib import env_from_sourcing
 from dry_pipe.task_state import NON_TERMINAL_STATES
 
 
