@@ -296,9 +296,10 @@ def run(
     else:
         from dry_pipe.cli_screen import CliScreen
 
-        def _quit_listener():
+        def _quit_listener(cli_screen):
             logger.debug("quit listener")
             logging.shutdown()
+            cli_screen.cleanup_tty()
             os._exit(0)
 
         cli_screen = CliScreen(

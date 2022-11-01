@@ -1,6 +1,8 @@
 import datetime
 import logging
 import os
+import sys
+import termios
 import time
 import traceback
 from queue import LifoQueue
@@ -38,6 +40,8 @@ class CliScreen:
         self.loop_counter = 0
         self.rich_live_auto_refresh = True
         self.quit_listener = quit_listener
+        self.stdin_fd = sys.stdin.fileno()
+        self.old_tty_settings = termios.tcgetattr(self.stdin_fd)
 
         self.queue = LifoQueue(maxsize=2)
 
@@ -176,6 +180,9 @@ class CliScreen:
     def cancel_prompt(self):
         self.prompt = None
 
+    def cleanup_tty(self):
+        termios.tcsetattr(self.stdin_fd, termios.TCSADRAIN, self.old_tty_settings)
+
     def start(self):
         def refresher():
             refresh_per_second = 4
@@ -188,21 +195,27 @@ class CliScreen:
                         self.screen.refresh(live, self._main_screen(), msg)
 
                 except Exception:
+                    self.request_quit()
                     logger.exception(f"failed in refresh loop")
                     self.error_msg.append(traceback.format_exc())
 
             logger.info(f"out of Live loop")
 
-            self.quit_listener()
+            self.quit_listener(self)
 
         logger.info("will start screen refresher thread")
         Thread(target=refresher).start()
 
         def data_loader_thread():
             while not self.quit:
-                self.screen.reload()
-                self.queue.put("reload")
-                time.sleep(3)
+                try:
+                    self.screen.reload()
+                    self.queue.put("reload")
+                    time.sleep(3)
+                except Exception as ex:
+                    self.request_quit()
+                    logger.exception(ex)
+                    break
 
         Thread(target=data_loader_thread).start()
 
@@ -213,12 +226,18 @@ class CliScreen:
             def _listen_keyboard():
                 logger.info("_listen_keyboard thread started")
                 while True:
-                    c = readchar.readkey()
-                    self.press(c)
+                    try:
+                        c = readchar.readkey()
+                        self.press(c)
 
-                    if self.quit:
-                        break
-                    if c == "q":
+                        if self.quit:
+                            break
+                        if c == "q":
+                            break
+                    except Exception as ex:
+                        self.cleanup_tty()
+                        self.request_quit()
+                        logger.exception(ex)
                         break
 
                 logger.debug("out of _listen_keyboard loop")
