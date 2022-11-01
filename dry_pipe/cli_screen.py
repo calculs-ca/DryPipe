@@ -17,6 +17,7 @@ from rich.table import Table
 from rich.layout import Layout
 from rich.align import Align
 
+
 from dry_pipe.monitoring import PipelineMetricsTable, fetch_task_group_metrics
 from dry_pipe.pipeline import PipelineInstance, Pipeline
 from dry_pipe.task_state import TaskState
@@ -32,8 +33,6 @@ class CliScreen:
         self.pipeline_hints = PipelineInstance.load_hints(pipeline_instance_dir)
         self.quit = False
         self.screen = Summary(self)
-        self.failed_task_states = []
-        self.failed_task_states_iter_count = 0
         self.selected_failed_task = None
         self.prompt = None
         self.error_msg = []
@@ -77,57 +76,6 @@ class CliScreen:
 
         self.pipeline_instance = ShallowPipelineInstance()
 
-    def fetch_failed_task_states(self):
-        if self.failed_task_states_iter_count % 3 == 0:
-            ts = [
-                task_state for task_state in TaskState.failed_task_states(self.pipeline_instance)
-            ]
-            self.failed_task_states = sorted(ts, key=lambda s: s.task_key)
-            if self.selected_failed_task is None and len(self.failed_task_states) > 0:
-                self._set_selected_failed_task(0)
-
-        self.failed_task_states_iter_count += 1
-
-    def _set_selected_failed_task(self, idx):
-        self.selected_failed_task = self.failed_task_states[idx]
-
-    def _selected_failed_task_index(self):
-        if self.selected_failed_task is None:
-            return None
-
-        for i in range(0, len(self.failed_task_states)):
-            if self.failed_task_states[i].task_key == self.selected_failed_task.task_key:
-                return i
-
-    def restart_failed_task(self):
-        self.selected_failed_task.transition_to_queued()
-
-    def task_up(self):
-        c = len(self.failed_task_states)
-        if c == 0:
-            return
-        idx = self._selected_failed_task_index()
-        if idx is None or idx == 0:
-            self._set_selected_failed_task(0)
-        else:
-            idx -= 1
-            if idx < c:
-                self._set_selected_failed_task(idx)
-
-    def task_down(self):
-        c = len(self.failed_task_states)
-        if c == 0:
-            return
-        idx = self._selected_failed_task_index()
-        if idx is None:
-            self._set_selected_failed_task(0)
-        else:
-            idx += 1
-            if idx < c:
-                self._set_selected_failed_task(idx)
-            else:
-                self._set_selected_failed_task(c - 1)
-
     def request_quit(self):
         self.quit = True
 
@@ -148,25 +96,9 @@ class CliScreen:
             elif key == readchar.key.LEFT:
                 self.queue.put("left")
             elif key == "f":
-                self.cancel_prompt()
-                self.screen = "errors"
+                self.queue.put("failed-screen")
             elif key == "s":
-                self.cancel_prompt()
-                self.screen = "summary"
-            elif key == "r":
-                if self.selected_failed_task is not None:
-                    self.set_prompt_restart_task()
-            elif key == "n":
-                self.cancel_prompt()
-            elif key == "y":
-                if self.is_prompt_restart_task():
-                    self.restart_failed_task()
-            elif key == "up":
-                self.cancel_prompt()
-                self.task_up()
-            elif key == "down":
-                self.cancel_prompt()
-                self.task_down()
+                self.queue.put("summary-screen")
         except Exception:
             logger.exception(f"failed on key command {key}")
             self.error_msg.append(traceback.format_exc())
@@ -192,6 +124,13 @@ class CliScreen:
                 try:
                     while not self.quit:
                         msg = self.queue.get()
+                        if msg == "failed-screen":
+                            self.screen = FailedTaskList(self)
+                            self.screen.reload()
+                        elif msg == "summary-screen":
+                            self.screen = Summary(self)
+                            self.screen.reload()
+
                         self.screen.refresh(live, self._main_screen(), msg)
 
                 except Exception:
@@ -247,41 +186,6 @@ class CliScreen:
         else:
             logger.info("will NOT listen_keyboard")
 
-    def _errors_screen(self):
-
-        failed_cnt = len(self.failed_task_states)
-
-        layout = self._main_screen()
-
-        if failed_cnt == 0:
-            layout["header3"].update("Failed Tasks")
-            layout["body"].update("...there are no failed tasks")
-            self.cancel_prompt()
-            return layout
-
-        def get_header_text():
-
-            if not self.is_prompt_restart_task():
-                t = Text()
-                t.append(f"Task({self.selected_failed_task.task_key}) -> ", style="bold magenta")
-                err_file = os.path.join(self.selected_failed_task.control_dir(), "err.log")
-                t.append(f"tail -50 {err_file}\n", style="bold magenta")
-                t.append(f"key r to restart", style="bold gree1")
-                return t
-            else:
-                t = Text()
-                t.append(f"Restart task {self.selected_failed_task.task_key} ? y/N/a (a=all failed tasks)", style="bold green1")
-                return t
-
-        def get_tail_text():
-            t = Text()
-            t.append(self.selected_failed_task.tail_err_if_failed(50), style="red")
-            return t
-
-        layout["header3"].update(get_header_text())
-        layout["body"].update(get_tail_text())
-
-        return layout
 
     def _main_screen(self):
         layout = Layout()
@@ -304,7 +208,7 @@ class CliScreen:
 
         if pipeline_mod_func is not None:
             title = f"[bold]DryPipe([green1]{pipeline_mod_func}[/], "
-            title += f"[cyan1]{self.pipeline_instance.pipeline_instance_dir}[/])  {console_mode}"
+            title += f"[cyan1]{self.pipeline_instance_dir}[/])  {console_mode}"
         else:
             title = f"DryPipe - {console_mode}"
 
@@ -368,6 +272,83 @@ class TaskView:
         )
         out, err, log = self.task_state.tail_out_err_drypipe()
         self.data = [out, err, log]
+
+
+class FailedTaskList:
+
+    def __init__(self, cli_screen):
+        self.selected_row = None
+        self.cli_screen = cli_screen
+        self.selected_task_key = None
+        self.failed_task_states = []
+
+    def refresh(self, live, layout, msg=None):
+
+        if msg in ["up", "down"]:
+            if self.selected_row is None:
+                self.selected_row = 0
+            else:
+                if msg == "up":
+                    if self.selected_row > 0:
+                        self.selected_row -= 1
+                else:
+                    row_count = len(self.failed_task_states)
+                    if self.selected_row < (row_count - 1):
+                        self.selected_row += 1
+        elif msg == "enter":
+            if self.selected_row is None:
+                self.selected_row = 0
+            self.cli_screen.screen = TaskView(self, self.failed_task_states[self.selected_row].task_key)
+            self.cli_screen.screen.reload()
+            self.cli_screen.screen.refresh(live, layout)
+            return
+
+        elif msg == "left":
+            self.cli_screen.press("s")
+
+        layout["header3"].update("Failed Tasks")
+
+        fail_count = len(self.failed_task_states)
+        if fail_count == 0:
+            layout["header4"].update(Text(f"there are no failed tasks"))
+        else:
+            layout["header4"].update("")
+
+        table = Table(
+            show_header=False,
+            expand=True,
+            show_lines=True
+        )
+        table.add_column(ratio=1)
+        table.add_column(ratio=9)
+        c = 0
+        for task_state in self.failed_task_states:
+            err = task_state.tail_err_if_failed(4)
+            if self.selected_row == c:
+                selected_prefix = " -> "
+                selected_style = "bold"
+            else:
+                selected_prefix = "    "
+                selected_style = ""
+
+            table.add_row(
+                Text(f"{selected_prefix} {task_state.task_key}"),
+                Text(err, style=f"red"),
+                style=selected_style
+            )
+            c += 1
+
+        layout["body"].update(table)
+        live.update(Panel(layout, border_style="blue"), refresh=True)
+
+    def reload(self):
+        self.failed_task_states = sorted(
+            [
+                task_state
+                for task_state in TaskState.failed_task_states(self.cli_screen.pipeline_instance_dir)
+            ],
+            key=lambda s: s.task_key
+        )
 
 
 class Summary:

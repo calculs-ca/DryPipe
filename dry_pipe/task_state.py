@@ -196,8 +196,8 @@ class TaskState:
         return TaskState.fetch(None, "state.*", pipeline_instance_dir)
 
     @staticmethod
-    def failed_task_states(pipeline):
-        return TaskState.fetch(pipeline, "state.failed.*")
+    def failed_task_states(pipeline_instance_dir):
+        return TaskState.fetch(None, "state.failed.*", pipeline_instance_dir)
 
     @staticmethod
     def queued_for_upload_task_states(pipeline):
