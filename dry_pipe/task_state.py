@@ -377,6 +377,15 @@ class TaskState:
         else:
             return None
 
+    def tail_out_err_drypipe(self):
+        tails = [
+            tail(os.path.join(self.control_dir(), d), 20)
+            for d in ["out.log", "err.log", "drypipe.log"]
+        ]
+
+        return tuple(tails)
+
+
     def _ensure_transition_valid(self, next_state):
         valid_next_states = VALID_TRANSITIONS.get(self.state_name)
 

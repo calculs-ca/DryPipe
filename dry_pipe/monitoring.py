@@ -130,11 +130,15 @@ class PipelineMetricsTable:
         return res
 
 
-def fetch_task_group_metrics(pipeline_instance_dir, task_key_grouper, task_state_visitor=None):
+def fetch_task_group_metrics(pipeline_instance_dir, task_key_grouper, task_state_visitor=None, task_filter=None):
 
     task_group_metrics = {}
 
     for task_state in TaskState.fetch_all(pipeline_instance_dir):
+
+        if task_filter is not None:
+            if not task_filter(task_state.task_key):
+                continue
 
         if task_state_visitor is not None:
             task_state_visitor(task_state)

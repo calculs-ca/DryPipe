@@ -2,6 +2,7 @@ import logging
 import os
 import time
 import traceback
+from queue import LifoQueue
 from threading import Thread
 
 import readchar
@@ -27,7 +28,7 @@ class CliScreen:
         self.pipeline_instance_dir = pipeline_instance_dir
         self.pipeline_hints = PipelineInstance.load_hints(pipeline_instance_dir)
         self.quit = False
-        self.screen = 'summary'
+        self.screen = Summary(self)
         self.failed_task_states = []
         self.failed_task_states_iter_count = 0
         self.selected_failed_task = None
@@ -36,6 +37,8 @@ class CliScreen:
         self.loop_counter = 0
         self.rich_live_auto_refresh = True
         self.quit_listener = quit_listener
+
+        self.queue = LifoQueue(maxsize=2)
 
         pipeline = Pipeline.load_from_module_func(self.pipeline_hints["pipeline"])
         self.task_groupers = pipeline.task_groupers
@@ -128,10 +131,17 @@ class CliScreen:
         try:
             if key == "q" or key == readchar.key.CTRL_C:
                 self.request_quit()
+                self.queue.put("m")
             elif key == readchar.key.UP:
                 logger.debug("UP")
+                self.queue.put("up")
             elif key == readchar.key.DOWN:
+                self.queue.put("down")
                 logger.debug("DOWN")
+            elif key == readchar.key.ENTER:
+                self.queue.put("enter")
+            elif key == readchar.key.LEFT:
+                self.queue.put("left")
             elif key == "f":
                 self.cancel_prompt()
                 self.screen = "errors"
@@ -173,9 +183,9 @@ class CliScreen:
             with Live(auto_refresh=self.rich_live_auto_refresh, refresh_per_second=refresh_per_second) as live:
                 try:
                     while not self.quit:
-                        self.update_screen(live)
-                        if not self.quit:
-                            time.sleep(3)
+                        msg = self.queue.get()
+                        self.screen.refresh(live, self._main_screen(), msg)
+
                 except Exception:
                     logger.exception(f"failed in refresh loop")
                     self.error_msg.append(traceback.format_exc())
@@ -185,8 +195,15 @@ class CliScreen:
             self.quit_listener()
 
         logger.info("will start screen refresher thread")
-        refresh_thread = Thread(target=refresher)
-        refresh_thread.start()
+        Thread(target=refresher).start()
+
+        def data_loader_thread():
+            while not self.quit:
+                self.screen.reload()
+                self.queue.put("reload")
+                time.sleep(3)
+
+        Thread(target=data_loader_thread).start()
 
         if self.listen_keyboard_enabled:
 
@@ -280,73 +297,167 @@ class CliScreen:
 
         return layout
 
-    def _status_table(self):
 
-        table = Table(
-            show_header=True,
-            header_style="none",
-            show_lines=False,
-            show_edge=False,
-            expand=True
+class TaskView:
+
+    def __init__(self, prev_screen, task_key):
+        self.cli_screen = prev_screen.cli_screen
+        self.prev_screen = prev_screen
+        self.task_key = task_key
+        self.task_state = TaskState.from_task_control_dir(
+            self.cli_screen.pipeline_instance_dir, self.task_key
         )
 
-        task_grouper = self.task_groupers[self.selected_grouper_name]
-
-        header, body, footer = PipelineMetricsTable.summarized_table_from_task_group_metrics(
-            fetch_task_group_metrics(
-                self.pipeline_instance.pipeline_instance_dir,
-                task_grouper
-            )
-        )
-
-        for h in header:
-            table.add_column(h)
-
-        def color_row(row):
-            c = 0
-            row_cells = []
-            for v in row:
-                if v is None or v == 0:
-                    row_cells.append("")
-                else:
-                    if c == 4:
-                        row_cells.append(f"[green1]{v}[/]")
-                    elif c == 5:
-                        row_cells.append(f"[blue]{v}[/]")
-                    elif c in [6, 7, 8]:
-                        row_cells.append(f"[red]{v}[/]")
-                    elif c in [0, 1]:
-                        row_cells.append(f"[yellow]{v}[/]")
-                    else:
-                        row_cells.append(f"{v}")
-                c += 1
-            return row_cells
-
-        for row in body:
-            table.add_row(*color_row(row))
-
-        table.add_row(*color_row(footer))
-
-        layout = self._main_screen()
-
-        layout["header3"].update("Task Execution Status Summary")
-        layout["body"].update(table)
-
-        return layout
-
-    def update_screen(self, live):
-        self.loop_counter += 1
-        logger.debug("will update screen %s, %s", self.loop_counter, self.screen)
-        if self.screen == 'summary':
-            l = self._status_table()
-        elif self.screen == "errors":
-            self.fetch_failed_task_states()
-            l = self._errors_screen()
-        elif self.screen == "restart-task":
-            l = self._errors_screen()
+    def refresh(self, live, layout, msg=None):
+        if msg == "left":
+            self.cli_screen.screen = self.prev_screen
+            self.cli_screen.screen.reload()
+            self.cli_screen.screen.refresh(live, layout)
         else:
-            raise Exception(f"unknown screen {self.screen}")
+            out, err, log = self.data
+            logger.debug("will render...z %s", self.data)
 
-        live.update(Panel(l, border_style="blue"), refresh=not self.rich_live_auto_refresh)
-        logger.debug("screen %s updated", self.screen)
+            layout["header3"].update(f"Task(key={self.task_key})")
+            l = Layout()
+            l.split_row(
+                Layout(Panel(Text(out, style="green"), title="tail -f out.log"), name="out"),
+                Layout(Panel(Text(err, style="red"), title="tail -f err.log"), name="err"),
+                Layout(Panel(Text(log, style="blue"), title="tail -f drypipe.log"), name="task")
+            )
+            layout["body"].update(l)
+            live.update(Panel(layout, border_style="blue"), refresh=True)
+
+    def reload(self):
+        self.task_state = TaskState.from_task_control_dir(
+            self.cli_screen.pipeline_instance_dir, self.task_key
+        )
+        out, err, log = self.task_state.tail_out_err_drypipe()
+        self.data = [out, err, log]
+
+
+class Summary:
+
+    def __init__(self, cli_screen):
+        self.selected_row = None
+        self.cli_screen = cli_screen
+        self.data = None
+        self.group_selected = None
+        self.selected_task_key = None
+
+    def refresh(self, live, layout, msg=None):
+        if self.data is None:
+            time.sleep(1)
+        else:
+
+            header, body, footer = self.data
+
+            if msg in ["up", "down"]:
+                if self.selected_row is None:
+                    self.selected_row = 0
+                else:
+                    if msg == "up":
+                        if self.selected_row > 0:
+                            self.selected_row -= 1
+                    else:
+                        row_count = len(body)
+                        if self.selected_row < (row_count - 1):
+                            self.selected_row += 1
+            elif msg == "enter":
+                if self.group_selected is None:
+                    if self.selected_row is not None:
+                        self.group_selected = body[self.selected_row][0]
+                        self.selected_row = None
+                        logger.debug(f"group_selected %s", self.group_selected)
+                        header, body, footer = self.reload()
+                else:
+                    if self.selected_row is None:
+                        self.selected_row = 0
+                    self.cli_screen.screen = TaskView(self, body[self.selected_row][0])
+                    self.cli_screen.screen.reload()
+                    self.cli_screen.screen.refresh(live, layout)
+                    return
+
+            elif msg == "left" and self.group_selected is not None:
+                self.group_selected = None
+                logger.debug(f"group_selected %s", self.group_selected)
+                header, body, footer = self.reload()
+
+            table = Table(
+                show_header=True,
+                header_style="none",
+                show_lines=False,
+                show_edge=False,
+                expand=True
+            )
+
+            for h in header:
+                table.add_column(h)
+
+            def color_row(row, is_selected=False):
+                c = 0
+                row_cells = []
+                for v in row:
+                    if v is None or v == 0:
+                        row_cells.append("")
+                    else:
+                        if c == 4:
+                            row_cells.append(f"[green1]{v}[/]")
+                        elif c == 5:
+                            row_cells.append(f"[blue]{v}[/]")
+                        elif c in [6, 7, 8]:
+                            row_cells.append(f"[red]{v}[/]")
+                        elif c == 0:
+
+                            if self.group_selected is None:
+                                parent_group = ""
+                            else:
+                                parent_group = f"{self.group_selected}/"
+
+                            selected_style = " bold" if is_selected else ""
+                            selected_cursor = "-> " if is_selected else "   "
+                            row_cells.append(f"[yellow{selected_style}]{selected_cursor}{parent_group}{v}[/]")
+                        elif c == 1:
+                            row_cells.append(f"[yellow]{v}[/]")
+                        else:
+                            row_cells.append(f"{v}")
+                    c += 1
+                return row_cells
+
+            r = 0
+            for row in body:
+                is_selected = self.selected_row is not None and self.selected_row == r
+                table.add_row(*color_row(row, is_selected))
+                r += 1
+
+            table.add_row(*color_row(footer))
+
+            layout["header3"].update("Task Execution Status Summary")
+            layout["body"].update(table)
+            live.update(Panel(layout, border_style="blue"), refresh=True)
+
+    def reload(self):
+        task_grouper = self.cli_screen.task_groupers[self.cli_screen.selected_grouper_name]
+
+        if self.group_selected is None:
+            header, body, footer = PipelineMetricsTable.summarized_table_from_task_group_metrics(
+                fetch_task_group_metrics(
+                    self.cli_screen.pipeline_instance.pipeline_instance_dir,
+                    task_grouper
+                )
+            )
+        else:
+            def task_filter(task_key):
+                task_group = task_grouper(task_key)
+                return task_group == self.group_selected
+
+            header, body, footer = PipelineMetricsTable.summarized_table_from_task_group_metrics(
+                fetch_task_group_metrics(
+                    self.cli_screen.pipeline_instance.pipeline_instance_dir,
+                    task_key_grouper=lambda i: i,
+                    task_filter=task_filter
+                )
+            )
+
+        self.data = [header, body, footer]
+        return header, body, footer
 
