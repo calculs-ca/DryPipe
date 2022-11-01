@@ -518,6 +518,23 @@ class TaskState:
     def action_if_exists(self):
         return TaskAction.load_from_task_control_dir(self._control_dir)
 
+    def history_steps_time_intervals(self):
+
+        rows = [
+            (int(r[2]), r[0], TaskState.parse_history_timestamp(r[1]))
+            for r in self.load_history_rows()
+            if r[0] in ["step-started", "step-completed"]
+        ]
+
+        for step, rows in groupby(rows, key=lambda t: t[0]):
+            rows = list(rows)
+            step_started = [s[2] for s in rows if s[1] == "step-started"]
+            step_started = None if len(step_started) == 0 else step_started[0]
+            step_completed = [s[2] for s in rows if s[1] == "step-completed"]
+            step_completed = None if len(step_completed) == 0 else step_completed[0]
+            yield rows[0][0], step_started, step_completed
+
+
     def load_history_rows(self, history_tsv_as_string=None):
 
         if history_tsv_as_string is None:

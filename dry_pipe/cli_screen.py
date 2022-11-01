@@ -1,3 +1,4 @@
+import datetime
 import logging
 import os
 import time
@@ -269,9 +270,12 @@ class CliScreen:
             Layout(name="header1", size=1),
             Layout(name="header2", size=1),
             Layout(name="header3", size=1),
+            Layout(name="header4", size=1),
             Layout(name="body", ratio=10),
-            Layout(name="footer", size=1)
+            Layout(name="footer", minimum_size=1)
         )
+
+        layout["footer"].update("+++")
 
         pipeline_mod_func = self.pipeline_hints.get("pipeline")
         if self.is_monitor_mode:
@@ -315,9 +319,21 @@ class TaskView:
             self.cli_screen.screen.refresh(live, layout)
         else:
             out, err, log = self.data
-            logger.debug("will render...z %s", self.data)
 
-            layout["header3"].update(f"Task(key={self.task_key})")
+            def g():
+                for step_number, started, completed_or_none in self.task_state.history_steps_time_intervals():
+                    if completed_or_none is None:
+                        yield f"step-{step_number}(started at {started}:%Hh_%M_%S%z, ...)"
+                    else:
+                        dt = (completed_or_none - started)
+                        dt = datetime.timedelta(seconds=round(dt.total_seconds(), 0) or 1)
+                        yield f"step-{step_number}({dt})"
+
+            history_line = " -> ".join(g())
+
+            layout["header4"].update(Text(f"History[{history_line}]"))
+
+            layout["header3"].update(Align(f"Task(key=[cyan1]{self.task_key}[/])", align="center"))
             l = Layout()
             l.split_row(
                 Layout(Panel(Text(out, style="green"), title="tail -f out.log"), name="out"),
@@ -397,29 +413,28 @@ class Summary:
                 c = 0
                 row_cells = []
                 for v in row:
+                    selected_style = "bold" if is_selected else ""
                     if v is None or v == 0:
                         row_cells.append("")
                     else:
                         if c == 4:
-                            row_cells.append(f"[green1]{v}[/]")
+                            row_cells.append(f"[green1 {selected_style}]{v}[/]")
                         elif c == 5:
-                            row_cells.append(f"[blue]{v}[/]")
+                            row_cells.append(f"[blue {selected_style}]{v}[/]")
                         elif c in [6, 7, 8]:
-                            row_cells.append(f"[red]{v}[/]")
+                            row_cells.append(f"[red {selected_style}]{v}[/]")
                         elif c == 0:
 
                             if self.group_selected is None:
                                 parent_group = ""
                             else:
                                 parent_group = f"{self.group_selected}/"
-
-                            selected_style = " bold" if is_selected else ""
                             selected_cursor = "-> " if is_selected else "   "
-                            row_cells.append(f"[yellow{selected_style}]{selected_cursor}{parent_group}{v}[/]")
+                            row_cells.append(f"[yellow {selected_style}]{selected_cursor}{parent_group}{v}[/]")
                         elif c == 1:
-                            row_cells.append(f"[yellow]{v}[/]")
+                            row_cells.append(f"[yellow {selected_style}]{v}[/]")
                         else:
-                            row_cells.append(f"{v}")
+                            row_cells.append(f"[yellow {selected_style}]{v}[/]")
                     c += 1
                 return row_cells
 
@@ -432,6 +447,7 @@ class Summary:
             table.add_row(*color_row(footer))
 
             layout["header3"].update("Task Execution Status Summary")
+            layout["header4"].update("")
             layout["body"].update(table)
             live.update(Panel(layout, border_style="blue"), refresh=True)
 
