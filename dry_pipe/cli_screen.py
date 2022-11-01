@@ -342,7 +342,7 @@ class TaskView:
             def g():
                 for step_number, started, completed_or_none in self.task_state.history_steps_time_intervals():
                     if completed_or_none is None:
-                        yield f"step-{step_number}(started at {started}:%Hh_%M_%S%z, ...)"
+                        yield f"step-{step_number}(started at {started.strftime('%Hh:%M:%S%z')}, ...)"
                     else:
                         dt = (completed_or_none - started)
                         dt = datetime.timedelta(seconds=round(dt.total_seconds(), 0) or 1)
