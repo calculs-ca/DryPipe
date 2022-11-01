@@ -15,16 +15,17 @@ from threading import Thread
 
 
 def create_task_logger(task_control_dir):
-    _logger = logging.getLogger()
-    h = logging.FileHandler(filename=os.path.join(task_control_dir, "drypipe.log"))
     if os.environ.get("DRYPIPE_TASK_DEBUG") != "True":
         logging_level = logging.INFO
     else:
         logging_level = logging.DEBUG
-    h.setLevel(logging_level)
-    _logger.setLevel(logging_level)
-    h.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
-    _logger.addHandler(h)
+    _logger = logging.Logger("task-logger", logging_level)
+    file_handler = logging.FileHandler(filename=os.path.join(task_control_dir, "drypipe.log"))
+    file_handler.setLevel(logging_level)
+    file_handler.setFormatter(
+        logging.Formatter("%(asctime)s - %(levelname)s - %(message)s", datefmt='%Y-%m-%d %H:%M:%S%z')
+    )
+    _logger.addHandler(file_handler)
     return _logger
 
 

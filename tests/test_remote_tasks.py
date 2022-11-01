@@ -146,16 +146,28 @@ class RemoteTaskTestsWithSlurm(unittest.TestCase):
 
         d = TestSandboxDir(self)
 
+        cedar = TaskConf(
+            executer_type="slurm",
+            slurm_account="def-xroucou_cpu",
+            sbatch_options=[
+                "--time=0:5:00"
+            ],
+            ssh_specs=f"maxl@cedar.computecanada.ca:~/.ssh/id_ed25519",
+            remote_base_dir="/home/maxl/drypipe-tests"
+        )
+
+        ip32 = TaskConf(
+            executer_type="slurm",
+            slurm_account="def-xroucou_cpu",
+            sbatch_options=[
+                "--time=0:5:00"
+            ],
+            ssh_specs=f"maxl@ip32.ccs.usherbrooke.ca:~/.ssh/id_rsa",
+            remote_base_dir="/nfs3_ib/ip32-ib/home/maxl/drypipe-tests"
+        )
+
         pipeline_instance = d.pipeline_instance(pipeline_with_remote_tasks.create_pipeline_with_remote_tasks(
-            TaskConf(
-                executer_type="slurm",
-                slurm_account="def-xroucou_cpu",
-                sbatch_options=[
-                    "--time=0:5:00"
-                ],
-                ssh_specs=f"maxl@ip32.ccs.usherbrooke.ca:~/.ssh/id_rsa",
-                remote_base_dir="/nfs3_ib/ip32-ib/home/maxl/drypipe-tests"
-            )
+            ip32
         ))
 
         ensure_remote_dirs_dont_exist(pipeline_instance)

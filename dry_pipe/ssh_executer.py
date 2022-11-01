@@ -4,7 +4,7 @@ import logging.config
 
 from dry_pipe import Executor, bash_shebang
 from dry_pipe.internals import flatten
-from dry_pipe.script_lib import PortablePopen
+from dry_pipe.script_lib import PortablePopen, create_task_logger
 from dry_pipe.task_state import TaskState
 from dry_pipe.utils import perf_logger_timer
 
@@ -43,18 +43,18 @@ class RemoteSSH(Executor):
 
     def connect(self):
         from pssh.clients import SSHClient
+        pkey = os.path.expanduser(self.key_filename) \
+            if self.key_filename is not None and self.key_filename.startswith("~") else self.key_filename
         try:
             with perf_logger_timer("RemoteSSH.connect") as t:
                 self.ssh_client = SSHClient(
                     self.ssh_host,
                     self.ssh_username,
-                    pkey=os.path.expanduser(self.key_filename)
-                        if self.key_filename is not None and self.key_filename.startswith("~")
-                        else self.key_filename
+                    pkey=pkey
                 )
             logger_ssh.info("new ssh connection established %s at %s", self.ssh_username, self.ssh_host)
         except Exception as ex:
-            logger_ssh.error(f"ssh connect failed: {self}")
+            logger_ssh.exception("%s", [self.ssh_host, self.ssh_username, pkey])
             raise ex
 
     def invoke_remote(self, cmd, bash_error_ok=False):
@@ -371,32 +371,41 @@ class RemoteSSH(Executor):
 
     def execute(self, task, touch_pid_file_func, wait_for_completion=False, fail_silently=False):
 
-        remote_pid_basename = os.path.basename(task.pipeline_instance.pipeline_instance_dir)
+        task_local_logger = create_task_logger(os.path.join(task.v_abs_control_dir()))
+        try:
 
-        remote_pipeline_instance_dir = os.path.join(self.remote_base_dir, remote_pid_basename)
+            remote_pid_basename = os.path.basename(task.pipeline_instance.pipeline_instance_dir)
 
-        remote_script_lib_path = os.path.join(
-            remote_pipeline_instance_dir,
-            '.drypipe',
-            'script_lib'
-        )
+            remote_pipeline_instance_dir = os.path.join(self.remote_base_dir, remote_pid_basename)
 
-        drypipe_task_debug = os.environ.get("DRYPIPE_TASK_DEBUG") == "True"
+            remote_script_lib_path = os.path.join(
+                remote_pipeline_instance_dir,
+                '.drypipe',
+                'script_lib'
+            )
 
-        cmd = " ".join([
-            remote_script_lib_path,
-            "launch-task-from-remote",
-            task.key,
-            "--is-slurm" if task.task_conf.is_slurm() else "",
-            "--wait-for-completion" if wait_for_completion else "",
-            "--drypipe-task-debug" if drypipe_task_debug else ""
-        ])
+            drypipe_task_debug = os.environ.get("DRYPIPE_TASK_DEBUG") == "True"
 
-        with perf_logger_timer("RemoteSSH.execute") as t:
-            res = self.invoke_remote(cmd)
-            try:
-                res_num = int(res)
-            except Exception as ex:
-                raise Exception(f"remote command {cmd} returned invalid result: {res}")
-            if res_num != 0:
-                raise Exception(f"remote command {cmd} failed with return code: {res_num}")
+            cmd = " ".join([
+                remote_script_lib_path,
+                "launch-task-from-remote",
+                task.key,
+                "--is-slurm" if task.task_conf.is_slurm() else "",
+                "--wait-for-completion" if wait_for_completion else "",
+                "--drypipe-task-debug" if drypipe_task_debug else ""
+            ])
+
+            task_local_logger.info("will execute")
+
+            task_local_logger.debug(f"will launch task on %s: %s", self.ssh_host, cmd)
+
+            with perf_logger_timer("RemoteSSH.execute") as t:
+                res = self.invoke_remote(cmd)
+                try:
+                    res_num = int(res)
+                except Exception as ex:
+                    raise Exception(f"remote command {cmd} returned invalid result: {res}")
+                if res_num != 0:
+                    raise Exception(f"remote command {cmd} failed with return code: {res_num}")
+        finally:
+            task_local_logger.handlers[0].close()
