@@ -240,19 +240,23 @@ def _terminate_descendants_and_exit(p1, p2):
         logger.exception(ex)
     finally:
         try:
-            sloc = os.environ["__script_location"]
-
-            def delete_if_exists(f):
-                f = os.path.join(sloc, f)
-                if os.path.exists(f):
-                    os.remove(f)
-
-            delete_if_exists("pid")
-            delete_if_exists("slurm_job_id")
+            _delete_pid_and_slurm_job_id()
         except Exception as ex:
             logger.exception(ex)
         finally:
             _exit_process()
+
+
+def _delete_pid_and_slurm_job_id():
+    sloc = os.environ["__script_location"]
+
+    def delete_if_exists(f):
+        f = os.path.join(sloc, f)
+        if os.path.exists(f):
+            os.remove(f)
+
+    delete_if_exists("pid")
+    delete_if_exists("slurm_job_id")
 
 
 def env_from_sourcing(env_file):
@@ -709,6 +713,7 @@ def _launch_task(task_func, wait_for_completion):
             logger.debug("task func started")
             task_func()
             logger.info("task completed")
+            _delete_pid_and_slurm_job_id()
         except Exception as ex:
             logger.exception(ex)
         finally:
