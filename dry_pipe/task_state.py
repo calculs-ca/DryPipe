@@ -626,13 +626,13 @@ def tail(filename, lines=20, line_limit=1000):
 
     with PortablePopen(cmd.split(" ")) as p:
         p.wait_and_raise_if_non_zero()
+
         def read():
-            for l in p.popen.stdout.readlines():
-                l = l.decode("utf8")
-                if len(l) <= line_limit:
-                    yield l
+            for line in p.read_stdout_lines():
+                if len(line) <= line_limit:
+                    yield line
                 else:
-                    yield f"{l[0:line_limit]}...(line was truncated as it's length exceeded {line_limit} chars)\n"
+                    yield f"{line[0:line_limit]}...(line was truncated as it's length exceeded {line_limit} chars)\n"
 
         return "".join(read())
 
