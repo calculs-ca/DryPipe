@@ -174,7 +174,13 @@ def _pipeline_instance_creater(instance_dir, module_func_pipeline, env_vars):
 @click.command()
 @click.option('-p', '--pipeline', help="a_module:a_func, a function that returns a pipeline.")
 @click.option('--instance-dir', type=click.Path(), default=None)
-def mon(pipeline, instance_dir):
+@click.option(
+    '--group-by', type=click.STRING, default="by_task_type",
+    help="""
+    name of grouper in Drypipe.create_pipeline(...,task_groupers={'my_custom_grouper': group_func})
+    """
+)
+def mon(pipeline, instance_dir, group_by):
 
     from dry_pipe.cli_screen import CliScreen
 
@@ -188,8 +194,30 @@ def mon(pipeline, instance_dir):
 
     #pipeline_instance = _pipeline_instance_creater(instance_dir, pipeline)()
 
-    screen_state = CliScreen(instance_dir, is_monitor_mode=True)
-    screen_state.start()
+    def _quit_listener(cli_screen):
+        logger.debug("quit listener")
+        logging.shutdown()
+        cli_screen.cleanup_tty()
+        os._exit(0)
+
+    cli_screen = CliScreen(
+        instance_dir,
+        None,
+        is_monitor_mode=True,
+        quit_listener=_quit_listener,
+        group_by=group_by
+    )
+
+    cli_screen.start()
+    def _sigint(p1, p2):
+        logger.info("received SIGINT")
+        cli_screen.request_quit()
+
+    signal.signal(signal.SIGINT, _sigint)
+    signal.pause()
+
+    logging.shutdown()
+    exit(0)
 
 
 @click.command()
