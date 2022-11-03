@@ -596,26 +596,6 @@ class TaskState:
             'snapshot_time': snapshot_time
         }
 
-def tail_z(filename, n):
-
-    try :
-        """Returns last n lines from the filename. No exception handling"""
-        size = os.path.getsize(filename)
-        with open(filename, "rb") as f:
-            # for Windows the mmap parameters are different
-            fm = mmap.mmap(f.fileno(), 0, mmap.MAP_SHARED, mmap.PROT_READ)
-            try:
-                for i in range(size - 1, -1, -1):
-                    if fm[i] == '\n':
-                        n -= 1
-                        if n == -1:
-                            break
-                return fm[i + 1 if i else 0:].splitlines()
-            finally:
-                fm.close()
-    except OSError as e:
-        return None
-
 
 def tail(filename, lines=20, line_limit=1000):
 
@@ -635,31 +615,3 @@ def tail(filename, lines=20, line_limit=1000):
                     yield f"{line[0:line_limit]}...(line was truncated as it's length exceeded {line_limit} chars)\n"
 
         return "".join(read())
-
-
-def tail_(filename, lines=20):
-    with open(filename, "rb") as f:
-        total_lines_wanted = lines
-
-        BLOCK_SIZE = 1024
-        f.seek(0, 2)
-        block_end_byte = f.tell()
-        lines_to_go = total_lines_wanted
-        block_number = -1
-        blocks = []
-        while lines_to_go > 0 and block_end_byte > 0:
-            if (block_end_byte - BLOCK_SIZE > 0):
-                f.seek(block_number*BLOCK_SIZE, 2)
-                blocks.append(f.read(BLOCK_SIZE))
-            else:
-                f.seek(0,0)
-                blocks.append(f.read(block_end_byte))
-            lines_found = blocks[-1].count(b'\n')
-            lines_to_go -= lines_found
-            block_end_byte -= BLOCK_SIZE
-            block_number -= 1
-        all_read_text = b''.join(reversed(blocks))
-        return [
-            l.decode("utf-8")
-            for l in all_read_text.splitlines()[-total_lines_wanted:]
-        ]
