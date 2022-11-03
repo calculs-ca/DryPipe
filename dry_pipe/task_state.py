@@ -619,6 +619,9 @@ def tail_z(filename, n):
 
 def tail(filename, lines=20, line_limit=1000):
 
+    if not os.path.exists(filename):
+        return ""
+
     cmd = f"tail -{lines} {filename}"
 
     with PortablePopen(cmd.split(" ")) as p:
