@@ -8,7 +8,7 @@ from datetime import datetime
 from itertools import groupby
 
 from dry_pipe.actions import TaskAction
-from dry_pipe.script_lib import parse_in_out_meta, PortablePopen
+from dry_pipe.script_lib import parse_in_out_meta, PortablePopen, load_pid, load_slurm_job_id
 
 """
 
@@ -289,6 +289,12 @@ class TaskState:
 
     def __repr__(self):
         return self.base_file_name()
+
+    def pid(self):
+        return load_pid(self.control_dir())
+
+    def slurm_job_id(self):
+        return load_slurm_job_id(self.control_dir())
 
     def gen_meta_dict(self):
         task_env = os.path.join(self.control_dir(), "task-env.sh")

@@ -9,6 +9,7 @@ import logging
 import logging.config
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
+from functools import reduce
 from itertools import groupby
 from pathlib import Path
 from threading import Thread
@@ -72,6 +73,10 @@ class PortablePopen:
 
     def stdout_as_string(self):
         return self.popen.stdout.read().decode("utf8")
+
+    def read_stdout_lines(self):
+        for line in self.popen.stdout.readlines():
+            yield line.decode("utf8")
 
     def safe_stderr_as_string(self):
         try:
@@ -234,7 +239,20 @@ def _terminate_descendants_and_exit(p1, p2):
     except Exception as ex:
         logger.exception(ex)
     finally:
-        _exit_process()
+        try:
+            sloc = os.environ["__script_location"]
+
+            def delete_if_exists(f):
+                f = os.path.join(sloc, f)
+                if os.path.exists(f):
+                    os.remove(f)
+
+            delete_if_exists("pid")
+            delete_if_exists("slurm_job_id")
+        except Exception as ex:
+            logger.exception(ex)
+        finally:
+            _exit_process()
 
 
 def env_from_sourcing(env_file):
@@ -553,11 +571,12 @@ def launch_task_from_remote(task_key, is_slurm, wait_for_completion, drypipe_tas
 
 
 def handle_main(task_func):
-
+    is_kill_command = "kill" in sys.argv
     is_tail_command = "tail" in sys.argv
     wait_for_completion = "--wait" in sys.argv
+    is_ps_command = "ps" in sys.argv
 
-    is_run_command = not is_tail_command
+    is_run_command = not (is_tail_command or is_ps_command or is_kill_command)
 
     if is_run_command:
         _launch_task(task_func, wait_for_completion)
@@ -571,6 +590,101 @@ def handle_main(task_func):
 
         if is_tail_command:
             _tail_command()
+        elif is_ps_command:
+            _ps_command()
+        elif is_kill_command:
+            _kill_command()
+        else:
+            raise Exception(f"bad args: {sys.argv}")
+
+
+def _load_pid_or_job_id(control_dir, pid_or_job_id):
+    pid_file = os.path.join(control_dir, pid_or_job_id)
+    if not os.path.exists(pid_file):
+        return None
+    else:
+        with open(pid_file) as f:
+            return int(f.read())
+
+
+def load_pid(control_dir):
+    return _load_pid_or_job_id(control_dir, "pid")
+
+
+def load_slurm_job_id(control_dir):
+    return _load_pid_or_job_id(control_dir, "slurm_job_id")
+
+
+def print_pid_not_found(sloc):
+    print(f"file {os.path.join(sloc, 'pid')} not found, task not running")
+
+
+def _kill_command():
+    sloc = os.environ["__script_location"]
+    pid = load_pid(sloc)
+    if pid is None:
+        print_pid_not_found(sloc)
+    else:
+        os.kill(pid, signal.SIGTERM)
+
+
+def _ps_command(pid=None):
+
+    if pid is None:
+        sloc = os.environ["__script_location"]
+        pid = load_pid(sloc)
+        if pid is None:
+            print_pid_not_found(sloc)
+            return
+
+    header, row = list(ps_resources(pid))
+
+    sys.stdout.write("\t".join(header))
+    sys.stdout.write("\n")
+    sys.stdout.write("\t".join(str(v) for v in row))
+    sys.stdout.write("\n")
+
+
+def sizeof_fmt(num, suffix="B"):
+    for unit in ["", "Ki", "Mi", "Gi", "Ti", "Pi", "Ei", "Zi"]:
+        if abs(num) < 1024.0:
+            return f"{num:3.1f}{unit}{suffix}"
+        num /= 1024.0
+    return f"{num:.1f}Yi{suffix}"
+
+
+def ps_resources(pid):
+
+    ps_format = "size,%mem,%cpu,rss,rsz,etimes"
+
+    def parse_ps_line(r):
+        size, pmem, pcpu, rss, rsz, etimes = r.split()
+        return int(size), float(pmem), float(pcpu), int(rss), int(rsz), int(etimes)
+
+    with PortablePopen(["ps", f"--pid={pid}", f"--ppid={pid}", "o", ps_format, "--no-header"]) as p:
+        p.wait_and_raise_if_non_zero()
+
+        def f(t1, t2):
+            size1, pmem1, pcpu1, rss1, rsz1, etimes1 = t1
+            size2, pmem2, pcpu2, rss2, rsz2, etimes2 = t2
+            return (
+               size1 + size2,
+               pmem1 + pmem2,
+               pcpu1 + pcpu2,
+               rss1 + rss2,
+               rsz1 + rsz2,
+               max(etimes1, etimes2)
+            )
+
+        yield ps_format.split(",")
+
+        out = p.stdout_as_string().strip()
+        if out != "":
+            yield list(reduce(
+                f,
+                [parse_ps_line(line) for line in out.split("\n")],
+                (0, 0, 0, 0, 0, 0)
+            ))
 
 
 def _tail_command():
@@ -607,15 +721,15 @@ def _launch_task(task_func, wait_for_completion):
         if (not is_slurm) and os.fork() != 0:
             exit(0)
         else:
+            sloc = os.environ['__script_location']
             if is_slurm:
                 slurm_job_id = os.environ.get("SLURM_JOB_ID")
                 logger.info("slurm job started, slurm_job_id=%s", slurm_job_id)
+                with open(os.path.join(sloc, "slurm_job_id"), "w") as f:
+                    f.write(str(os.getpid()))
             else:
-                kill_script = os.path.join(os.environ['__script_location'], "terminate")
-                with open(kill_script, "w") as f:
-                    f.write("#!/bin/sh\n")
-                    f.write(f"kill -{signal.SIGTERM} {os.getpid()}\n")
-                os.chmod(kill_script, 0o764)
+                with open(os.path.join(sloc, "pid"), "w") as f:
+                    f.write(str(os.getpid()))
 
             os.setpgrp()
             register_signal_handlers()
@@ -644,11 +758,11 @@ def gen_input_var_exports(out=sys.stdout, env=os.environ):
         if producing_task_key == "":
             continue
 
-        #control_dir = os.path.join(pipeline_instance_dir, ".drypipe", producing_task_key)
+        # control_dir = os.path.join(pipeline_instance_dir, ".drypipe", producing_task_key)
 
-        #step_number, control_dir, state_file, state_name = read_task_state(control_dir, no_state_file_ok=True)
+        # step_number, control_dir, state_file, state_name = read_task_state(control_dir, no_state_file_ok=True)
 
-        #if not state_name == "completed":
+        # if not state_name == "completed":
         #    print(f"export __non_completed_dependent_task={producing_task_key}", file=out)
         #    return
 

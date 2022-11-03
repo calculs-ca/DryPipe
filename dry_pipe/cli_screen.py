@@ -16,10 +16,12 @@ from rich.live import Live
 from rich.table import Table
 from rich.layout import Layout
 from rich.align import Align
+from rich import box
 
 
 from dry_pipe.monitoring import PipelineMetricsTable, fetch_task_group_metrics
 from dry_pipe.pipeline import PipelineInstance, Pipeline
+from dry_pipe.script_lib import ps_resources
 from dry_pipe.task_state import TaskState
 
 logger = logging.getLogger(__name__)
@@ -39,8 +41,12 @@ class CliScreen:
         self.loop_counter = 0
         self.rich_live_auto_refresh = True
         self.quit_listener = quit_listener
-        self.stdin_fd = sys.stdin.fileno()
-        self.old_tty_settings = termios.tcgetattr(self.stdin_fd)
+
+        stdin_fd = sys.stdin.fileno()
+        old_tty_settings = termios.tcgetattr(stdin_fd)
+
+        self.cleanup_tty = lambda:\
+            termios.tcsetattr(stdin_fd, termios.TCSADRAIN, old_tty_settings)
 
         self.queue = LifoQueue(maxsize=2)
 
@@ -111,9 +117,6 @@ class CliScreen:
 
     def cancel_prompt(self):
         self.prompt = None
-
-    def cleanup_tty(self):
-        termios.tcsetattr(self.stdin_fd, termios.TCSADRAIN, self.old_tty_settings)
 
     def start(self):
         def refresher():
@@ -234,6 +237,7 @@ class TaskView:
         self.task_state = TaskState.from_task_control_dir(
             self.cli_screen.pipeline_instance_dir, self.task_key
         )
+        self.task_resources_view = TaskResourcesView(self.task_state)
 
     def refresh(self, live, layout, msg=None):
         if msg == "left":
@@ -254,16 +258,40 @@ class TaskView:
 
             history_line = " -> ".join(g())
 
+            def task_attr(v):
+                return f"[cyan1]{v}[/]"
+
+            task_title = f"Task(key={task_attr(self.task_key)}, state={task_attr(self.task_state.state_name)}"
+
+            if self.task_resources_view.pid is not None:
+                task_title += f", pid={task_attr(self.task_resources_view.pid)})"
+            elif self.task_resources_view.slurm_job_id is not None:
+                task_title += f", slurm_job_id={task_attr(self.task_resources_view.slurm_job_id)})"
+            else:
+                task_title += ")"
+
+            layout["header3"].update(Align(task_title, align="center"))
+
             layout["header4"].update(Text(f"History[{history_line}]"))
 
-            layout["header3"].update(Align(f"Task(key=[cyan1]{self.task_key}[/])", align="center"))
-            l = Layout()
-            l.split_row(
-                Layout(Panel(Text(out, style="green"), title="tail -f out.log"), name="out"),
-                Layout(Panel(Text(err, style="red"), title="tail -f err.log"), name="err"),
-                Layout(Panel(Text(log, style="blue"), title="tail -f drypipe.log"), name="task")
+            task_ctrl_layout = Layout()
+            task_ctrl_layout.split_column(
+                Text("r: restart"),
+                Text("k: kill (SIGTERM)"),
             )
-            layout["body"].update(l)
+
+            layout3 = Layout()
+            layout3.split_column(
+                self.task_resources_view.render(),
+                Panel(Text(log, style="blue"), title="drypipe janitor log(tail -f drypipe.log)")
+            )
+            main_layout = Layout()
+            main_layout.split_row(
+                Panel(Text(out, style="green"), title="tail -f out.log"),
+                Panel(Text(err, style="red"), title="tail -f err.log"),
+                layout3
+            )
+            layout["body"].update(main_layout)
             live.update(Panel(layout, border_style="blue"), refresh=True)
 
     def reload(self):
@@ -272,6 +300,43 @@ class TaskView:
         )
         out, err, log = self.task_state.tail_out_err_drypipe()
         self.data = [out, err, log]
+        self.task_resources_view.reload()
+
+
+class TaskResourcesView:
+
+    def __init__(self, task_state):
+        self.task_state = task_state
+        self.pid = None
+        self.slurm_job_id = None
+        self.task_ps_resources = None
+
+    def reload(self):
+        self.pid = self.task_state.pid()
+        if self.pid is not None:
+            self.task_ps_resources = list(ps_resources(self.pid))
+        else:
+            self.slurm_job_id = self.task_state.slurm_job_id()
+            if self.slurm_job_id is not None:
+                self.task_ps_resources = [["na"], ["na"]]
+            else:
+                self.task_ps_resources = None
+
+    def render(self):
+        if self.task_ps_resources is None:
+            return Panel(Text("Task Not Running"))
+        else:
+            resource_headers, resource_values = self.task_ps_resources
+            resource_table = Table(
+                show_header=True,
+                header_style="none",
+                expand=True,
+                box=box.ROUNDED
+            )
+            for h in resource_headers:
+                resource_table.add_column(h, style="bold")
+            resource_table.add_row(*[str(v) for v in resource_values], style="green1")
+            return resource_table
 
 
 class FailedTaskList:
