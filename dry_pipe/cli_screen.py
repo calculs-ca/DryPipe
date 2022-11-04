@@ -314,7 +314,11 @@ class TaskResourcesView:
     def reload(self):
         self.pid = self.task_state.pid()
         if self.pid is not None:
-            self.task_ps_resources = list(ps_resources(self.pid))
+            r = ps_resources(self.pid)
+            if r is not None:
+                self.task_ps_resources = list(r)
+            else:
+                self.task_ps_resources = None
         else:
             self.slurm_job_id = self.task_state.slurm_job_id()
             if self.slurm_job_id is not None:

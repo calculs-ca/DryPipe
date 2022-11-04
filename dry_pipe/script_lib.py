@@ -147,6 +147,7 @@ def task_script_header():
 
 
 def _exit_process():
+    _delete_pid_and_slurm_job_id()
     logging.shutdown()
     os._exit(0)
 
@@ -239,24 +240,22 @@ def _terminate_descendants_and_exit(p1, p2):
     except Exception as ex:
         logger.exception(ex)
     finally:
-        try:
-            _delete_pid_and_slurm_job_id()
-        except Exception as ex:
-            logger.exception(ex)
-        finally:
-            _exit_process()
+        _exit_process()
 
 
 def _delete_pid_and_slurm_job_id():
-    sloc = os.environ["__script_location"]
+    try:
+        sloc = os.environ["__script_location"]
 
-    def delete_if_exists(f):
-        f = os.path.join(sloc, f)
-        if os.path.exists(f):
-            os.remove(f)
+        def delete_if_exists(f):
+            f = os.path.join(sloc, f)
+            if os.path.exists(f):
+                os.remove(f)
 
-    delete_if_exists("pid")
-    delete_if_exists("slurm_job_id")
+        delete_if_exists("pid")
+        delete_if_exists("slurm_job_id")
+    except Exception as ex:
+        logger.exception(ex)
 
 
 def env_from_sourcing(env_file):
@@ -666,7 +665,9 @@ def ps_resources(pid):
         return int(size), float(pmem), float(pcpu), int(rss), int(rsz), int(etimes)
 
     with PortablePopen(["ps", f"--pid={pid}", f"--ppid={pid}", "o", ps_format, "--no-header"]) as p:
-        p.wait_and_raise_if_non_zero()
+        p.wait()
+        if p.popen.returncode != 0:
+            return None
 
         def f(t1, t2):
             size1, pmem1, pcpu1, rss1, rsz1, etimes1 = t1
@@ -713,7 +714,6 @@ def _launch_task(task_func, wait_for_completion):
             logger.debug("task func started")
             task_func()
             logger.info("task completed")
-            _delete_pid_and_slurm_job_id()
         except Exception as ex:
             logger.exception(ex)
         finally:

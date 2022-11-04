@@ -182,6 +182,8 @@ def _pipeline_instance_creater(instance_dir, module_func_pipeline, env_vars):
 )
 def mon(pipeline, instance_dir, group_by):
 
+    _configure_logging(None)
+
     from dry_pipe.cli_screen import CliScreen
 
     if instance_dir is None:
