@@ -55,7 +55,23 @@ def _configure_logging(log_conf_file):
 
     if log_conf_file is not None:
         with open(log_conf_file) as f:
-            logging.config.dictConfig(json.loads(f.read()))
+            conf = json.loads(f.read())
+
+            handlers = conf["handlers"]
+
+            for k, handler in handlers.items():
+                handler_class = handler["class"]
+                if handler_class == "logging.FileHandler":
+                    filename = handler.get("filename")
+                    if filename is None:
+                        raise Exception(f"logging.FileHandler '{k}' has no filename attribute in {log_conf_file}")
+                    if "$" in handler["filename"]:
+                        raise Exception(
+                            f"filename attribute of '{k}': {filename} has undefined env variables, in {log_conf_file}"
+                        )
+                    handler["filename"] = os.path.expandvars(filename)
+
+            logging.config.dictConfig(conf)
         logger.info("using logging conf: %s", log_conf_file)
 
 
@@ -263,6 +279,9 @@ def run(
 
     if instance_dir is None:
         instance_dir = os.getcwd()
+
+    if not os.path.isabs(instance_dir):
+        instance_dir = os.path.abspath(os.path.expanduser(os.path.expandvars(instance_dir)))
 
     if PipelineState.from_pipeline_instance_dir(instance_dir, none_if_not_exists=True) is None:
         if not no_confirm:
