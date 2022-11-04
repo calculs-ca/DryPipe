@@ -105,6 +105,12 @@ class CliScreen:
                 self.queue.put("failed-screen")
             elif key == "s":
                 self.queue.put("summary-screen")
+            elif key == "r":
+                self.queue.put("restart")
+            elif key == "y":
+                self.queue.put("y")
+            elif key == "n":
+                self.queue.put("n")
         except Exception:
             logger.exception(f"failed on key command {key}")
             self.error_msg.append(traceback.format_exc())
@@ -228,6 +234,10 @@ class CliScreen:
         return layout
 
 
+def styled_prompt(question, choices, default):
+    return f"[cyan1]{question}[/] [purple]{','.join(choices)}[/] ({default}):"
+
+
 class TaskView:
 
     def __init__(self, prev_screen, task_key):
@@ -238,6 +248,8 @@ class TaskView:
             self.cli_screen.pipeline_instance_dir, self.task_key
         )
         self.task_resources_view = TaskResourcesView(self.task_state)
+        self.prompt_restart = False
+        self.restart_in_progress = False
 
     def refresh(self, live, layout, msg=None):
         if msg == "left":
@@ -245,6 +257,18 @@ class TaskView:
             self.cli_screen.screen.reload()
             self.cli_screen.screen.refresh(live, layout)
         else:
+            if self.prompt_restart:
+                if msg == "y":
+                    self.prompt_restart = False
+                    self.restart_in_progress = True
+                    self.task_state.transition_to_queued()
+                elif msg == "n":
+                    self.prompt_restart = False
+
+            if msg == "restart":
+                self.prompt_restart = True
+
+
             out, err, log = self.data
 
             def g():
@@ -272,7 +296,13 @@ class TaskView:
 
             layout["header3"].update(Align(task_title, align="center"))
 
-            layout["header4"].update(Text(f"History[{history_line}]"))
+            if self.prompt_restart:
+                layout["header4"].update(Align(styled_prompt("restart task ?", ["y", "n"], "y"), align="center"))
+            elif self.restart_in_progress:
+                layout["header4"].update(Align("...restarting"))
+                self.restart_in_progress = False
+            else:
+                layout["header4"].update(Text(f"History[{history_line}]"))
 
             task_ctrl_layout = Layout()
             task_ctrl_layout.split_column(
@@ -372,6 +402,9 @@ class FailedTaskList:
             self.cli_screen.screen.reload()
             self.cli_screen.screen.refresh(live, layout)
             return
+        elif msg == "restart":
+            #TODO
+            pass
 
         elif msg == "left":
             self.cli_screen.press("s")
