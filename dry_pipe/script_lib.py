@@ -640,7 +640,12 @@ def _ps_command(pid=None):
             print_pid_not_found(sloc)
             return
 
-    header, row = list(ps_resources(pid))
+    res = list(ps_resources(pid))
+
+    if len(res) == 0:
+        return
+
+    header, row = res
 
     sys.stdout.write("\t".join(header))
     sys.stdout.write("\n")
@@ -667,7 +672,7 @@ def ps_resources(pid):
     with PortablePopen(["ps", f"--pid={pid}", f"--ppid={pid}", "o", ps_format, "--no-header"]) as p:
         p.wait()
         if p.popen.returncode != 0:
-            return None
+            return iter([])
 
         def f(t1, t2):
             size1, pmem1, pcpu1, rss1, rsz1, etimes1 = t1
