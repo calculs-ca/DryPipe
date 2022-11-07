@@ -339,7 +339,7 @@ def _janitor_ng(pipeline_instance, wait_for_completion=False, fail_silently=Fals
             continue
         elif task_state.is_completed_unsigned():
             work_done += 1
-            task_state.transition_to_completed(Task.load_from_task_state(task_state))
+            task_state.transition_to_completed(task)
         else:
 
             if task_state.is_waiting_for_deps():
