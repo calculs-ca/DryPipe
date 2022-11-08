@@ -8,7 +8,7 @@
 #### 1 Install dry-pipe in your virtualenv
 
 ```shell
-    pyton3.8 -m venv your_venv 
+    pyton3 -m venv your_venv 
     source your_venv/bin/activate
     pip install dry-pipe
 ```
@@ -20,19 +20,26 @@
     from dry_pipe import DryPipe
     
     def my_pipeline_task_generator(dsl):
-        yield dsl.task(key="task1") 
+        task1 = dsl.task(key="task1") 
             .consumes(x=dsl.val(123)) 
-            .produces(result=dsl.file("f.txt"))
+            .produces(
+                result=dsl.file("f.txt"),
+                y=dsl.var(int)
+             )
             .calls("""
                 #!/usr/bin/env bash                
                 echo $x > $result
+                export y=4321
             """)
         
+        yield task1
+        
         yield dsl.task(key="task2") 
-            .consumes(a=dsl.val(456)) 
+            .consumes(a=dsl.val(456), v=task1.out.y) 
             .produces(z=dsl.var(int))
             .calls("""
                 #!/usr/bin/env bash
+                echo "got $v, and it's equal to 4321"
                 export z=432                
             """)
     def my_pipeline():
@@ -40,7 +47,7 @@
 ```
 
 #### 3 Run it
-(assuming the above code is in module my_module.py)
+(assuming the above code is in module my_module.py, and that my_module.py is in PYTHONPATH)
 ```shell
     drypipe run --pipeline='my_module:my_pipeline'
 ```
