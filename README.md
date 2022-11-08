@@ -19,6 +19,13 @@
 
     from dry_pipe import DryPipe
     
+    @DryPipe.python_call()
+    def my_python_task_func(a, v):
+        print(f"got {v}, and it's equal to 4321, and {a} is 456")
+        return {
+            "z": v * 2 + a
+        }
+    
     def my_pipeline_task_generator(dsl):
         task1 = dsl.task(key="task1") 
             .consumes(x=dsl.val(123)) 
@@ -37,11 +44,8 @@
         yield dsl.task(key="task2") 
             .consumes(a=dsl.val(456), v=task1.out.y) 
             .produces(z=dsl.var(int))
-            .calls("""
-                #!/usr/bin/env bash
-                echo "got $v, and it's equal to 4321"
-                export z=432                
-            """)
+            .calls(my_python_task_func)
+        
     def my_pipeline():
         return DryPipe.create_pipeline(my_pipeline_task_generator)
 ```
