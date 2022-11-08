@@ -133,10 +133,10 @@ def validate_pipeline_execution(pipeline_instance, test_case):
             report_task.output_signature()
         )
 
-    test_case.assertEqual(
-        "e31ead308b82c9ccbf67791517f1bb864bf29840",
-        python_much_fancier_report.output_signature()
-    )
+        test_case.assertEqual(
+            "e31ead308b82c9ccbf67791517f1bb864bf29840",
+            python_much_fancier_report.output_signature()
+        )
 
     test_case.assertEqual(
         "44a6b33b025d65f155ca1c3431b4478924de77eb",

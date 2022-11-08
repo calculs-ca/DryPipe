@@ -132,13 +132,9 @@ def pipeline_exerciser_func1(v1, f1, t1_out_f, test=None):
 @DryPipe.python_call()
 def pipeline_exerciser_func2(t1_out_v, t1_out_f, v2, f2, t2_out_f):
 
-    v2 = int(v2)
-
     _t1_out_f = load_int_from_file(t1_out_f)
 
     _f2 = load_int_from_file(f2)
-
-    t1_out_v = int(t1_out_v)
 
     with open(t2_out_f, "w") as f:
         f.write(str( + _t1_out_f))

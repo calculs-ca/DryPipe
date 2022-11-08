@@ -298,6 +298,16 @@ class Task:
                     ])
                 )
 
+        for name, val in self.vals.items():
+            yield (
+                f"__meta_{name}",
+                ":".join([
+                    val.type_str(),
+                    "",
+                    name
+                ])
+            )
+
         yield "END_META", "END_META"
 
     def get_env_vars(self, writer, collect_deps_and_outputs_func=None):

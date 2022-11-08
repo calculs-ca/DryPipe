@@ -12,14 +12,14 @@ def parse_and_compute_sum(series):
 @DryPipe.python_call()
 def multiply_by_x(x, n):
     return {
-        "result": int(n) * int(x)
+        "result": n * x
     }
 
 
 @DryPipe.python_call()
 def add_n(r, n):
     return {
-        "final_result": int(r) + int(n)
+        "final_result": r + n
     }
 
 

@@ -36,6 +36,7 @@ class Val:
         t = type(value)
         if t == int or t == str or t == float:
             self.value = value
+            self.typez = t
         elif t == type(int):
             raise ValidationError(f"invalid val type dsl.val(int), you probably want to use 'dsl.var(int)'")
         elif t == t == type(str):
@@ -44,6 +45,9 @@ class Val:
             raise ValidationError(f"invalid val type, dsl.var(float) you probably want to use 'dsl.var(float)'")
         else:
             raise ValidationError(f"invalid val type: {type(value)}, must be int, string, float")
+
+    def type_str(self):
+        return _type_str(self.typez)
 
     def to_hash(self):
         return str(self.value)
@@ -63,6 +67,15 @@ class IncompleteVar:
         self.may_be_none = may_be_none
 
 
+def _type_str(t):
+    if t == int:
+        return "int"
+    elif t == str:
+        return "str"
+    elif t == float:
+        return "float"
+
+
 class OutputVar:
 
     def __init__(self, type, may_be_none, name, producing_task):
@@ -72,7 +85,7 @@ class OutputVar:
         if type not in supported:
             raise ValidationError(
                 f"var {name} in {producing_task} has invalid type. Supported types are: " +
-                ', '.join([OutputVar._type_str(t) for t in supported])
+                ', '.join([_type_str(t) for t in supported])
             )
 
         self.name = name
@@ -80,17 +93,8 @@ class OutputVar:
         self.producing_task = producing_task
         self.may_be_none = may_be_none
 
-    @staticmethod
-    def _type_str(t):
-        if t == int:
-            return "int"
-        elif t == str:
-            return "str"
-        elif t == float:
-            return "float"
-
     def type_str(self):
-        return OutputVar._type_str(self.type)
+        return _type_str(self.type)
 
     def format_for_python(self, v):
 

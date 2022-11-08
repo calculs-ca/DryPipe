@@ -38,16 +38,17 @@ def pipeline_consuming_upstream_vars_with_same_name(dsl):
 @DryPipe.python_call()
 def produce_a(v):
     return {
-        "a": int(v)
+        "a": v
     }
+
 
 @DryPipe.python_call()
 def validate_output_from_t1_and_t2(a_t1, a_t2):
 
-    if int(a_t1) != 1:
+    if a_t1 != 1:
         raise Exception(f"expected 1, got {a_t1}")
 
-    if int(a_t2) != 2:
+    if a_t2 != 2:
         raise Exception(f"expected 2, got {a_t2}")
 
 

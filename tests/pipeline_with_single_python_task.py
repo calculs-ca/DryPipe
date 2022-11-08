@@ -5,7 +5,7 @@ from dry_pipe import DryPipe
 @DryPipe.python_call()
 def multiply_by_x(x, y):
     return {
-        "result": int(x) * int(y)
+        "result": x * y
     }
 
 

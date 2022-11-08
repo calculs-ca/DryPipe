@@ -19,7 +19,7 @@ from dry_pipe.janitors import Janitor
 from dry_pipe.monitoring import fetch_task_groups_stats
 from dry_pipe.pipeline import PipelineInstance, Pipeline
 from dry_pipe.pipeline_state import PipelineState
-from dry_pipe.script_lib import env_from_sourcing
+from dry_pipe.script_lib import env_from_sourcing, parse_in_out_meta
 from dry_pipe.task_state import NON_TERMINAL_STATES
 
 logger = logging.getLogger(__name__)
@@ -608,9 +608,37 @@ def call(ctx, mod_func, task_env):
         # or if pipeline provided --task=key
         env = env_from_sourcing(task_env)
 
-    #TODO: Validate missing args
+    var_type_dict = {}
+
+    for producing_task_key, var_metas, file_metas in parse_in_out_meta({
+        k: v
+        for k, v in env.items()
+        if k.startswith("__meta_")
+    }):
+        #if producing_task_key != "":
+        #    continue
+
+        for var_meta in var_metas:
+            name_in_producing_task, var_name, typez = var_meta
+            var_type_dict[var_name] = typez
+
+    def get_and_parse_arg(k):
+        # TODO: Validate missing args
+        v = env.get(k)
+        if v is None:
+            return v
+        typez = var_type_dict.get(k)
+        if typez == "int":
+            return int(v)
+        elif typez == "str":
+            return v
+        elif typez == "float":
+            return float(v)
+
+        return v
+
     args = [
-        env.get(k)
+        get_and_parse_arg(k)
         for k, v in python_task.signature.parameters.items()
     ]
 

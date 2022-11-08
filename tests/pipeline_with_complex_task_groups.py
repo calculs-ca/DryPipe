@@ -18,7 +18,7 @@ def pipeline():
 @DryPipe.python_call()
 def mult_by_2(n):
     return {
-        "n2": int(n) * 2
+        "n2": n * 2
     }
 
 

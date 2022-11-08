@@ -14,6 +14,10 @@ class SingleTaskPipelinesTests(unittest.TestCase):
     def _validate(self, pipeline_instance):
         multiply_x_by_y_task = pipeline_instance.tasks["multiply_x_by_y"]
 
+        task_state = multiply_x_by_y_task.get_state()
+
+        self.assertTrue(task_state.is_completed())
+
         self.assertEqual(multiply_x_by_y_task.out.result.fetch(), 15)
 
     def test_single_python_task_pipeline(self):
