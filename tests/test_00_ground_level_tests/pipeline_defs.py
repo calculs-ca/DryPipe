@@ -2,7 +2,7 @@ import os
 import pathlib
 import shutil
 
-from dry_pipe import DryPipe, cli
+from dry_pipe import DryPipe
 
 
 def single_task_pipeline(dsl):
@@ -35,7 +35,7 @@ def single_task_pipeline_with_inline_script(dsl):
              message                    
         cat $fasta_file > $inflated_output            
         cat $fasta_file >> $inflated_output            
-        echo "huge_variable=123" >> $__output_var_file                
+        export huge_variable=123                
     """)()
 
 

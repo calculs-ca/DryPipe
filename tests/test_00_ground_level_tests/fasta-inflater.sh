@@ -9,4 +9,4 @@ cat $fasta_file > $inflated_output
 
 cat $fasta_file >> $inflated_output
 
-echo "huge_variable=123" >> $__output_var_file
+export huge_variable=123

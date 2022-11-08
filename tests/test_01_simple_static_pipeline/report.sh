@@ -14,8 +14,8 @@ echo "v2_for_validation:$v2_from_blast" >> $var_dump
 echo "t1"
 echo "Ultra fancy report" > $fancy_report
 
-echo "x=9876" > $__output_var_file
-echo "s1='abc'" >> $__output_var_file
+export x=9876
+export s1='abc'
 
 # export s2=... not exporting, since may_be_none:  s2=dp.Var(type=str, may_be_none=True)
 

@@ -11,9 +11,9 @@ from dry_pipe.script_lib import task_script_header, touch, PortablePopen
 from test_utils import TestSandboxDir
 
 
-def _run_script(script, send_signal=None):
+def _run_script(script, send_signal=None, env=None):
 
-    with PortablePopen([script, "--is-silent"]) as p:
+    with PortablePopen([script, "--is-silent", "--wait"], env=env) as p:
 
         if send_signal is not None:
             send_signal(p)
@@ -87,51 +87,6 @@ class ScriptLibTests(unittest.TestCase):
         touch(state_file)
 
         return control_dir, task_script
-
-    def test_bash_run_no_fail(self):
-        d = TestSandboxDir(self)
-        script_code = textwrap.dedent("""
-            #!/usr/bin/env bash
-            echo "the end"
-            echo "err123" >&2
-        """).strip()
-
-        control_dir, task_script = self._single_step_bash_template(d, script_code)
-
-        return_code, out, err = _run_script(task_script)
-
-        if return_code != 0:
-            raise Exception(f"task failed: {out}, {err}")
-
-        out, err = self._out_err_content(control_dir)
-
-        self.assertEqual(out, "the end\n")
-        self.assertEqual(err, "err123\n")
-
-        step_number, control_dir, state_file, state_name = script_lib.read_task_state(control_dir)
-
-        self.assertEqual(step_number, 0)
-        self.assertEqual(os.path.basename(state_file), "state.step-completed.0")
-
-    def test_file_sign(self):
-        d = TestSandboxDir(self)
-        script_code = textwrap.dedent("""
-            #!/usr/bin/env bash
-            echo "a" > $__work_dir/a.txt
-            echo "b" > $__work_dir/b.txt
-        """).strip()
-
-        control_dir, task_script = self._single_step_bash_template(d, script_code)
-
-        return_code, out, err = _run_script(task_script)
-
-        if return_code != 0:
-            raise Exception(f"task failed: {out}, {err}")
-
-        with open(os.path.join(control_dir, "out_sigs", "a.txt.sig")) as a:
-            sig, f = a.readline().split()
-            self.assertEqual(sig, "3f786850e387550fdab836ed7e6dc881de23001b")
-            self.assertTrue(f.endswith("publish/task0/a.txt"))
 
     def test_bash_fail(self):
         d = TestSandboxDir(self)

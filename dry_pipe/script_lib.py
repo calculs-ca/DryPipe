@@ -460,18 +460,19 @@ def run_script(script, container=None):
 
     env = {**os.environ}
 
-    if container is None:
-        logger.debug("run_script %s", script)
-        cmd = [script]
-    else:
+    dump_env = f'python3 -c "import os, json; print(json.dumps(dict(os.environ)))"'
+    out = os.environ['__out_log']
+    err = os.environ['__err_log']
+
+    cmd = ["bash", "-c", f". {script} 1> {out} 2> {err} && {dump_env}"]
+
+    if container is not None:
         container_full_path = os.path.join(os.environ['__containers_dir'], container)
-        logger.debug("run_script %s in container %s", script, container_full_path)
         cmd = [
             "singularity",
             "exec",
             container_full_path,
-            script
-        ]
+        ] + cmd
 
         singularity_bindings = []
 
@@ -497,27 +498,39 @@ def run_script(script, container=None):
 
             env["SINGULARITY_BIND"] = f"{bindings_prefix}{','.join(singularity_bindings)}"
 
-    logger.info("run_script: %s", ' '.join(cmd))
+    logger.info("run_script: %s", cmd)
+
     has_failed = False
-    with open(os.environ['__out_log'], 'a') as out:
-        with open(os.environ['__err_log'], 'a') as err:
-            with PortablePopen(
-                cmd,
-                stdout=out, stderr=err,
-                env=env
-            ) as p:
-                try:
-                    p.wait()
-                    has_failed = p.popen.returncode != 0
-                except Exception as ex:
-                    logger.exception(ex)
-                    has_failed = True
-                finally:
-                    if has_failed:
-                        step_number, control_dir, state_file, state_name = read_task_state()
-                        _transition_state_file(state_file, "failed", step_number)
-    if has_failed:
-        _exit_process()
+    try:
+
+        with PortablePopen(cmd, env=env) as p:
+            p.wait_and_raise_if_non_zero()
+            out = p.stdout_as_string()
+            output_vars = json.loads(out)
+
+            with open(os.environ["__output_var_file"], "a") as out_vars:
+
+                for producing_task_key, var_metas, file_metas in parse_in_out_meta({
+                    k: v
+                    for k, v in os.environ.items()
+                    if k.startswith("__meta_")
+                }):
+                    if producing_task_key != "":
+                        continue
+
+                    for var_meta in var_metas:
+
+                        name_in_producing_task, var_name, typez = var_meta
+                        out_vars.write(f"{var_name}={output_vars.get(var_name)}\n")
+
+    except Exception as ex:
+        logger.exception(ex)
+        has_failed = True
+    finally:
+        if has_failed:
+            step_number, control_dir, state_file, state_name = read_task_state()
+            _transition_state_file(state_file, "failed", step_number)
+            _exit_process()
 
 
 def launch_task_from_remote(task_key, is_slurm, wait_for_completion, drypipe_task_debug):

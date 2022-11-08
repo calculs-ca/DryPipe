@@ -7,8 +7,8 @@ def pipeline(dsl):
         v=dsl.var(int)
     ).calls(
         """
-        #!/usr/bin/bash        
-        echo "v=1234" > $__output_var_file        
+        #!/usr/bin/bash                
+        export v=1234        
         """
     )()
 
@@ -23,8 +23,8 @@ def pipeline(dsl):
     ).calls(
         """
         #!/usr/bin/bash
-        echo "static_result=abc" > $__output_var_file        
-        echo "result=$((v * 2))" > $__output_var_file
+        export static_result=abc
+        export result=$((v * 2))
         """
     )()
 

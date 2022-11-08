@@ -8,8 +8,8 @@ else
   echo >&2 echo "not good, dummy_env_var not set"
 fi
 
-echo "v1=1111" >  $__output_var_file
-echo "v2=3.14" >> $__output_var_file
+export v1=1111
+export v2="3.14"
 
 echo "fake blast"
 
