@@ -46,6 +46,11 @@ class TestSandboxDir:
 
         pathlib.Path(self.sandbox_dir).mkdir(parents=True, exist_ok=False)
 
+    def create_subdir(self, d):
+        res = os.path.join(self.sandbox_dir, d)
+        pathlib.Path(res).mkdir(parents=False, exist_ok=False)
+        return res
+
     def pipeline_instance(self, template_pipeline):
         return template_pipeline.create_pipeline_instance(
             pipeline_instance_dir=self.sandbox_dir

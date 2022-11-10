@@ -16,7 +16,7 @@
         "class": "logging.FileHandler",
         "level": "DEBUG",
         "formatter": "simple",
-        "filename": "$logzzozo"
+        "filename": "./cli-debug.log"
     }
   },
   "root": {

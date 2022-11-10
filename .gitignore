@@ -22,3 +22,6 @@ tests/containers/*.sif
 /tests/sandboxes/bak/todo.md
 /tests/sandboxes/
 /dry_pipe/ui
+
+
+*.log

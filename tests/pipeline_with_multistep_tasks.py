@@ -1,8 +1,8 @@
 
-from dry_pipe import DryPipe, cli
+from dry_pipe import DryPipe
 
 
-def three_steps_pipeline(dsl):
+def three_steps_pipeline_task_generator(dsl):
 
     three_phase_task = dsl.task(
         key="three_phase_task"
@@ -38,6 +38,10 @@ def three_steps_pipeline(dsl):
     yield three_phase_task
 
 
+def three_steps_pipeline_expected_output():
+    return "s1\ns2\ns3\n"
+
+
 @DryPipe.python_call()
 def step2_in_python(out_file):
     with open(out_file, "a") as f:
@@ -49,7 +53,7 @@ def step4_in_python(out_file):
         f.write("s4\n")
 
 
-def hybrid_bash_python_mutlistep_pipeline(dsl):
+def hybrid_bash_python_mutlistep_pipeline_task_generator(dsl):
 
     three_phase_task = dsl.task(
         key="three_phase_task"
@@ -86,4 +90,4 @@ def hybrid_bash_python_mutlistep_pipeline(dsl):
 
 
 def pipeline():
-    return DryPipe.create_pipeline(three_steps_pipeline)
+    return DryPipe.create_pipeline(three_steps_pipeline_task_generator)

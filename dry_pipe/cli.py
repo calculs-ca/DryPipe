@@ -10,7 +10,6 @@ import signal
 import sys
 import os
 import traceback
-from threading import Thread
 
 import click
 from dry_pipe import DryPipe
@@ -462,22 +461,30 @@ def requeue_single(pipeline, single):
 
 @click.command()
 @click.pass_context
-@click.option('-p', '--pipeline', help="a_module:a_func, a function that returns a pipeline.")
+@click.option(
+    '--instances-dir-to-pipelines',
+    type=click.STRING,
+    required=True,
+    help="""
+    dir1=module1:func1,...,dirN=moduleN:funcN    
+      + moduleX:funcX is a function that returns a dry_pipe.Pipeline    
+      + dirX is the parent directory where all pipeline_instance_dirs of PipelineX will reside  
+    """
+)
 @click.option('--env', type=click.STRING, default=None)
-@click.option('--instances-dir', type=click.STRING)
-def watch(ctx, pipeline, env, instances_dir):
+def watch(ctx, instances_dir_to_pipelines, env):
 
-    if instances_dir is None:
-        raise Exception(
-            f"serve-multi requires mandatory option --instances-dir=<directory of pipeline instances>"
-        )
+    def g():
+        for instances_dir, mod_func in instances_dir_to_pipelines.split(","):
 
-    pipeline = Pipeline.load_from_module_func(pipeline)
+            if not os.path.exists(instances_dir):
+                pathlib.Path(instances_dir).mkdir(parents=True)
 
-    if not os.path.exists(instances_dir):
-        pathlib.Path(instances_dir).mkdir(parents=True)
+            pipeline = Pipeline.load_from_module_func(mod_func)
+            pipeline.env_vars = env
+            yield instances_dir, pipeline
 
-    janitor = Janitor(pipeline, pipeline_instances_dir=instances_dir)
+    janitor = Janitor(pipeline_instances_iterator=dict(g()))
 
     thread = janitor.start()
 

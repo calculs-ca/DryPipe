@@ -11,15 +11,6 @@ from test_utils import TestSandboxDir
 
 class SingleTaskPipelinesTests(unittest.TestCase):
 
-    def _validate(self, pipeline_instance):
-        multiply_x_by_y_task = pipeline_instance.tasks["multiply_x_by_y"]
-
-        task_state = multiply_x_by_y_task.get_state()
-
-        self.assertTrue(task_state.is_completed())
-
-        self.assertEqual(multiply_x_by_y_task.out.result.fetch(), 15)
-
     def test_single_python_task_pipeline(self):
 
         d = TestSandboxDir(self)
@@ -29,7 +20,7 @@ class SingleTaskPipelinesTests(unittest.TestCase):
             completed=True
         )
 
-        self._validate(pipeline_instance)
+        pipeline_with_single_python_task.validate_single_task_pipeline(pipeline_instance)
 
     def test_single_python_task_pipeline_with_container(self):
 
@@ -44,7 +35,7 @@ class SingleTaskPipelinesTests(unittest.TestCase):
             completed=True
         )
 
-        self._validate(pipeline_instance)
+        pipeline_with_single_python_task.validate_single_task_pipeline(pipeline_instance)
 
     def test_single_bash_task_pipeline(self):
 
@@ -55,7 +46,7 @@ class SingleTaskPipelinesTests(unittest.TestCase):
             completed=True
         )
 
-        self._validate(pipeline_instance)
+        pipeline_with_single_python_task.validate_single_task_pipeline(pipeline_instance)
 
     def test_single_bash_task_pipeline_with_container(self):
 
@@ -70,7 +61,7 @@ class SingleTaskPipelinesTests(unittest.TestCase):
             completed=True
         )
 
-        self._validate(pipeline_instance)
+        pipeline_with_single_python_task.validate_single_task_pipeline(pipeline_instance)
 
 
 class MinimalistPipelinesTests(unittest.TestCase):

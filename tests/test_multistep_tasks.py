@@ -4,7 +4,8 @@ import os
 import test_helpers
 from dry_pipe import TaskConf
 
-from tests.pipeline_with_multistep_tasks import three_steps_pipeline, hybrid_bash_python_mutlistep_pipeline
+from tests.pipeline_with_multistep_tasks import three_steps_pipeline_task_generator, \
+    hybrid_bash_python_mutlistep_pipeline_task_generator, three_steps_pipeline_expected_output
 from test_utils import TestSandboxDir
 
 
@@ -15,7 +16,7 @@ class MultipstepTaskTests(unittest.TestCase):
         d = TestSandboxDir(self)
 
         pipeline_instance = d.pipeline_instance_from_generator(
-            three_steps_pipeline,
+            three_steps_pipeline_task_generator,
             completed=True
         )
 
@@ -24,13 +25,9 @@ class MultipstepTaskTests(unittest.TestCase):
         three_step_task_out_file = os.path.join(three_phase_task.v_abs_work_dir(), "out_file.txt")
 
         def load_output_from_three_phase_task():
-            return test_helpers.load_file_as_string(three_step_task_out_file)
+            return three_phase_task.out.out_file.load_as_string()
 
-        def validate_output_of_three_phase_task():
-            out = load_output_from_three_phase_task()
-            self.assertEqual("s1\ns2\ns3\n", out)
-
-        validate_output_of_three_phase_task()
+        self.assertEqual(three_steps_pipeline_expected_output(), three_phase_task.out.out_file.load_as_string())
 
         pipeline_instance.clean_all()
 
@@ -88,7 +85,7 @@ class MultipstepTaskTests(unittest.TestCase):
     def test_pipeline_with_mixed_python_bash(self):
 
         pipeline = TestSandboxDir(self).pipeline_instance_from_generator(
-            hybrid_bash_python_mutlistep_pipeline,
+            hybrid_bash_python_mutlistep_pipeline_task_generator,
             completed=True,
             task_conf=TaskConf(
                 executer_type="process"

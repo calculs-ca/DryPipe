@@ -400,6 +400,14 @@ class ProducedFile:
 
         return os.path.join(task.work_dir(), self.file_path)
 
+    def load_as_string(self):
+        f = os.path.join(
+            self.producing_task.pipeline_instance.pipeline_instance_dir,
+            self.absolute_path(self.producing_task)
+        )
+        with open(f) as f:
+            return f.read()
+
     def input_file(self, var_name_in_consuming_task):
         return InputFile(self, var_name_in_consuming_task)
 

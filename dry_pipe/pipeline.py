@@ -221,53 +221,16 @@ class Pipeline:
 
         return PipelineInstance(p, pipeline_instance_dir or p.pipeline_code_dir)
 
-    def pipeline_instance_iterator_for_dir(self, pipeline_instances_dir, ignore_completed=True):
+    @staticmethod
+    def pipeline_instances_iterator(instances_dir_for_pipeline_dict, ignore_completed=True):
 
-        if pipeline_instances_dir is None:
+        if instances_dir_for_pipeline_dict is None:
             raise Exception(f"pipeline_instances_dir can't be None")
 
-        class PipelineInstancesDirIterator:
+        if len(instances_dir_for_pipeline_dict) == 0:
+            raise Exception(f"pipeline_instances_dir can't be empty")
 
-            def __init__(self, pipeline):
-                self.pipelines_cache = {}
-                self.pipeline = pipeline
-
-            def create_instance_in(self, subdir):
-
-                pid = pathlib.Path(os.path.join(pipeline_instances_dir, subdir, ".drypipe"))
-                pathlib.Path(pid).mkdir(parents=True, exist_ok=False)
-                pathlib.Path(os.path.join(pid, "state.running")).touch()
-
-            def __iter__(self):
-
-                pipelines_by_dir = {**self.pipelines_cache}
-
-                def gen_():
-
-                    logger.debug("will iterate on pipelines instances in %s ", pipeline_instances_dir)
-
-                    for pipeline_state in PipelineState.iterate_from_instances_dir(pipeline_instances_dir):
-
-                        if pipeline_state.is_completed() and ignore_completed:
-                            logger.debug("pipeline completed: %s", pipeline_state.state_file)
-                            continue
-                        else:
-                            logger.debug("pipeline NOT completed: %s, %s", pipeline_state.state_file,
-                                         pipeline_state.state_name)
-
-                        p = pipelines_by_dir.get(pipeline_state.dir_basename())
-
-                        if p is None:
-                            p = self.pipeline.create_pipeline_instance(pipeline_state.instance_dir())
-
-                        yield pipeline_state.dir_basename(), p
-
-                self.pipelines_cache = dict(gen_())
-
-                for k, pipeline in self.pipelines_cache.items():
-                    yield pipeline
-
-        return PipelineInstancesDirIterator(self)
+        return PipelineInstancesIterator(instances_dir_for_pipeline_dict, ignore_completed)
 
     def prepare_remote_sites(self, printer=None):
         if self.remote_task_confs is None:
@@ -283,6 +246,51 @@ class Pipeline:
                 ssh_executer.rsync_remote_code_dir_if_applies(self, task_conf)
             finally:
                 ssh_executer.close()
+
+
+class PipelineInstancesIterator:
+
+    def __init__(self, instances_dir_for_pipeline_dict, ignore_completed):
+        self.pipelines_cache = {}
+        self.ignore_completed = ignore_completed
+        self.instances_dir_for_pipeline_dict = instances_dir_for_pipeline_dict
+
+    def create_instance_in(self, pipeline_instances_dir, subdir):
+
+        pid = pathlib.Path(os.path.join(pipeline_instances_dir, subdir, ".drypipe"))
+        pathlib.Path(pid).mkdir(parents=True, exist_ok=False)
+        pathlib.Path(os.path.join(pid, "state.running")).touch()
+
+    def __iter__(self):
+
+        pipelines_by_dir = {**self.pipelines_cache}
+
+        def gen_():
+
+            for pipeline_instances_dir, pipeline in self.instances_dir_for_pipeline_dict.items():
+
+                logger.debug("will iterate on pipeline instances in %s ", pipeline_instances_dir)
+
+                for pipeline_state in PipelineState.iterate_from_instances_dir(pipeline_instances_dir):
+
+                    if pipeline_state.is_completed() and self.ignore_completed:
+                        logger.debug("pipeline completed: %s", pipeline_state.state_file)
+                        continue
+                    else:
+                        logger.debug("pipeline NOT completed: %s, %s", pipeline_state.state_file,
+                                     pipeline_state.state_name)
+
+                    p = pipelines_by_dir.get(pipeline_state.dir_basename())
+
+                    if p is None:
+                        p = pipeline.create_pipeline_instance(pipeline_state.instance_dir())
+
+                    yield pipeline_state.dir_basename(), p
+
+        self.pipelines_cache = dict(gen_())
+
+        for k, pipeline in self.pipelines_cache.items():
+            yield pipeline
 
 
 class PipelineInstance:

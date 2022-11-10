@@ -35,9 +35,9 @@ class DaemonThreadHelper:
         self.ssh_executer_per_remote_site_key = {}
         self.last_exception_at = None
 
-    def iterate_on_pipelines(self):
+    def iterate_on_pipeline_instances(self):
 
-        self.logger.debug("will iterate on pipelines")
+        self.logger.debug("will iterate on pipeline instances")
 
         c = 0
         try:
@@ -45,7 +45,7 @@ class DaemonThreadHelper:
                 c += 1
                 yield p
         finally:
-            self.logger.debug("worked on %s pipelines", c)
+            self.logger.debug("worked on %s pipeline instances", c)
 
     def begin_round(self):
         self.has_worked_in_round = False
@@ -140,20 +140,19 @@ def janitor_sub_logger(sub_logger):
 class Janitor:
 
     def __init__(
-        self, pipeline=None, pipeline_instance=None, min_sleep=0, max_sleep=5, pipeline_instances_dir=None
+        self, pipeline_instance=None, pipeline_instances_iterator=None, min_sleep=0, max_sleep=5
     ):
 
-        if pipeline_instance is not None and pipeline is not None:
-            raise Exception(f"can't supply both pipeline and pipeline_instance")
+        if pipeline_instance is not None and pipeline_instances_iterator is not None:
+            raise Exception(f"can't supply both pipeline_instance and pipeline_instances_iterator")
 
-        if pipeline_instances_dir is None:
-            if pipeline_instance is None:
-                raise Exception(f"pipeline_instance can't be None if pipeline_instances_dir is not supplied")
+        if pipeline_instance is None and pipeline_instances_iterator is None:
+            raise Exception(f"must supply either pipeline_instance or pipeline_instances_iterator")
+
+        if pipeline_instances_iterator is None:
             self.pipelines = [pipeline_instance]
         else:
-            if pipeline is None:
-                raise Exception(f"pipeline can't be None if pipeline_instances_dir is supplied")
-            self.pipelines = pipeline.pipeline_instance_iterator_for_dir(pipeline_instances_dir)
+            self.pipelines = pipeline_instances_iterator
 
         self.min_sleep = min_sleep
         self.max_sleep = max_sleep
@@ -185,20 +184,20 @@ class Janitor:
 
                 work_done = 0
 
-                for pipeline in daemon_thread_helper.iterate_on_pipelines():
+                for pipeline_instance in daemon_thread_helper.iterate_on_pipeline_instances():
 
-                    pipeline.init_work_dir()
+                    pipeline_instance.init_work_dir()
 
                     work_done_on_pipeline_instance = _janitor_ng(
-                        pipeline,
+                        pipeline_instance,
                         wait_for_completion=sync_mode,
                         fail_silently=fail_silently,
                         daemon_thread_helper=daemon_thread_helper
                     )
 
                     if sync_mode:
-                        _upload_janitor(daemon_thread_helper, pipeline, daemon_thread_helper.logger)
-                        _download_janitor(daemon_thread_helper, pipeline)
+                        _upload_janitor(daemon_thread_helper, pipeline_instance, daemon_thread_helper.logger)
+                        _download_janitor(daemon_thread_helper, pipeline_instance)
 
                     if work_done_on_pipeline_instance > 0:
                         work_done += work_done_on_pipeline_instance
@@ -244,7 +243,7 @@ class Janitor:
 
                 try:
 
-                    for pipeline in daemon_thread_helper.iterate_on_pipelines():
+                    for pipeline in daemon_thread_helper.iterate_on_pipeline_instances():
 
                         if _upload_janitor(daemon_thread_helper, pipeline, daemon_thread_helper.logger) > 0:
                             daemon_thread_helper.register_work()
@@ -269,7 +268,7 @@ class Janitor:
 
                 try:
 
-                    for pipeline in daemon_thread_helper.iterate_on_pipelines():
+                    for pipeline in daemon_thread_helper.iterate_on_pipeline_instances():
 
                         download_j_logger.debug("will check remote tasks of %s", pipeline.instance_dir_base_name())
 
