@@ -11,7 +11,7 @@ copyright = '2022, Maxime Lévesque'
 author = 'Maxime Lévesque'
 release = '0.5.1'
 
-root_doc = "docs/source/index"
+root_doc = "index"
 
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
