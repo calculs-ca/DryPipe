@@ -9,6 +9,7 @@ import re
 import signal
 import sys
 import os
+import time
 import traceback
 
 import click
@@ -486,13 +487,23 @@ def watch(ctx, instances_dir_to_pipelines, env):
 
     janitor = Janitor(pipeline_instances_iterator=dict(g()))
 
-    thread = janitor.start()
+    janitor.start()
 
     janitor.start_remote_janitors()
 
-    thread.join()
+    def _sigterm(p1, p2):
+        logger.info("received SIGTERM")
+        janitor.request_shutdown()
+        logging.shutdown()
+        time.sleep(3)
+        os._exit(0)
 
-    os._exit(0)
+    signal.signal(signal.SIGTERM, _sigterm)
+    signal.pause()
+
+
+
+
 
 
 def _validate_task_generator_callable_with_single_dsl_arg_and_get_module_file(task_generator):
@@ -510,21 +521,31 @@ def _validate_task_generator_callable_with_single_dsl_arg_and_get_module_file(ta
 
 @click.command()
 @click.pass_context
-@click.option('--instances-dir', type=click.STRING)
+@click.option(
+    '--instances-dir-to-pipelines',
+    type=click.STRING,
+    required=True,
+    help="""
+    dir1=module1:func1,...,dirN=moduleN:funcN    
+      + moduleX:funcX is a function that returns a dry_pipe.Pipeline    
+      + dirX is the parent directory where all pipeline_instance_dirs of PipelineX will reside  
+    """
+)
 @click.option('--bind', default="0.0.0.0", help="bind address for --web-mon")
 @click.option('--port', default=5000)
-def serve_ui(ctx, instances_dir, bind, port):
+def serve_ui(ctx, instances_dir_to_pipelines, bind, port):
     from dry_pipe.websocket_server import WebsocketServer
 
-    if instances_dir is None:
-        raise Exception(
-            f"serve-multi requires mandatory option --instances-dir=<directory of pipeline instances>"
-        )
+    def g():
+        for instances_dir, mod_func in instances_dir_to_pipelines.split(","):
 
-    if not os.path.exists(instances_dir):
-        pathlib.Path(instances_dir).mkdir(parents=True)
+            if not os.path.exists(instances_dir):
+                pathlib.Path(instances_dir).mkdir(parents=True)
 
-    WebsocketServer.start(bind, port, instances_dir)
+            pipeline = Pipeline.load_from_module_func(mod_func)
+            yield instances_dir, pipeline
+
+    WebsocketServer.start(bind, port, dict(g()))
 
     os._exit(0)
 
@@ -641,6 +662,16 @@ def call(ctx, mod_func, task_env):
             return v
         elif typez == "float":
             return float(v)
+        elif typez == "glob_expression":
+
+            class GlobExpression:
+                def __call__(self, *args, **kwargs):
+                    return glob.glob(os.path.expandvars(v))
+
+                def __str__(self):
+                    return os.path.expandvars(v)
+
+            return GlobExpression()
 
         return v
 

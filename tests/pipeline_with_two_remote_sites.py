@@ -26,7 +26,7 @@ def create_pipeline_generator_two_remote_sites(remote_task_conf_1, remote_task_c
         yield t1
         yield t2
 
-        for _ in dsl.with_completed_tasks(t1, t2):
+        for _ in dsl.wait_for_tasks(t1, t2):
             yield dsl.task(
                 key=f"t3"
             ).consumes(

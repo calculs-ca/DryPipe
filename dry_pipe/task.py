@@ -16,7 +16,7 @@ from dry_pipe.actions import TaskAction
 from dry_pipe import bash_shebang
 from dry_pipe.internals import \
     IndeterminateFile, ProducedFile, IncompleteVar, Val, \
-    OutputVar, InputFile, InputVar, FileSet, TaskMatcher, OutFileSet, ValidationError, flatten, TaskProps
+    OutputVar, InputFile, InputVar, FileSet, OutFileSet, ValidationError, flatten, TaskProps
 
 from dry_pipe.script_lib import task_script_header, iterate_out_vars_from
 from dry_pipe.task_state import TaskState, tail
@@ -101,8 +101,6 @@ class Task:
                     yield k, v.input_file(k)
                 elif isinstance(v, Val):
                     vals[k] = v
-                elif isinstance(v, TaskMatcher):
-                    task_matchers[k] = v
                 else:
                     raise Exception(f"unknown dep type {v}")
 
@@ -302,7 +300,7 @@ class Task:
             yield (
                 f"__meta_{name}",
                 ":".join([
-                    val.type_str(),
+                    "glob_expression" if val.is_glob_expression else val.type_str(),
                     "",
                     name
                 ])

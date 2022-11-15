@@ -32,7 +32,8 @@ class ValidationError(Exception):
 
 class Val:
 
-    def __init__(self, value):
+    def __init__(self, value, is_glob_expression=False):
+        self.is_glob_expression = is_glob_expression
         t = type(value)
         if t == int or t == str or t == float:
             self.value = value
@@ -336,15 +337,9 @@ class SubPipeline:
         self.task_namespance_prefix = task_namespance_prefix
         self.dsl = dsl
 
-    def with_completed_tasks(self, *args):
+    def wait_for_tasks(self, *args):
         args = [f"{self.task_namespance_prefix}{a}" for a in args]
-        return self.dsl.with_completed_tasks(*args)
-
-
-class TaskMatcher:
-
-    def __init__(self, task_keys_glob_pattern):
-        self.task_keys_glob_pattern = task_keys_glob_pattern
+        return self.dsl.wait_for_tasks(*args)
 
 
 class PreExistingFile:

@@ -57,7 +57,7 @@ def pipeline_task_generator(dsl):
             mult_by_2
         )()
 
-    for task_matcher in dsl.with_completed_matching_tasks("group_*"):
+    for task_matcher in dsl.wait_for_matching_tasks("group_*"):
 
         yield dsl.task(
             key="grand_total.end"

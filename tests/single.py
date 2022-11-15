@@ -3,7 +3,7 @@ import sys
 from unittest import TextTestRunner, TestSuite, defaultTestLoader
 from suite import exhaustive_3, low_level_tests
 
-test_func = "test_remote_tasks_with_slurm"
+test_func = "test_pipeline_with_dynamic_dag"
 
 if __name__ == '__main__':
 

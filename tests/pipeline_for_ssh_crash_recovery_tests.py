@@ -33,7 +33,7 @@ def create_pipeline(remote_task_conf):
                 yield t
                 t = t_i(c, t)
 
-            for all_tasks in dsl.with_completed_matching_tasks("t*"):
+            for all_tasks in dsl.wait_for_matching_tasks("t*"):
                 res = {
                     t.out.x.fetch() for t in all_tasks.tasks
                 }
@@ -57,32 +57,32 @@ def create_pipeline(remote_task_conf):
 
         t = ta(1)
         yield t
-        for _ in dsl.with_completed_tasks(t):
+        for _ in dsl.wait_for_tasks(t):
             t = ta(2)
             yield t
-            for _ in dsl.with_completed_tasks(t):
+            for _ in dsl.wait_for_tasks(t):
                 t = ta(3)
                 yield t
-                for _ in dsl.with_completed_tasks(t):
+                for _ in dsl.wait_for_tasks(t):
                     t = ta(4)
                     yield t
-                    for _ in dsl.with_completed_tasks(t):
+                    for _ in dsl.wait_for_tasks(t):
                         t = ta(5)
                         yield t
-                        for _ in dsl.with_completed_tasks(t):
+                        for _ in dsl.wait_for_tasks(t):
                             t = ta(6)
                             yield t
-                            for _ in dsl.with_completed_tasks(t):
+                            for _ in dsl.wait_for_tasks(t):
                                 t = ta(7)
                                 yield t
-                                for _ in dsl.with_completed_tasks(t):
+                                for _ in dsl.wait_for_tasks(t):
                                     t = ta(8)
                                     yield t
-                                    for _ in dsl.with_completed_tasks(t):
+                                    for _ in dsl.wait_for_tasks(t):
                                         t = ta(9)
                                         yield t
-                                        for _ in dsl.with_completed_tasks(t):
-                                            for all_tasks in dsl.with_completed_matching_tasks("t*"):
+                                        for _ in dsl.wait_for_tasks(t):
+                                            for all_tasks in dsl.wait_for_matching_tasks("t*"):
                                                 res = {
                                                     t.out.x.fetch() for t in all_tasks.tasks
                                                 }

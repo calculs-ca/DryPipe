@@ -16,10 +16,13 @@ def prepare_tasks(__work_dir):
 
 
 @DryPipe.python_call()
-def work_chunk_func(work_file):
+def work_chunk_func(work_file, results_file):
 
     with open(work_file) as f:
         i = int(f.read())
+
+        with open(results_file, "w") as _a_file:
+            _a_file.write(str(i * 2))
 
         return {
             "inflated_number": i * 2,
@@ -28,11 +31,19 @@ def work_chunk_func(work_file):
 
 
 @DryPipe.python_call()
-def aggregate_func_2(inflated_numbers, insane_strings):
+def aggregate_func_2(inflated_numbers, insane_strings, pattern_for_all_f_txt):
+
+    def read_number_in_all_f():
+        for f in pattern_for_all_f_txt():
+            with open(f) as _f:
+                yield int(_f.read())
 
     aggregate_inflated_number = sum([
          int(n) for n in inflated_numbers.split(",")
     ])
+
+    s = sum(read_number_in_all_f())
+    assert s == aggregate_inflated_number
 
     return {
         "aggregate_inflated_number": aggregate_inflated_number,
@@ -54,7 +65,7 @@ def pipeline_task_generator(dsl):
 
     yield preparation_task
 
-    for pt in dsl.with_completed_tasks(preparation_task):
+    for pt in dsl.wait_for_tasks(preparation_task):
         for work_file_handle in pt.out.work_files.fetch():
             chunk_number = work_file_handle.file_path.split(".")[-2]
 
@@ -64,20 +75,22 @@ def pipeline_task_generator(dsl):
                 work_file=work_file_handle
             ).produces(
                 inflated_number=dsl.var(int),
-                insane_string=dsl.var(str)
+                insane_string=dsl.var(str),
+                results_file=dsl.file("f.txt")
             ).calls(
                 work_chunk_func
             )()
 
-        for work_chunk_task_matcher in dsl.with_completed_matching_tasks("work_chunk.*"):
+        for matcher in dsl.wait_for_matching_tasks("work_chunk.*"):
 
             yield dsl.task(
                 key="aggregate_all"
             ).consumes(
                 inflated_numbers=dsl.val(",".join(
-                    map(str, work_chunk_task_matcher.out.inflated_number.fetch())
+                    map(str, matcher.all.inflated_number.fetch())
                 )),
-                insane_strings=dsl.val(",".join(work_chunk_task_matcher.out.insane_string.fetch()))
+                insane_strings=dsl.val(",".join(matcher.all.insane_string.fetch())),
+                pattern_for_all_f_txt=matcher.all.results_file.as_glob_expression()
             ).produces(
                 aggregate_inflated_number=dsl.var(int),
                 insane_strings_passed_through=dsl.var(str)

@@ -174,7 +174,7 @@ class Janitor:
 
         while True:
 
-            if self._shutdown:
+            if self.is_shutdown():
                 daemon_thread_helper.logger.info("shutdown requested, will exit main loop")
                 break
 

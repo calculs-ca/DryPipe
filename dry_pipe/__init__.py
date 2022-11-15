@@ -11,7 +11,7 @@ from dry_pipe.utils import bash_shebang
 from dry_pipe.internals import \
     Executor, Local, PreExistingFile, IndeterminateFile, ProducedFile, \
     Slurm, IncompleteVar, Val, OutputVar, \
-    ValidationError, FileSet, TaskMatcher, PythonCall, Wait, SubPipeline
+    ValidationError, FileSet, PythonCall, Wait, SubPipeline
 
 from dry_pipe.task import Task, TaskStep
 from dry_pipe.task_state import TaskState
@@ -64,34 +64,48 @@ class DryPipe:
         return os.path.dirname(os.path.abspath(inspect.getmodule(task_generator_func).__file__))
 
 
-class TaskMatchOutList:
-    def __init__(self, task_match_out, product_var_name):
-        self.task_match_out = task_match_out
-        self.product_var_name = product_var_name
+class TaskSetAccessor:
+
+    def __init__(self, task_match_all, product_var):
+        self.task_match_all = task_match_all
+        self.product_var = product_var
+
+    def as_glob_expression(self):
+        return Val(
+            os.path.join(
+                "$__pipeline_instance_dir",
+                "publish",
+                self.task_match_all.task_match.pattern,
+                self.product_var.file_path
+            ),
+            is_glob_expression=True
+        )
 
     def fetch(self):
         return [
-            task.out.__getattr__(self.product_var_name).fetch()
-            for task in self.task_match_out.task_match.tasks
+            task.out.__getattr__(self.product_var.name).fetch()
+            for task in self.task_match_all.task_match.tasks
         ]
 
-class TaskMatchOut:
+
+class TaskMatchAll:
     def __init__(self, task_match):
         self.task_match = task_match
 
     def __getattr__(self, name):
         task = self.task_match.tasks[0]
-        product_var_name = task.out.__getattr__(name)
-        if product_var_name is None:
-            raise Exception(f"task {task}, does not produce '{product_var_name}'")
-        return TaskMatchOutList(self, name)
+        product_var = task.out.__getattr__(name)
+        if product_var is None:
+            raise Exception(f"task {task}, does not produce '{product_var}'")
+
+        return TaskSetAccessor(self, product_var)
 
 
 class TaskMatch:
     def __init__(self, pattern, tasks):
         self.pattern = pattern
         self.tasks = tasks
-        self.out = TaskMatchOut(self)
+        self.all = TaskMatchAll(self)
 
 
 class DryPipeDsl:
@@ -106,7 +120,7 @@ class DryPipeDsl:
     def sub_pipeline(self, pipeline, namespace_prefix):
         return SubPipeline(pipeline, namespace_prefix, self)
 
-    def with_completed_matching_tasks(self, *patterns):
+    def wait_for_matching_tasks(self, *patterns):
 
         task_matchers = []
 
@@ -132,7 +146,7 @@ class DryPipeDsl:
         else:
             yield tuple(task_matchers)
 
-    def with_completed_tasks(self, *args):
+    def wait_for_tasks(self, *args):
 
         def it_completed_tasks():
             for a in args:
@@ -171,9 +185,6 @@ class DryPipeDsl:
             else:
                 yield tuple(completed_tasks)
 
-    def wait_for(self, tasks):
-        return Wait(tasks)
-
     def var(self, type=str, may_be_none=False):
         return IncompleteVar(type, may_be_none)
 
@@ -190,10 +201,6 @@ class DryPipeDsl:
     def fileset(self, glob_pattern):
 
         return FileSet(glob_pattern)
-
-    def matching_tasks(self, task_keys_glob_pattern):
-        raise Exception(f"deprecated")
-        #return TaskMatcher(task_keys_glob_pattern)
 
     def task(self,
              key,
@@ -241,8 +248,6 @@ class TaskBuilder:
                 if isinstance(v, IndeterminateFile):
                     yield k, v
                 elif isinstance(v, ProducedFile) or isinstance(v, Val) or isinstance(v, OutputVar):
-                    yield k, v
-                elif isinstance(v, TaskMatcher):
                     yield k, v
                 else:
                     raise ValidationError(

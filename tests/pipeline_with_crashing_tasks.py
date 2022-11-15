@@ -19,7 +19,7 @@ def crash_o_palooza(dsl):
                 exit 1                    
             """)()
 
-    for t in dsl.with_completed_tasks("t1", "t2", "t3"):
+    for _ in dsl.wait_for_tasks("t1", "t2", "t3"):
         raise Exception(f"will never get here !")
 
 

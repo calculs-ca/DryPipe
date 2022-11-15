@@ -88,7 +88,7 @@ def correct_timestamps_in_task_history(dsl):
 
     yield s1
 
-    for _ in dsl.with_completed_tasks(s1):
+    for _ in dsl.wait_for_tasks(s1):
 
         yield dsl.task(
             "sleep2_3"

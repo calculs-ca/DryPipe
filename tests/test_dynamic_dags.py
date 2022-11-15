@@ -15,6 +15,9 @@ class DynamicDagTests(unittest.TestCase):
             pipeline_with_dynamic_dag.pipeline_task_generator, completed=True
         )
 
+        for t in pipeline_instance.tasks:
+            self.assertEqual(t.get_state().state_name, "completed")
+
         agg_task = pipeline_instance.tasks["aggregate_all"]
 
         self.assertEqual(agg_task.out.aggregate_inflated_number.fetch(), 20)

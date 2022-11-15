@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 class WebsocketServer(AsyncNamespace):
 
     @staticmethod
-    def start(bind_address, port, instances_dir_if_has_local_janitor=None):
+    def start(bind_address, port, pipeline_instances_iterator=None, instances_dir_if_has_local_janitor=None):
 
         try:
             SubscriptionRegistry.init()

@@ -66,7 +66,7 @@ def sum_and_multiply_by_x_and_add_y(list_of_int, x, y):
 
         yield sub_pipeline
 
-        for multiply_by_x_task in sub_pipeline.with_completed_tasks("multiply_by_x"):
+        for multiply_by_x_task in sub_pipeline.wait_for_tasks("multiply_by_x"):
             t = dsl.task(
                 key="add_y"
             ).consumes(
@@ -94,7 +94,7 @@ def sum_and_multiply_by_x_and_add_y_and_z(list_of_int, x, y, z):
 
         yield sub_pipeline
 
-        for add_y_task in sub_pipeline.with_completed_tasks("add_y"):
+        for add_y_task in sub_pipeline.wait_for_tasks("add_y"):
             yield dsl.task(
                 key="add_z"
             ).consumes(
