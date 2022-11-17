@@ -1,116 +1,19 @@
-# DryPipe
+# A Python DSL for pipelines 
 
-## A Python DSL for bioinformatics pipelines
+Don't Repeat Yourself (D.R.Y) while writing pipelines, and stay away from leaky abstractions, use DryPipe !
 
+## What is a pipeline ?
 
-## Getting Started
+A pipeline could be described as _"a bunch of programs feeding data to one another"._
 
-#### 1 Install dry-pipe in your virtualenv
+Programs within a pipeline tend to:
 
-```shell
-    pyton3 -m venv your_venv 
-    source your_venv/bin/activate
-    pip install dry-pipe
-```
+1. run for a long time
+2. need large amounts of resources (cpu, memory, disk space, etc), requiring clusters to run (Slurm, Torque,etc)
+3. be written in different languaged, have different CLI interfaces, file formats, etc.
+4. long CODE->RUN->DEBUG->CODE cycles
 
-#### 2 Write your  pipeline
-
-```python
-
-    from dry_pipe import DryPipe
-    
-    @DryPipe.python_call()
-    def my_python_task_func(a, v):
-        print(f"got {v}, and it's equal to 4321, and {a} is 456")
-        return {
-            "z": v * 2 + a
-        }
-    
-    def my_pipeline_task_generator(dsl):
-        task1 = dsl.task(key="task1") 
-            .consumes(x=dsl.val(123)) 
-            .produces(
-                result=dsl.file("f.txt"),
-                y=dsl.var(int)
-             )
-            .calls("""
-                #!/usr/bin/env bash                
-                echo $x > $result
-                export y=4321
-            """)
-        
-        yield task1
-        
-        yield dsl.task(key="task2") 
-            .consumes(a=dsl.val(456), v=task1.out.y) 
-            .produces(z=dsl.var(int))
-            .calls(my_python_task_func)
-        
-    def my_pipeline():
-        return DryPipe.create_pipeline(my_pipeline_task_generator)
-```
-
-#### 3 Run it
-(assuming the above code is in module my_module.py, and that my_module.py is in PYTHONPATH)
-```shell
-    drypipe run --pipeline='my_module:my_pipeline'
-```
+The length of the debug cycle make pipelines difficult to debug.
 
 
-# The DAG
-
-DAGs (directed acyclic graph) are a very convenient mathematical abstraction to represent things such as pipelines.
-
-```mermaid
-    flowchart LR
-    A([A])
-    B([B])
-    C([C])
-    D([D])
-    E([E])
-    A-->B
-    A-->C
-    B-->D
-    C-->D
-    D-->E
-```
-
-The following DAG represents the execution of a pipeline. Each node represents the execution of a program, and arrows represent the producer / consumer relationship between the programs.
-
-
-```mermaid
-    flowchart LR    
-    A([parser])
-    B([blast])
-    C([blast])
-    D([report])
-    A-->|f1.fasta|B
-    A-->|f2.fasta|B
-    A-->|f3.fasta|C
-    B-->|blast-result.tsv|D
-    C-->|blast-result.tsv|D
-```
-
-A DryPipe pipeline definition, consists of a python generator function (*) that yields a DAG 
-
-
-```python
-
-from dry_pipe import DryPipe
-
-def conservation_pipeline_generator(dsl):        
-    yield dsl.task(key="blast1") \
-        .consumes(a=dsl.file("chimp")) \
-        .produces(result=dsl.file("f.txt")) \
-        .calls("""
-            #!/usr/bin/env bash                
-            blastp $a $b
-        """)
-    
-def conservation_pipeline():
-    return DryPipe.create_pipeline(conservation_pipeline_generator)
-```
-
- 
-### Pipeline vs Pipeline Instance
-
+[https://drypipe.readthedocs.io/](https://drypipe.readthedocs.io/)
