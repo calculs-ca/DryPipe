@@ -433,15 +433,17 @@ Previous example show how producer/consumer dependencies between tasks can be ex
 referring to the producing task's output, ex: 
 
 ```python
-    dsl.task("key=t2").consumes(z=t1.out.abc)
+dsl.task("key=t2").consumes(z=t1.out.abc)
 ``` 
 
-Sometimes, the generator function needs to access the actual result produced in an upstream task 
+It's the preferred/simpler way of declaring dependencies.
+
+But sometimes, code in the generator function needs to access the actual result produced by a task, in order to parametrize downstream tasks.
 
 The DryPipe DSL provides the following functions for this:
 
 + `dsl.wait_for_tasks(t_1, ..., t_n)` where ti is ta task or task key
-+ `dsl.wait_for_matching_tasks(task_key_glob_pattern_1, ..., task_key_glob_pattern_n)` where  task_key_glob_pattern_i is a glob pattern matched against task keys
++ `dsl.wait_for_matching_tasks(task_key_glob_pattern_1, ..., task_key_glob_pattern_n)` where task_key_glob_pattern_i is a glob pattern matched against task keys
 
 The following example shows how it works
 
@@ -596,16 +598,17 @@ Environment variables are the mechanism by which DryPipe orchestrator parametriz
 
 Tasks run as separate processes, and user code (passed in calls(...) clause) transparently receive their inputs and outputs as env variables.
 
-## User Variables
+## Pipeline specific variables
 (section_environment_variables)=
 
-Task variables are declared with the consumes(...) and produces(...) clauses.
+Pipeline specific variables are declared with the consumes(...) and produces(...) clause of a pipeline's tasks.
+
+All these variables defined in these clauses end up as env variables in the task process.
 
 [Bash Calls] simply refer to them as $my_var, while [python calls] have their vars injected in function args, ex: ```def f(my_var)``` ([see example](user_env_vars_python))
 
-All variables defined in these clauses end up as env variables in the task process.
 
-## Task custom scripts
+## Generated scripts
 
 DryPipe generates the following scripts for every task in a pipeline instance:
 
