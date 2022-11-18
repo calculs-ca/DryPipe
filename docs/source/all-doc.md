@@ -16,6 +16,10 @@ Once installed the [DryPipe CLI](section_drypipe_cli) is available
 drypipe --help
 ```
 
+## Github repo
+
+Issues can be submited on the [github repo](https://github.com/calculs-ca/DryPipe)
+
 # Writing Pipelines
 
 ## DSL elements 
@@ -198,6 +202,349 @@ def my_pipeline_dag_generator(dsl):
     ).calls(
         f2
     )()
+```
+
+## Dynamic DAGs
+
+Most interesting pipelines will have a DAG that changes depending on the instances datasets.
+
+In DryPipe, the logic that drives te DAG is encoded in the generator function.
+
+The following examples show various scenarios of how DAGs can change depending on the dataset of a pipeline instance. 
+
+### Semi hardcoded DAGs
+
+When a pipeline is meant to run a very few data inputs, it can make sense to hard code every instance.
+
+The code below uses created two pipelines (pipeline_1_2_3 and pipeline_7_8_9_543), that work over two hardcoded datasets 
+(a dataset that consists of a sequence of numbers)
+
+Both pipelines can then be called with:
+
+```shell
+drypipe run -p my_modue:pipeline_1_2_3
+drypipe run -p my_modue:pipeline_7_8_9_543
+```
+
+```python
+
+def create_dag_generator(beautiful_numbers):
+    def dag_gen(dsl):
+        for i in beautiful_numbers:
+            yield dsl.task(
+                key=f"square-{i}"
+            ).consumes(
+                x=dsl.val(i)
+            ).produces(
+                f=dsl.file("file_with_squared_number.txt")
+            ).calls("""
+                #!/usr/bin/env bash
+                echo $(( $x * $x)) > $f
+             """)()
+     
+    return dag_gen
+
+def pipeline_1_2_3():
+    return DryPipe.create_pipeline(
+        create_dag_generator([1,3,4]),        
+    )  
+
+def pipeline_7_8_9_543():
+    return DryPipe.create_pipeline(
+        create_dag_generator([7, 8, 9, 543]),        
+    )
+
+```
+
+### Input file driven DAGs
+
+Some Pipelines DAGs are driven by files from the pipeline dataset.
+
+The DAG generator function being a standard python, it's up to the pipeline developer to decide on the file format, 
+and how data from the file is parsed, in order to generate Tasks.
+
+In the following example, the generator function reads a TSV file, and yields a task for every line. 
+
+The path of the file is taken from an environment variable set before running the pipeline.
+
+TSV input file example
+
+```shell
+export MY_INPUT_DATA_FILE_TSV=<a tsv file>
+drypipe run -p my_modue:dag_gen
+```
+
+
+```python
+def dag_gen(dsl):    
+    with open(os.environ['MY_INPUT_DATA_FILE_TSV']) as f:
+        for line in f.readlines():
+            i, other_arg = line.split("\t")
+            yield dsl.task(
+                key=f"t-{i}"
+            ).consumes(
+                x=dsl.val(other_arg)
+            ).produces(
+                f=dsl.file("result.txt")
+            ).calls("""
+               #!/usr/bin/env bash
+               echo "compute data for $x" > $f
+            """)()
+```
+
+In a variation on this pattern, the TSV file lives the $__pipeline_instance_dir 
+
+```python
+def dag_gen(dsl):     
+    with open(dsl.file_in_pipeline_instance_dir("dataset.tsv")) as f:
+        for line in f.readlines():
+            i, other_arg = line.split("\t")
+            yield dsl.task(
+                key=f"t-{i}"
+            )...
+
+def my_pipeline():
+    return DryPipe.create_pipeline(my_pipeline)
+```
+
+With this approach, the $__pipeline_instance_dir is seeded with the input tsv (ex: dataset.tsv) file, before running the instance: 
+
+```shell
+cp dataset.tsv ./pipeline-instance-dir-123
+drypipe run -p my_modue:my_pipeline --instance-dir=./pipeline-instance-dir-123
+```
+
+### DAG driven by task execution
+
+The following example introduces three new DSL elements:
+
++ ```dsl.fileset('work-chunk.*.fasta')``` in a produces(...) clause
++ ```dsl.wait_for_tasks(task1, task2, ...)```
++ ```dsl.wait_for_matching_tasks(task1, task2, ...)```
+
+The DAG is a bit more complicated, so we'll illustrate it with a diagram:  
+
+```{mermaid}
+flowchart LR
+    prepare_chunks(["prepare-chunks\n[input_fasta=chimp.fasta]"])
+    w1(["task-for-chunk-1"])        
+    w2(["task-for-chunk-2"])
+    wN(["task-for-chunk-N"])
+    analyze(["analyze-all"])
+    prepare_chunks-->|"work-chunk.1.fasta"|w1
+    prepare_chunks-->|"work-chunk.2.fasta"|w2
+    prepare_chunks-->|"work-chunk.N.fasta"|wN
+    w1-->|"results.json"|analyze    
+    w2-->|"results.json"|analyze
+    wN-->|"results.json"|analyze   
+```
+
+
+```python
+
+@DryPipe.python_call()
+def create_n_chunks_of_work(input_fasta, __task_output_dir):
+    with open(input_fasta) as f:
+        c = 0
+        for w in get_next_chunk_from(f.readlines()):
+            with open(os.path.join(__task_output_dir, f"work-chunk-{c}.fasta")) as chunk_file:
+                write_chunk_into(w, chunk_file)
+            c += 1
+
+
+def dag_gen(dsl):
+    prepare_chunks = dsl.task(
+        key=f"prepare-chunks"
+    ).consumes(
+        input_fasta=dsl.file('chimp.fasta')
+    ).produces(
+        work_chunks=dsl.fileset('work-chunk.*.fasta')
+    ).calls(
+        create_n_chunks_of_work
+    )()
+
+    yield prepare_chunks
+         
+    for _ in dsl.wait_for_tasks(prepare_chunks):
+     
+        # dsl.wait_for_tasks ensures that we can only get here when prepare_chunks
+        # has successfully completed
+     
+        for work_chunk_file_handle in prepare_chunks.out.work_chunks.fetch():
+            # extract number from file name, i.e. 
+            # work-chunk.3.fasta  -> 3
+            chunk_number = work_chunk_file_handle.basename().split(".")[1]
+            yield dsl.task(
+                key=f"task-for-chunk-{chunk_number}"
+            ).consumes(
+                f=work_chunk_file_handle
+            ).produces(
+                results_file=dsl.file("results.json")
+            ).calls("""
+                #!/usr/bin/env bash
+                echo "work on $f" 
+            """)()
+
+        # wait_for_matching_tasks("task-for-chunk-*") ensures that we can only get here when AKK tasks
+        # matching task-for-chunk-* have successfully completed
+            
+        for matcher in dsl.wait_for_matching_tasks("task-for-chunk-*"):
+            yield dsl.task(
+                key="analyze-all-work-pieces"
+            ).consumes(
+                # pattern_for_all_chunks is $__pipeline_instance_dir/output/task-for-chunk-*/results.json
+                pattern_for_all_chunks=matcher.all.results_file.as_glob_expression()
+            ).produces(
+                a_result_file=dsl.var("final-result-file")
+            ).calls("""
+                #!/usr/bin/env bash
+                
+                # the two following commands are equivalent:                
+                  
+                ls $__pipeline_instance_dir/output/task-for-chunk-*/results.json                
+                ls $pattern_for_all_chunks
+                
+                # the second is way more DRY (Don't Repeat Yourself) !
+                
+                echo "work on $f" 
+            """).calls(
+                analyze_all
+            )()
+
+
+@DryPipe.python_call()
+def analyze_all(pattern_for_all_chunks, a_result_file):
+    with open(a_result_file, "w") as _a_result_file:
+     
+        # Because we are in a Python Call, we can iterate over pattern_for_all_chunks().  
+        # It is equivalent to calling : 
+        # glob.glob(os.path.expandvars("$__pipeline_instance_dir/output/task-for-chunk-*/results.json"))
+        # but way more DRY !
+   
+        for chunk_file in pattern_for_all_chunks():
+            some_results = read_from(chunk_file)
+            a_result_file.write(f"got {some_results} from chunk {chunk_file}")
+```
+
+
+### Waiting for upstream tasks
+
+Previous example show how producer/consumer dependencies between tasks can be expressed by declaring a consumed variable or file, 
+referring to the producing task's output, ex: 
+
+```python
+    dsl.task("key=t2").consumes(z=t1.out.abc)
+``` 
+
+Sometimes, the generator function needs to access the actual result produced in an upstream task 
+
+The DryPipe DSL provides the following functions for this:
+
++ `dsl.wait_for_tasks(t_1, ..., t_n)` where ti is ta task or task key
++ `dsl.wait_for_matching_tasks(task_key_glob_pattern_1, ..., task_key_glob_pattern_n)` where  task_key_glob_pattern_i is a glob pattern matched against task keys
+
+The following example shows how it works
+
+```python
+
+def my_dag_generator(dsl):
+    
+    task_a = dsl.task(
+        key="task-a"
+    ).produces(
+        x=dsl.var(int) 
+    ).calls(
+        some_func
+    )
+        
+    yield task_a
+    
+    for _ in dsl.wait_for_tasks(task_a, task_b):
+     
+        # because taskA has completed, we can fetch values from it's produces clause:
+        
+        actual_x_loaded_from_completed_task = task_a.out.x.fetch()
+        
+        assert isinstance(actual_x_loaded_from_completed_task, int)
+     
+        for matcher1, matcher2 in dsl.wait_for_matching_tasks("task-prefix-*", "other-task-prefix-*"):
+            yield dsl.task(
+                key="highly-dependent-task",
+                task_conf=TaskConf(
+                    executer_type="slurm",
+                    slurm_account="me",
+                    slurm_options=[
+                        f"--time={estimate_time(actual_x_loaded_from_completed_task)}"
+                    ]
+                )
+            ).consumes(
+                x=dsl.val
+            )...        
+```
+
+## Pipeline composition
+
+In any programming languages, composition is a key for minimalism, expressiveness and reusability. It's also true for DSLs.
+
+Composing DryPipe pipelines is greatly simplified by the fact that they are generator functions.
+
+The next example shows how the DAG generator of two pipelines are combined to create a new DAG generator. 
+
+Note1: The tasks from composed sub pipeline will live in the same $__pipeline_instance_dir 
+
+Note2: `dsl.sub_pipeline(super_duper_pipeline_dag_generator, "s_")`
+
+Tasks generated by super_duper_pipeline_dag_generator will have their keys prefixed by "super_duper", 
+to ensure uniquenes of Task Keys of the new pipeline. 
+
+dsl.sub_pipeline returns a sub pipeline that needs to be yielded.
+
+Note3: `super_duper.wait_for_tasks("a-super-task")`
+
+This will wait for the completion of the task with key="a-super-task" in the sub pipeline.
+
+It's a shorthand for calling `dsl.wait_for_tasks("s_a-super-task")`, as the actual task key in the new composed pipeline will be "s_a-super-task"
+
+The example waits for tasks in other_sub_pipeline with  `other_sub_pipeline.wait_for_matching_tasks("do-it-*")`
+and for "task-dependent-on-a-super-task" and results are fed to task "grande-finale"
+
+```python
+
+import super_duper_pipeline_dag_generator
+import other_pipeline_dag_gen
+
+def my_coposite_dag_generator(dsl):
+ 
+    super_duper = dsl.sub_pipeline(super_duper_pipeline_dag_generator, "s_")
+    
+    yield super_duper
+    
+    other_sub_pipeline = dsl.sub_pipeline(other_pipeline_dag_gen, "o_")
+    
+    yield other_sub_pipeline
+    
+    for super_task in super_duper.wait_for_tasks("a-super-task"):
+        v = super_task.out.a_variable
+        yield dsl.task(
+            "task-dependent-on-a-super-task"
+        ).consumes(
+            y=dsl.val(v)
+        ).produces(
+            z=dsl.var(int)
+        ).calls(
+            a_func
+        )
+
+    for matcher in other_sub_pipeline.wait_for_matching_tasks("do-it-*"):
+        for task_dependent_on_a_super_task in dsl.wait_for_tasks("task-dependent-on-a-super-task"):
+            yield dsl.task(
+                "grande-finale"
+            ).consumes(
+                z=task_dependent_on_a_super_task.out.z,
+                a_pattern=matcher.all.a_file_defined_in_do_it_tasks.as_glob_expression()
+            ).calls(
+                grande_finale_func
+            )
 ```
 
 # Directory structure
@@ -433,6 +780,7 @@ todo: write the doc
 
 # Definitions
 
++ DAG: directed acyclic graph
 + Orchestrating Host: the computer where ```drypipe run``` or ```drypipe watch``` is executed
 + Pipeline: refers to the code of a pipeline, and to the object returned by ```DryPipe.create_pipeline(my_dag_gen)``` 
 + Pipeline Instance: the execution of a pipeline over a dataset. A pipeline run over two datasets have two instances
