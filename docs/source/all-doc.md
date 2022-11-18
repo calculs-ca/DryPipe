@@ -24,12 +24,99 @@ Issues can be submited on the [github repo](https://github.com/calculs-ca/DryPip
 
 ## DSL elements 
 
+### The DAG generator function
+
+The core of a DryPipe pipeline, is a python generator function that generates the pipeline's DAG (Directed Acyclic Graphs).
+
+The DAG generator can be thought of as the interface between the pipeline developer and DryPipe's task orchestration engine.
+
+Here's the simple DAG generator possible 
+
+```python
+def the_worlds_simplest_dag_generator(dsl):
+  yield dsl.task(
+        key="t1"
+    ).produces(
+        a_file=dsl.file("a-file.txt")
+    ).calls("""
+        #!/usr/bin/env bash
+        echo 'hello world' > $a_file
+    """)()
+```
+
+Most interesting pipelines are dynamic, i.e. the DAG _grow_ (new tasks are created) over the course of the pipeline execution. 
+
+DryPipe will track and orchestrate tasks, by invoking the generator repeatedly (a few times per minute) during the course of the pipeline execution.
+
+At every invocation, DryPipe will analyze the generated DAG, and figure out what needs to be done.
+
+Below is an example of a dynamic/growing DAG. For simplicity the status of tasks have only two status (r=running, c=completed).
+In reality there are many more (ready, launched running, step-started, failed, killed, timed-out, completed...)
+
+| time | DAG      [r=running], [c=completed]                              | pipeline status |
+|------|------------------------------------------------------------------|-----------------|
+| t0   | task-a[r]                                                        | running         |
+| t1   | task-a[c]                                                        | running         |
+| t2   | task-a[c], task-b[r]                                             | running         |
+| t3   | task-a[c], task-b[c], task-c_1[r], task-c_2[r], ..., task-c_n[r] | running         |
+| t4   | task-a[c], task-b[c], task-c_1[r], task-c_2[c], ..., task-c_n[r] | running         |
+| t5   | task-a[c], task-b[c], task-c_1[c], task-c_2[c], ..., task-c_n[c] | completed       |
+
+Each line of the table shows the list of tasks that would be yielded by the generator, at various points in time t0, t1, ...,t5. 
+
+
+### Well behaved DAG generators
+
+Well behaved DAG generators do **NOT** perform any work other than to generate tasks.
+
+Their results (iterators of Tasks) depend **only** on:
+
+1. the pipeline's input dataset
+2. the data produced by tasks that have completed
+3. the execution status of tasks in the DAG
+
+The DryPipe DSL is meant to make the above as easy as possible.
+
+The DSL expresses basically two things:
+
++ Task attributes (what code they execute, where, how, in/out arguments)
++ Producer/Consumer relationships between Tasks (ex: task A consumes argument X produced by task B)
+
+The DSL has a _declarative style_, a pipeline coder _declares_ the above, and DryPipe will do the rest.
+
+Examples in the first section will show pipelines with static DAGs (all the tasks get generated on the first invocation 
+of the generator function), examples of dynamic DAGs will come in the [next section](section_dynamic_dags)
+
+
+```python
+
+def my_pipeline_dag_generator(dsl):
+
+  yield dsl.task(
+        key="t1"
+    ).produces(
+        a_file=dsl.file("a-file.txt")
+    ).calls("""
+        #!/usr/bin/env bash
+        echo 'hello' > $a_file
+    """)()
+
+  yield dsl.task(
+        key="t2"
+    ).produces(
+        other_file=dsl.file("another-file.txt")
+    ).calls("""
+        #!/usr/bin/env bash
+        echo 'world' > $other_file
+    """)()
+```
+
+
 ### Dividing work into smaller chunks
 
 Here's an example of a two task pipeline. 
 
-Note: tasks t1 and t2 are independent (no data is passed between them)
-as a result, DryPipe will run them in parallel.
+Note: tasks t1 and t2 are independent (no data is passed between them), therefore DryPipe will run them in parallel.
 
 ```python
 
@@ -60,7 +147,7 @@ Most pipelines have tasks that depend on data produced by other tasks.
 
 In the following example, task t2 consumes a file produced by t1.
 
-DryPipe will launch task t2, when (and only when) task t1 has successfully completed. 
+DryPipe will therefore launch task t2, when (and only when) task t1 has successfully completed. 
 
 ```python
 
@@ -97,8 +184,12 @@ is resolved by ```$__pipeline_code_dir/my-script.sh``` (see [environment variabl
 
 ### Variable dependencies between Tasks
 
-When a task only consumes a variable (int, float, str) from an upstream task, it is more convenient to just pass the variable, 
-as opposed to having the producing file write it to a file and then reading from the consuming task.  
+When a task only needs a variable (int, float, str) from an upstream task, it is more convenient to just pass the variable, 
+as opposed to writing it in a file and then read by the consuming downstream task.  
+
+Variable passing between tasks is expressed as follows with the DSL
+
+Note: DryPipe will infer the producer/consumer relationships (and thus execution dependencies) from variable passing declarations.
 
 ```python
 def my_pipeline_dag_generator(dsl):
@@ -140,7 +231,7 @@ The following pipeline does the same things as the previous, but uses python fun
 
 Note1: functions have their var arguments correctly parsed, according to the types specified in the generator function. 
 
-Note2: also how output vars from the produces(...) clause are also passed as arguments.
+Note2: output vars from the produces(...) clause are also passed as arguments.
 
 Note3: output variables (declared in the produces(...) clause) are returned by functions with a python ```dict()```
 
@@ -205,21 +296,20 @@ def my_pipeline_dag_generator(dsl):
 ```
 
 ## Dynamic DAGs
+(section_dynamic_dags)=
 
-Most interesting pipelines will have a DAG that changes depending on the instances datasets.
+Most interesting pipelines will have DAGs that change depending on the input dataset.
 
-In DryPipe, the logic that drives te DAG is encoded in the generator function.
-
-The following examples show various scenarios of how DAGs can change depending on the dataset of a pipeline instance. 
+The following examples show how dynamic DAGs can be expressed with the DSL.
 
 ### Semi hardcoded DAGs
 
-When a pipeline is meant to run a very few data inputs, it can make sense to hard code every instance.
+Some pipeline are only meant to run very few inputs, in these cases, it might make sense to hard code every instance.
 
-The code below uses created two pipelines (pipeline_1_2_3 and pipeline_7_8_9_543), that work over two hardcoded datasets 
-(a dataset that consists of a sequence of numbers)
+The code below uses created two pipelines (pipeline_1_2_3 and pipeline_7_8_9_543), that work over two hardcoded 
+datasets (lists of ints).
 
-Both pipelines can then be called with:
+Both pipelines use the same generator function, and can then be run with:
 
 ```shell
 drypipe run -p my_modue:pipeline_1_2_3
@@ -260,14 +350,20 @@ def pipeline_7_8_9_543():
 
 Some Pipelines DAGs are driven by files from the pipeline dataset.
 
-The DAG generator function being a standard python, it's up to the pipeline developer to decide on the file format, 
-and how data from the file is parsed, in order to generate Tasks.
+Since the DAG generator is just a normal python function, there are no other constraint on customization other 
+than what can be coded in python code.
 
-In the following example, the generator function reads a TSV file, and yields a task for every line. 
+It's entirely up to the pipeline developer to decide on the input file format, how many files, how to parse them, which
+library to use, etc. 
 
-The path of the file is taken from an environment variable set before running the pipeline.
+Next example shows a common pattern:
 
-TSV input file example
+The pipeline's input consists of a TSV file, in which each line represents a unit or work. 
+
+The generator implements this, by reading the TSV file, and yielding a task for every line, with the proper arguments. 
+
+Note: the path of the file is taken from an environment variable set before running the pipeline, next example will 
+show another approach.
 
 ```shell
 export MY_INPUT_DATA_FILE_TSV=<a tsv file>
@@ -314,6 +410,9 @@ cp dataset.tsv ./pipeline-instance-dir-123
 drypipe run -p my_modue:my_pipeline --instance-dir=./pipeline-instance-dir-123
 ```
 
+Storing the pipeline's input data in seed $__pipeline_instance_dir has the advantage of having the instance dir, 
+contain the entirety of the pipeline instances data.
+
 ### DAG driven by task execution
 
 The following example introduces three new DSL elements:
@@ -322,7 +421,7 @@ The following example introduces three new DSL elements:
 + ```dsl.wait_for_tasks(task1, task2, ...)```
 + ```dsl.wait_for_matching_tasks(task1, task2, ...)```
 
-The DAG is a bit more complicated, so we'll illustrate it with a diagram:  
+The DAG is a bit more complicated, so we'll use diagram to show the "big picture":  
 
 ```{mermaid}
 flowchart LR
@@ -339,6 +438,41 @@ flowchart LR
     wN-->|"results.json"|analyze   
 ```
 
+This pipeline has an initial task (prepare_chunks), that creates N files, for which a task is created (task-for-chunk-i).
+
+prepare_task and task-for-chunk-0..n, have a producer/consumer relationship.  
+
+The DSL expresses this (in the code below), by declaring
+
++ ```dsl.fileset('work-chunk.*.fasta')``` 
+
+in the produces(...) clause of the producing task (prepare_task)
+
+All downstream consuming tasks are yielded in the body of the for expression: 
+
++ `for _ in dsl.wait_for_tasks(prepare_chunks):`
+
+The last task, depends on the completion of all previous, it's in a producer/consumer relationship with all 
+upstream task-for-chunk-* 
+
+The relationship is expressed with:
+
++ ```for matcher in dsl.wait_for_matching_tasks("task-for-chunk-*"):```
+
+
+The evolution of the pipeline's DAG over time could look as follows 
+
+| time | DAG      [r=running], [c=completed]                                                          | pipeline status |
+|------|----------------------------------------------------------------------------------------------|-----------------|
+| t0   | prepare_chunks[r]                                                                            | running         |
+| t1   | prepare_chunks[c]                                                                            | running         |
+| t2   | prepare_chunks[c], task-for-chunk-1[r], task-for-chunk-2[r], task-for-chunk-N[r]             | running         |
+| t3   | prepare_chunks[c], task-for-chunk-1[c], task-for-chunk-2[r], task-for-chunk-N[r]             | running         |
+| t4   | prepare_chunks[c], task-for-chunk-1[c], task-for-chunk-2[c], task-for-chunk-N[c]             | running         |
+| t5   | prepare_chunks[c], task-for-chunk-1[c], task-for-chunk-2[c], task-for-chunk-N[c], analyze[r] | running         |
+| t6   | prepare_chunks[c], task-for-chunk-1[c], task-for-chunk-2[c], task-for-chunk-N[c], analyze[c] | completed       |
+
+Each lines in the above table shows the return of the generator function at various times during the execution.
 
 ```python
 
@@ -427,25 +561,34 @@ def analyze_all(pattern_for_all_chunks, a_result_file):
 ```
 
 
-### Waiting for upstream tasks
+### When NOT to use dsl.wait_for
 
-Previous example show how producer/consumer dependencies between tasks can be expressed by declaring a consumed variable or file, 
-referring to the producing task's output, ex: 
+In some cases, a producer/consumer relationship can be expressed by simply passing a produced file or variable in the 
+consumes(...) clause of the downstream task, ex:
 
 ```python
 dsl.task("key=t2").consumes(z=t1.out.abc)
-``` 
+```
 
-It's the preferred/simpler way of declaring dependencies.
+In such cases, dsl.wait_for isn't necessary. DryPipe will _know_ that the consuming task needs to wait. 
 
-But sometimes, code in the generator function needs to access the actual result produced by a task, in order to parametrize downstream tasks.
+The above example shows cases where dsl.wait_for is needed.
 
-The DryPipe DSL provides the following functions for this:
+The next example shows another case where dsl.wait_for is useful, where the generator function needs to access 
+the actual result (variable x=dsl.var(int)) produced by a task, in order to parametrize a downstream task.
 
-+ `dsl.wait_for_tasks(t_1, ..., t_n)` where ti is ta task or task key
-+ `dsl.wait_for_matching_tasks(task_key_glob_pattern_1, ..., task_key_glob_pattern_n)` where task_key_glob_pattern_i is a glob pattern matched against task keys
+The task "highly-dependent-task" needs task_a.out.x to estimate a proper slurm execution time. Other uses cases
+can easily be imagined.
 
-The following example shows how it works
+In the example, "highly-dependent-task" also needs to wait after tasks: dsl.wait_for_matching_tasks("task-prefix-*", "other-task-prefix-*")
+just for the sake of showing how waiting after many kinds of tasks is expressed.
+
+The main things to remember:
+
+1. dsl.wait_for_tasks and dsl.wait_for_matching_tasks are used in conjunction with `for`
+2. the `for` loop will return an empty iterator when tasks waited upon are NOT completed, and a sigle item otherwise
+
+see also [dsl.wait_for_tasks](api_dsl_wait_for_tasks) and [dsl.wait_for_matching_tasks](api_dsl_wait_for_matching_tasks)
 
 ```python
 
@@ -457,7 +600,7 @@ def my_dag_generator(dsl):
         x=dsl.var(int) 
     ).calls(
         some_func
-    )
+    )()
         
     yield task_a
     
@@ -535,7 +678,7 @@ def my_coposite_dag_generator(dsl):
             z=dsl.var(int)
         ).calls(
             a_func
-        )
+        )()
 
     for matcher in other_sub_pipeline.wait_for_matching_tasks("do-it-*"):
         for task_dependent_on_a_super_task in dsl.wait_for_tasks("task-dependent-on-a-super-task"):
@@ -546,7 +689,7 @@ def my_coposite_dag_generator(dsl):
                 a_pattern=matcher.all.a_file_defined_in_do_it_tasks.as_glob_expression()
             ).calls(
                 grande_finale_func
-            )
+            )()
 ```
 
 # Directory structure
@@ -673,7 +816,7 @@ def my_pipeline_dag_generator(dsl):
         task_conf=TaskConf(
             executer_type="process"
         )
-    ).calls(f1)
+    ).calls(f1)()
 
     # Task will run as a slurm job (orchestrating host must be a slurm login node)
     yield dsl.task(
@@ -686,7 +829,7 @@ def my_pipeline_dag_generator(dsl):
             ],
             container="my-container.sif"            
         )
-    ).calls(f2)
+    ).calls(f2)()
 
     yield dsl.task(
         key="t3",
@@ -701,7 +844,7 @@ def my_pipeline_dag_generator(dsl):
                 "--time=0:5:00"
             ]
         )
-    ).calls(f3)
+    ).calls(f3)()
 
     yield dsl.task(
         key="t1",
@@ -709,7 +852,7 @@ def my_pipeline_dag_generator(dsl):
             executer_type="process",
             ssh_specs="me@a-slurm-login-host:~/.ssh/id_rsa"
         )
-    ).calls(f4)
+    ).calls(f4)()
 
 ```
 
@@ -780,6 +923,13 @@ todo: write the doc
 ## monitor pipelines with the Web interface
 
 todo: write the doc
+
+# API
+
+(api_dsl_wait_for_tasks)=
+(api_dsl_wait_for_matching_tasks)=
+
+TODO...
 
 # Definitions
 
