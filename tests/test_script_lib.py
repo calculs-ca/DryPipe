@@ -44,8 +44,8 @@ class ScriptLibTests(unittest.TestCase):
                 export __control_dir=$__pipeline_instance_dir/.drypipe/{pseudo_task_key}
                 export __out_log=$__control_dir/out.log
                 export __err_log=$__control_dir/err.log
-                export __work_dir=$__pipeline_instance_dir/publish/{pseudo_task_key}   
-                export __file_list_to_sign=$__work_dir/a.txt,$__work_dir/b.txt
+                export __task_output_dir=$__pipeline_instance_dir/output/{pseudo_task_key}   
+                export __file_list_to_sign=$__task_output_dir/a.txt,$__task_output_dir/b.txt
             """))
         os.chmod(task_env_file, 0o764)
 
@@ -60,7 +60,7 @@ class ScriptLibTests(unittest.TestCase):
         pseudo_task_key = "task0"
         control_dir = os.path.join(d.sandbox_dir, '.drypipe', pseudo_task_key)
         Path(control_dir).mkdir()
-        work_dir = os.path.join(d.sandbox_dir, 'publish', pseudo_task_key)
+        work_dir = os.path.join(d.sandbox_dir, 'output', pseudo_task_key)
         Path(work_dir).mkdir()
         self._write_task_env_file(control_dir, pseudo_task_key)
         os.chmod(script_path, 0o764)

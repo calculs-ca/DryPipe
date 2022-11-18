@@ -299,7 +299,7 @@ class PipelineInstance:
         self.pipeline = pipeline
         self.pipeline_instance_dir = pipeline_instance_dir
         self.work_dir = os.path.join(pipeline_instance_dir, ".drypipe")
-        self._publish_dir = os.path.join(pipeline_instance_dir, "publish")
+        self._publish_dir = os.path.join(pipeline_instance_dir, "output")
         self.dag_determining_tasks_ids = set()
         self.tasks = self.pipeline.task_set_generator(self)
         self._is_remote_instance_directory_prepared = set()

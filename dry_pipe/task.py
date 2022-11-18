@@ -324,7 +324,7 @@ class Task:
         yield "__is_remote", str(self.is_remote())
 
         yield "__control_dir", abs_from_pipeline_instance_dir(f"{self.control_dir()}")
-        yield "__work_dir", abs_from_pipeline_instance_dir(f"{self.work_dir()}")
+        yield "__task_output_dir", abs_from_pipeline_instance_dir(f"{self.work_dir()}")
         yield "__pipeline_instance_name", os.path.basename(self.pipeline_instance.pipeline_instance_dir)
 
         #if isinstance(self.executer, Slurm):
@@ -359,7 +359,7 @@ class Task:
             elif isinstance(v, OutFileSet):
                 if collect_deps_and_outputs_func is not None:
                     collect_deps_and_outputs_func(None, os.path.join(self.work_dir(), v.file_set.glob_pattern))
-                yield "__fileset_to_sign", f"$__work_dir/{v.file_set.glob_pattern}"
+                yield "__fileset_to_sign", f"$__task_output_dir/{v.file_set.glob_pattern}"
 
         yield "__file_list_to_sign", ",".join(out_files)
 
@@ -833,7 +833,7 @@ class Task:
         return os.path.join(".drypipe", self.key)
 
     def work_dir(self):
-        return os.path.join("publish", self.key)
+        return os.path.join("output", self.key)
 
     def pid_file_glob_matcher(self):
         return os.path.join(self.control_dir(), "*.pid")

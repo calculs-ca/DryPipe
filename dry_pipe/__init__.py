@@ -74,7 +74,7 @@ class TaskSetAccessor:
         return Val(
             os.path.join(
                 "$__pipeline_instance_dir",
-                "publish",
+                "output",
                 self.task_match_all.task_match.pattern,
                 self.product_var.file_path
             ),
@@ -116,6 +116,12 @@ class DryPipeDsl:
         self.task_conf = task_conf or TaskConf("process")
         self.task_namespance_prefix = task_namespance_prefix
         self.task_by_keys = task_by_keys
+
+    def file_in_pipeline_instance_dir(self, file_name, must_exist=True):
+        f = os.path.join(self.pipeline_instance.pipeline_instance_dir, file_name)
+        if must_exist and not os.path.exists(f):
+            raise Exception(f"file not found {f}")
+        return f
 
     def sub_pipeline(self, pipeline, namespace_prefix):
         return SubPipeline(pipeline, namespace_prefix, self)

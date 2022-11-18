@@ -191,6 +191,7 @@ class NonTrivialPipelineTests(unittest.TestCase):
             vars(fancy_report.produced_file),
             {
                 "file_path": 'fancy_report.txt',
+                "glob_pattern": None,
                 "manage_signature": None,
                 'is_dummy': False,
                 "producing_task": report_task,

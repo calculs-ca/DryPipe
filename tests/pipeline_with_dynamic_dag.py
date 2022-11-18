@@ -4,10 +4,10 @@ from dry_pipe import DryPipe
 
 
 @DryPipe.python_call()
-def prepare_tasks(__work_dir):
+def prepare_tasks(__task_output_dir):
 
     for very_special_number in [1, 2, 3, 4]:
-        work_chunk_file = os.path.join(__work_dir, f"work_chunk.{very_special_number}.txt")
+        work_chunk_file = os.path.join(__task_output_dir, f"work_chunk.{very_special_number}.txt")
 
         print(f"--->{work_chunk_file}")
 
@@ -67,7 +67,7 @@ def pipeline_task_generator(dsl):
 
     for pt in dsl.wait_for_tasks(preparation_task):
         for work_file_handle in pt.out.work_files.fetch():
-            chunk_number = work_file_handle.file_path.split(".")[-2]
+            chunk_number = work_file_handle.basename().split(".")[1]
 
             yield dsl.task(
                 key=f"work_chunk.{chunk_number}"

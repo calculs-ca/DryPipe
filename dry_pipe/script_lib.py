@@ -544,7 +544,7 @@ def launch_task_from_remote(task_key, is_slurm, wait_for_completion, drypipe_tas
     out_sigs_dir = os.path.join(control_dir, 'out_sigs')
     touch(os.path.join(control_dir, 'output_vars'))
 
-    work_dir = os.path.join(pipeline_instance_dir, 'publish', task_key)
+    work_dir = os.path.join(pipeline_instance_dir, 'output', task_key)
     scratch_dir = os.path.join(work_dir, "scratch")
 
     for d in [work_dir, out_sigs_dir, scratch_dir]:

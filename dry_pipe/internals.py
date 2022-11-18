@@ -328,7 +328,7 @@ class OutFileSet:
 
         for f in glob.glob(pattern):
             f = make_path_relative_to_pipeline_instance_dir(f)
-            yield ProducedFile(f, self.name_in_producing_task, True, self.producing_task)
+            yield ProducedFile(f, self.name_in_producing_task, True, self.producing_task, self.file_set.glob_pattern)
 
 
 class SubPipeline:
@@ -368,7 +368,7 @@ class PreExistingFile:
 
 class ProducedFile:
 
-    def __init__(self, file_path, var_name, manage_signature, producing_task, is_dummy=False):
+    def __init__(self, file_path, var_name, manage_signature, producing_task, is_dummy=False, glob_pattern=None):
 
         if file_path is None or file_path == "" or file_path == ".":
             raise ValidationError(f"invalid file {file_path}")
@@ -381,6 +381,10 @@ class ProducedFile:
         self.producing_task = producing_task
         self.manage_signature = manage_signature
         self.is_dummy = is_dummy
+        self.glob_pattern = glob_pattern
+
+    def basename(self):
+        return self.file_path
 
     def to_hash(self):
         return self.file_path

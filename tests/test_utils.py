@@ -79,7 +79,7 @@ class TestSandboxDir:
             return d
 
         drypipe_dir = mkdir('.drypipe')
-        mkdir('publish')
+        mkdir('output')
 
         shutil.copy(script_lib.__file__, drypipe_dir)
 

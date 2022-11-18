@@ -89,7 +89,7 @@ class RemoteTaskTests1(unittest.TestCase):
 
                 pipeline_instance.run_sync()
 
-                with open(os.path.join(d.sandbox_dir, "publish", "t3", "f3.txt")) as f:
+                with open(os.path.join(d.sandbox_dir, "output", "t3", "f3.txt")) as f:
                     self.assertEqual(
                         {1, 2},
                         {int(s) for s in f.read().split() if s.strip() != ""}

@@ -356,7 +356,7 @@ class RemoteSSH(Executor):
                 " --filter='+ .drypipe/*/*.log'",
                 " --filter='+ .drypipe/*/history.tsv'",
                 " --filter='- .drypipe/*/*'",
-                " --filter='- publish'",
+                " --filter='- output'",
                 " --filter='- *.sh'",
                 f" {remote_dir}/{remote_pid_basename} {dst}"
             ])
