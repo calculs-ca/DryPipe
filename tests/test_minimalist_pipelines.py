@@ -4,6 +4,7 @@ import unittest
 import pipeline_with_single_bash_task
 import pipeline_with_single_python_task
 import pipeline_with_variable_passing
+import pipeline_with_two_python_tasks
 from dry_pipe import TaskConf
 from dry_pipe.script_lib import env_from_sourcing
 from test_utils import TestSandboxDir
@@ -91,3 +92,14 @@ class MinimalistPipelinesTests(unittest.TestCase):
         self.assertEqual(v, 1234)
 
         self.assertEqual(consume_and_produce_a_var.out.result.fetch(), 2468)
+
+    def test_consume_var_local_is_upstream_name(self):
+        d = TestSandboxDir(self)
+
+        pipeline_instance = d.pipeline_instance_from_generator(
+            pipeline_with_two_python_tasks.pipeline,
+            completed=True
+        )
+
+        pipeline_with_two_python_tasks.validate_two_task_pipeline(pipeline_instance)
+

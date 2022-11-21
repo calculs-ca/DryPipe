@@ -15,7 +15,7 @@ from test_pipeline_composition import PipelineCompositionTests
 from test_regressions import RegressionTests
 from test_remote_tasks import RemoteTaskTests1, RemoteTaskTests2, RemoteTaskTestsWithSlurm
 from test_script_lib import ScriptLibTests
-from test_single_task_pipelines import SingleTaskPipelinesTests, MinimalistPipelinesTests
+from test_minimalist_pipelines import SingleTaskPipelinesTests, MinimalistPipelinesTests
 
 
 

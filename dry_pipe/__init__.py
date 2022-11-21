@@ -1,3 +1,4 @@
+import collections
 import inspect
 import json
 import os
@@ -268,21 +269,27 @@ class TaskBuilder:
 
     def consumes(self, *args, **kwargs):
 
-        def upstream_task_completion_dependencies():
+        def deps_from_args():
             for o in args:
-                if isinstance(o, Task):
-                    yield o
+                if isinstance(o, ProducedFile):
+                    yield o.var_name, o
+                elif isinstance(o, OutputVar):
+                    yield o.name, o
                 else:
                     raise ValidationError(
-                        f"{self}._consumes(...) must be a list of key=value, or a task, whose completion is depended upon"
+                        f"bad arg: {o} passed to {self}"
                     )
+
+        for v, count in collections.Counter([k for k, _ in deps_from_args()]).items():
+            if count > 1:
+                raise Exception(f"duplicate variable {v} in task(key={self.key}).consumes(...) clause")
 
         return TaskBuilder(** {
             ** vars(self),
-            ** {"_upstream_task_completion_dependencies": list(upstream_task_completion_dependencies())},
             ** {"_consumes": {
-                ** self._consumes,
-                ** dict(self._deps_from_kwargs(kwargs))
+                    ** self._consumes,
+                    ** dict(deps_from_args()),
+                    ** dict(self._deps_from_kwargs(kwargs))
                 }
             }
         })
