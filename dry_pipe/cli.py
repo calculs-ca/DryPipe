@@ -19,7 +19,8 @@ from dry_pipe.janitors import Janitor
 from dry_pipe.monitoring import fetch_task_groups_stats
 from dry_pipe.pipeline import PipelineInstance, Pipeline
 from dry_pipe.pipeline_state import PipelineState
-from dry_pipe.script_lib import env_from_sourcing, parse_in_out_meta
+from dry_pipe.script_lib import env_from_sourcing, parse_in_out_meta, create_task_logger, iterate_out_vars_from, \
+    write_out_vars
 from dry_pipe.task_state import NON_TERMINAL_STATES
 
 logger = logging.getLogger(__name__)
@@ -651,10 +652,14 @@ def call(ctx, mod_func, task_env):
             var_type_dict[var_name] = typez
 
     def get_and_parse_arg(k):
-        # TODO: Validate missing args
         v = env.get(k)
         if v is None:
-            return v
+            tk = os.environ['__task_key']
+            raise Exception(
+                f"Task {tk} called {mod_func} with None assigned to arg {k}\n" +
+                f"make sure task has var {k} declared in it's consumes clause. Ex:\n" +
+                f"  dsl.task(key={tk}).consumes({k}=...)"
+            )
         typez = var_type_dict.get(k)
         if typez == "int":
             return int(v)
@@ -680,12 +685,19 @@ def call(ctx, mod_func, task_env):
         for k, v in python_task.signature.parameters.items()
     ]
 
+    control_dir = env["__control_dir"]
+
+    task_logger = create_task_logger(control_dir)
+
+    task_logger.info("will invoke PythonCall: %s(%s)", mod_func, ', '.join([str(a) for a in args]))
+
     out_vars = None
 
     try:
         out_vars = python_task.func(* args)
     except Exception as ex:
         traceback.print_exc()
+        logging.shutdown()
         exit(1)
 
     if out_vars is not None and not isinstance(out_vars, dict):
@@ -694,31 +706,34 @@ def call(ctx, mod_func, task_env):
             f"@DryPipe.python_call() can only return a python dict, or None"
         )
 
-    # TODO: complain if missing task __X vars
-
-    control_dir = env["__control_dir"]
-
     try:
         if out_vars is not None:
-            with open(env["__output_var_file"], "a+") as f:
-                for k, v in out_vars.items():
-                    try:
-                        v = json.dumps(v)
-                    except TypeError as ex0:
-                        print(
-                            f"task call {control_dir}.{mod_func} returned var {k} of unsupported type: {type(v)}" +
-                            " only primitive types are supported.",
-                            file=sys.stderr
-                        )
-                        exit(1)
-                    f.write(f"{k}={v}\n")
+            prev_out_vars = dict(iterate_out_vars_from(os.environ["__output_var_file"]))
+
+            for k, v in out_vars.items():
+                try:
+                    v = json.dumps(v)
+                    prev_out_vars[k] = v
+                except TypeError as ex0:
+                    print(
+                        f"task call {control_dir}.{mod_func} returned var {k} of unsupported type: {type(v)}" +
+                        " only primitive types are supported.",
+                        file=sys.stderr
+                    )
+                    logging.shutdown()
+                    exit(1)
+
+            write_out_vars(prev_out_vars)
 
         for pid_file in glob.glob(os.path.join(control_dir, "*.pid")):
             os.remove(pid_file)
 
     except Exception as ex:
         traceback.print_exc()
+        logging.shutdown()
         exit(1)
+
+    logging.shutdown()
 
 
 @click.command()

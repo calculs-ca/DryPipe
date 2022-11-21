@@ -5,6 +5,8 @@ import pipeline_with_single_bash_task
 import pipeline_with_single_python_task
 import pipeline_with_variable_passing
 import pipeline_with_two_python_tasks
+import pipeline_with_multistep_tasks_with_shared_vars
+
 from dry_pipe import TaskConf
 from dry_pipe.script_lib import env_from_sourcing
 from test_utils import TestSandboxDir
@@ -103,3 +105,13 @@ class MinimalistPipelinesTests(unittest.TestCase):
 
         pipeline_with_two_python_tasks.validate_two_task_pipeline(pipeline_instance)
 
+    def test_variable_sharing_between_task_calls(self):
+
+        d = TestSandboxDir(self)
+
+        pipeline_instance = d.pipeline_instance_from_generator(
+            pipeline_with_multistep_tasks_with_shared_vars.dag_generator,
+            completed=True
+        )
+
+        pipeline_with_multistep_tasks_with_shared_vars.validate(self, pipeline_instance)

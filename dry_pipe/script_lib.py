@@ -456,6 +456,18 @@ def transition_to_completed(state_file):
     return _transition_state_file(state_file, "completed-unsigned")
 
 
+def write_out_vars(out_vars):
+
+    all_vars = [
+        f"{k}={v}" for k, v in out_vars.items()
+    ]
+
+    with open(os.environ["__output_var_file"], "w") as f:
+        f.write("\n".join(all_vars))
+
+    logger.info("out vars written: %s", ",".join(all_vars))
+
+
 def run_script(script, container=None):
 
     env = {**os.environ}
@@ -506,22 +518,28 @@ def run_script(script, container=None):
         with PortablePopen(cmd, env=env) as p:
             p.wait_and_raise_if_non_zero()
             out = p.stdout_as_string()
-            output_vars = json.loads(out)
+            step_output_vars = json.loads(out)
+            task_output_vars = dict(iterate_out_vars_from(os.environ["__output_var_file"]))
 
-            with open(os.environ["__output_var_file"], "a") as out_vars:
+            for producing_task_key, var_metas, file_metas in parse_in_out_meta({
+                k: v
+                for k, v in os.environ.items()
+                if k.startswith("__meta_")
+            }):
+                if producing_task_key != "":
+                    continue
 
-                for producing_task_key, var_metas, file_metas in parse_in_out_meta({
-                    k: v
-                    for k, v in os.environ.items()
-                    if k.startswith("__meta_")
-                }):
-                    if producing_task_key != "":
-                        continue
+                for var_meta in var_metas:
 
-                    for var_meta in var_metas:
+                    name_in_producing_task, var_name, typez = var_meta
+                    v = step_output_vars.get(var_name)
 
-                        name_in_producing_task, var_name, typez = var_meta
-                        out_vars.write(f"{var_name}={output_vars.get(var_name)}\n")
+                    task_output_vars[var_name] = v
+                    if v is not None:
+                        os.environ[var_name] = v
+
+            write_out_vars(task_output_vars)
+
 
     except Exception as ex:
         logger.exception(ex)
