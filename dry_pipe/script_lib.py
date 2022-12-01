@@ -476,7 +476,7 @@ def run_script(script, container=None):
     out = os.environ['__out_log']
     err = os.environ['__err_log']
 
-    cmd = ["bash", "-c", f". {script} 1> {out} 2> {err} && {dump_env}"]
+    cmd = ["bash", "-c", f". {script} 1>> {out} 2>> {err} && {dump_env}"]
 
     if container is not None:
         container_full_path = os.path.join(os.environ['__containers_dir'], container)
