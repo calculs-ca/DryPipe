@@ -127,6 +127,8 @@ class OutputVar:
     def fetch(self):
         varz = self.producing_task.out_vars_by_name()
         v = varz.get(self.name)
+        if v is None:
+            return None
         return self.unformat_for_python(v)
 
 
