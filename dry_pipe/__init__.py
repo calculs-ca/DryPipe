@@ -24,6 +24,35 @@ class DryPipe:
 
     @staticmethod
     def python_call(tests=[]):
+        """
+        annotation for methods that are called by Tasks, i.e. to go in a task's calls(...) clause
+        :param tests: test cases
+        A test case is a dict where keys map to arguments of the function.
+
+        .. highlight:: python
+        .. code-block:: python
+            @DryPipe.python_call(test=[{"a":123, "b": "abc"}, {"a": 987, "b": "z"}])
+            def my_func(a, b, test=None):
+                if test is not None:
+                    print(f"I'm being tested, a={a} and b={b}")
+                else:
+                    print("normal call")
+
+        Ex, to run the 2nd test above with the CLI:
+
+        .. highlight:: shell
+        .. code-block:: shell
+            drypipe test <module>.my_func:1
+
+        THe above call is equivalent to:
+        .. highlight:: python
+        .. code-block:: python
+            t = {"a": 987, "b": "z"}
+            my_func(**t, t)
+
+
+        where idx is
+        """
         return lambda func: PythonCall(func, tests)
 
     @staticmethod
@@ -39,18 +68,23 @@ class DryPipe:
         }
     ):
         """
-        :param generator_of_tasks:
-        :param pipeline_code_dir:
+        :param generator_of_tasks: a python generator function that generates Tasks
+        :param pipeline_code_dir: The code source root of the pipeline. Defaults to the directory containing the python file containing the DAG generator
         :param task_conf:
         :param containers_dir:
         :param env_vars:
         :param remote_task_confs: when a list of TaskConf is given, drypipe prepare-remote-sites will
                upload (rsync) $containers_dir and $pipeline_code_dir to all remote sites
         :param task_groupers:
-        example:
-            task_groupers={
-                "group_by_task_key_last_char": lambda task_key: task_key[-1]
-            }
+        .. highlight:: python
+        .. code-block:: python
+
+            DryPipe.create_pipeline(
+                my_dag_generator,
+                task_groupers={
+                    "group_by_task_key_last_char": lambda task_key: task_key[-1]
+                }
+            )
         """
 
         from dry_pipe.pipeline import Pipeline
@@ -125,9 +159,22 @@ class DryPipeDsl:
         return f
 
     def sub_pipeline(self, pipeline, namespace_prefix):
+        """
+        :param pipeline: the sub pipeline
+        :param namespace_prefix: The prefix for all task keys of the sub pipeline
+        :return: an instance of SubPipeline, must be yielded
+        """
         return SubPipeline(pipeline, namespace_prefix, self)
 
     def wait_for_matching_tasks(self, *patterns):
+        """
+
+        :param patterns: one or more [glob pattern](https://docs.python.org/3/library/glob.html)
+        :return: a tuple of one :py:class:<dry_pipe.TaskMatch> for every pattern passed as argument
+
+        ex:
+            for matcher_for_a, matcher_for_b in dsl.wait_for_matching_tasks("a*","b*"):
+        """
 
         task_matchers = []
 
@@ -154,6 +201,19 @@ class DryPipeDsl:
             yield tuple(task_matchers)
 
     def wait_for_tasks(self, *args):
+        """
+
+        :param args: one or more task, or task_key
+        :return: a tuple of one task for every task or task key passed as argument
+        ex1: for t1 in dsl.wait_for_tasks(t1):
+
+        ex2: for t1, t2, t3 in dsl.wait_for_tasks(task1, task2, "key_of_task3"):
+                assert t1 == task1
+                assert t2 == task2
+                assert t3.key == "key_of_task3"
+
+        Note: t1
+        """
 
         def it_completed_tasks():
             for a in args:
@@ -193,9 +253,19 @@ class DryPipeDsl:
                 yield tuple(completed_tasks)
 
     def var(self, type=str, may_be_none=False):
+        """
+        :param type: str, int, or float
+        :param may_be_none:
+        :return an object that goes in task.produces():
+        """
         return IncompleteVar(type, may_be_none)
 
     def val(self, v):
+        """
+        constant value to pass a task input, in the consumes(...) clause
+        :param v: the value, either an int or a str
+        :return:
+        """
         return Val(v)
 
     def file(self, name, manage_signature=None):
@@ -212,6 +282,21 @@ class DryPipeDsl:
     def task(self,
              key,
              task_conf=None):
+        """
+        Creates a :py:meth:`dry_pipe.TaskBuilder`, the object for declaring tasks
+
+        .. highlight:: python
+        .. code-block:: python
+
+            def my_dag_generator(dsl):
+                yield dsl.task(key="t1").\\
+                    consumes(other_task.out.x).\\
+                    produces(z=dsl.var(int)).\\
+                    calls(f1)()
+        :param key:
+        :param task_conf:
+        :return: TaskBuilder
+        """
 
         if task_conf is None:
             task_conf = self.task_conf
@@ -268,6 +353,12 @@ class TaskBuilder:
         }
 
     def consumes(self, *args, **kwargs):
+        """
+        The consumes clause
+        :param args:
+        :param kwargs:
+        :return a new :py:meth:`dry_pipe.TaskBuilder` with the added consumes declaration
+        """
 
         def deps_from_args():
             for o in args:
@@ -301,6 +392,12 @@ class TaskBuilder:
         })
 
     def produces(self, *args, **kwargs):
+        """
+        The produces clause
+        :param args:
+        :param kwargs:
+        :return a new :py:meth:`dry_pipe.TaskBuilder` with the added produces declaration
+        """
 
         if len(args) > 0:
             raise ValidationError(
@@ -330,6 +427,11 @@ class TaskBuilder:
         })
 
     def calls(self, *args, **kwargs):
+        """
+        Adds a calls() to the task declaration
+        :param args: a python function annotated with :py:meth:`.python_call` or a bash snippet with a proper shebang
+        :return a new :py:meth:`dry_pipe.TaskBuilder` with the added call
+        """
 
         task_conf = self.task_conf
         container = kwargs.get("container")
@@ -402,6 +504,33 @@ def host_has_sbatch():
 
 
 class TaskConf:
+    """
+    :param executer_type: 'process' or 'slurm'
+    :param ssh_specs: me@a-host:PORT:/path/to/ssh-private-key
+    :param slurm_account: a slurm username
+    :param sbatch_options: list of string for every sbatch option, ex: ["--time=0:1:00", "--mem=30G", "--cpus-per-task=24"]
+    :param container: the file name of the container, ex: my-container.sif (without path, containers
+        the file must exist in
+          $__containers_dir/<container>
+        the default value of $__containers_dir is $__pipeline_code_dir/containers
+        Note: for remote tasks (when ssh_specs is defined, the container file must exist in `remote_containers_dir`)
+    :param command_before_launch_container:
+    :param remote_pipeline_code_dir:
+    :param python_bin:
+     By default, will use the same python bin as the one running the cli
+     to run in a specific virtualenv:
+        /path/to/my_virtualenv/bin/python
+     to run the task in a miniconda env:
+        /path/to/my-miniconda3/envs/<my-conda-env>/bin/python
+     if running in a container, it should point to the python executable in the container, most likel:
+        /usr/bin/python3
+    :param remote_base_dir:
+        the remote directory that will contain the $__pipeline_instance_dir structure
+    :param remote_containers_dir:
+        the directory containing the container sif files
+    :param python_interpreter_switches:
+        extra switches to add to the python executable that will launch the python call (only applies to PythonCall)
+    """
 
     @staticmethod
     def default():
