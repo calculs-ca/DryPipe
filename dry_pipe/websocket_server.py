@@ -1,7 +1,6 @@
 import asyncio
 import json
 import logging
-import os
 from threading import Thread
 
 import socketio
@@ -18,12 +17,12 @@ logger = logging.getLogger(__name__)
 class WebsocketServer(AsyncNamespace):
 
     @staticmethod
-    def start(bind_address, port, pipeline_instances_iterator=None, instances_dir_if_has_local_janitor=None):
+    def start(bind_address, port, instance_dirs_to_pipelines):
 
         try:
             SubscriptionRegistry.init()
 
-            server_websocket_adapter = WebsocketServer(instances_dir_if_has_local_janitor)
+            server_websocket_adapter = WebsocketServer(instance_dirs_to_pipelines)
 
             def _is_port_in_use(bind_address, port):
                 import socket
@@ -31,30 +30,14 @@ class WebsocketServer(AsyncNamespace):
                     return s.connect_ex((bind_address, port)) == 0
 
             if _is_port_in_use(bind_address, port):
-                print(f" port {port} is used by another application, use --port=X to listen on another port")
+                logger.error(f" port {port} is used by another application, use --port=X to listen on another port")
                 return
 
-            socket_io_server = socketio.AsyncServer(
-                async_mode='asgi', logger=True, engineio_logger=True
-            )
+            logger.info("listening on %s", f"http://{bind_address}:{port}")
+
+            socket_io_server = socketio.AsyncServer(async_mode='asgi')
 
             socket_io_server.register_namespace(server_websocket_adapter)
-
-            def _obsolete():
-                if server_websocket_adapter.ui_janitor is not None:
-
-                    def janitor_thread_func():
-
-                        async def go():
-                            await server_websocket_adapter.janitor()
-
-                        logger.info("starting ui_janitor thread")
-                        loop = asyncio.get_event_loop()
-                        loop.run_until_complete(go())
-
-                    janitor_thread = Thread(target=janitor_thread_func)
-                    janitor_thread.start()
-                    logger.info("ui_janitor thread started")
 
             janitor_thread = Thread(target=lambda: server_websocket_adapter.janitor())
             janitor_thread.start()
@@ -84,16 +67,16 @@ class WebsocketServer(AsyncNamespace):
         except Exception as ex:
             logger.exception(ex)
 
-    def __init__(self, instances_dir_if_has_local_janitor=None):
+    def __init__(self, instance_dirs_to_pipelines):
         super(AsyncNamespace, self).__init__(DRYPIPE_WEBSOCKET_NAMESPACE)
+
+        if instance_dirs_to_pipelines is None:
+            raise Exception(f"instance_dirs_to_pipelines can't be None")
+
         self.drypipe_ui_session_id = None
 
-        if instances_dir_if_has_local_janitor is not None:
-            logger.info("will run local ui_janitor on dir %s", instances_dir_if_has_local_janitor)
-            self.ui_janitor = UIJanitor(instances_dir_if_has_local_janitor)
-        else:
-            self.ui_janitor = None
-            raise Exception(f"not supported")
+        logger.info("will run local ui_janitor on dir %s", instance_dirs_to_pipelines)
+        self.ui_janitor = UIJanitor(instance_dirs_to_pipelines)
 
     def janitor(self):
 
@@ -115,6 +98,7 @@ class WebsocketServer(AsyncNamespace):
 
                 for m in self.ui_janitor.messages_for_round():
 
+                    logger.debug(f"will send %s", m)
                     async def go():
                         await self.trigger_event("broadcast", None, m)
 
@@ -131,8 +115,7 @@ class WebsocketServer(AsyncNamespace):
     async def send_latest_subscription_registry(self):
         self.server.emit("latest_subscription_registry")
 
-
-    def _autheticate(self, http_env):
+    def _authenticate(self, http_env):
 
         headers = http_env["asgi.scope"]["headers"]
 

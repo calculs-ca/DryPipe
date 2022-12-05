@@ -339,7 +339,7 @@ def run(
         server = PipelineUIServer.init_single_pipeline_instance(pipeline_instance.get_state())
         server.start()
 
-        WebsocketServer.start(bind, port)
+        WebsocketServer.start(bind, port, instances_dir_if_has_local_janitor=pipeline_instance.pipeline_instance_dir)
         # Stopping threads break CTRL+C, let the threads die with the process exit
         #server.stop()
         #janitor.do_shutdown()
@@ -476,8 +476,12 @@ def requeue_single(pipeline, single):
 @click.option('--env', type=click.STRING, default=None)
 def watch(ctx, instances_dir_to_pipelines, env):
 
+    _configure_logging(None)
+
     def g():
-        for instances_dir, mod_func in instances_dir_to_pipelines.split(","):
+        for d_to_p in instances_dir_to_pipelines.split(","):
+
+            instances_dir, mod_func = d_to_p.split("=")
 
             if not os.path.exists(instances_dir):
                 pathlib.Path(instances_dir).mkdir(parents=True)
@@ -486,7 +490,7 @@ def watch(ctx, instances_dir_to_pipelines, env):
             pipeline.env_vars = env
             yield instances_dir, pipeline
 
-    janitor = Janitor(pipeline_instances_iterator=dict(g()))
+    janitor = Janitor(pipeline_instances_iterator=Pipeline.pipeline_instances_iterator(dict(g())))
 
     janitor.start()
 
@@ -537,8 +541,12 @@ def _validate_task_generator_callable_with_single_dsl_arg_and_get_module_file(ta
 def serve_ui(ctx, instances_dir_to_pipelines, bind, port):
     from dry_pipe.websocket_server import WebsocketServer
 
+    _configure_logging(None)
+
     def g():
-        for instances_dir, mod_func in instances_dir_to_pipelines.split(","):
+        for t in instances_dir_to_pipelines.split(","):
+
+            instances_dir, mod_func = t.split("=")
 
             if not os.path.exists(instances_dir):
                 pathlib.Path(instances_dir).mkdir(parents=True)

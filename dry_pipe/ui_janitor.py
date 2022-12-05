@@ -3,19 +3,20 @@ import os
 
 from dry_pipe.actions import TaskAction
 from dry_pipe.pubsub import SubscriptionRegistry
-from dry_pipe.pubsub_messages import all_pipeline_states_as_json, task_details_message, pipeline_counts_message
+from dry_pipe.pubsub_messages import all_pipeline_states_as_json, task_details_message, pipeline_counts_message, \
+    full_instances_dir_for_pdir
 
 logger = logging.getLogger(__name__)
 
 
 class UIJanitor:
 
-    def __init__(self, instances_dir):
-        self.instances_dir = instances_dir
+    def __init__(self, instance_dirs_to_pipelines):
+        self.instance_dirs_to_pipelines = instance_dirs_to_pipelines
 
     def _pack_message(self, event, sids, observed_key, data):
 
-        logger.debug("packing message %s for %s", event, sids)
+        logger.debug("packing message %s for %s, data:%s", event, sids, data)
 
         return {
             "event": event,
@@ -30,17 +31,17 @@ class UIJanitor:
 
         if len(sids) > 0:
             yield self._pack_message(
-                "running-pipelines", sids, "", all_pipeline_states_as_json(self.instances_dir)
+                "running-pipelines", sids, "", all_pipeline_states_as_json(self.instance_dirs_to_pipelines)
             )
 
         for task_key, sids in SubscriptionRegistry.instance.task_keys_to_sids().items():
             yield self._pack_message(
-                "latestTaskDetails", sids, task_key, task_details_message(self.instances_dir, task_key)
+                "latestTaskDetails", sids, task_key, task_details_message(self.instance_dirs_to_pipelines, task_key)
             )
 
         for pid, sids in SubscriptionRegistry.instance.pids_to_sids().items():
             yield self._pack_message(
-                "latestPipelineDetailedState", sids, pid, pipeline_counts_message(self.instances_dir, pid)
+                "latestPipelineDetailedState", sids, pid, pipeline_counts_message(self.instance_dirs_to_pipelines, pid)
             )
 
     def message_after_subscription_update(self, action_from_browser):
@@ -53,7 +54,7 @@ class UIJanitor:
                 "latestPipelineDetailedState",
                 [action_from_browser["sid"]],
                 pid,
-                pipeline_counts_message(self.instances_dir, pid)
+                pipeline_counts_message(self.instance_dirs_to_pipelines, pid)
             )
 
         elif action_from_browser["name"] == "observeTask":
@@ -64,7 +65,7 @@ class UIJanitor:
                 "latestTaskDetails",
                 [action_from_browser["sid"]],
                 task_key,
-                task_details_message(self.instances_dir, task_key)
+                task_details_message(self.instance_dirs_to_pipelines, task_key)
             )
 
     def task_action_submitted(self, sid, message):
@@ -74,7 +75,11 @@ class UIJanitor:
         action_name = message['action_name']
         is_cancel = message.get("is_cancel")
 
-        pipeline_instance_dir = os.path.join(self.instances_dir, pipeline_dir)
+        pdir, pid = pipeline_dir.split("|")
+
+        instances_dir = full_instances_dir_for_pdir(self.instance_dirs_to_pipelines, pdir)
+
+        pipeline_instance_dir = os.path.join(instances_dir, pid)
 
         if is_cancel is not None and is_cancel:
             action = TaskAction.load_from_task_control_dir(

@@ -385,7 +385,7 @@ async def join(sid, message):
             instance_dir = room[7:]
             #pipeline_holder = pipeline_ui_server.get_and_maybe_load_pipeline_holder(instance_dir=instance_dir)
 
-            pid = os.path.join(pipeline_ui_server.instances_dir, instance_dir)
+            pid = os.path.join(pipeline_ui_server.instance_dirs_to_pipelines, instance_dir)
             emit_call = pipeline_ui_server.prepare_emit_counts_message(pid)
             await emit_call()
 
@@ -394,7 +394,7 @@ async def join(sid, message):
 
             logger.debug("new observer for task %s in pipeline %s", task_key, instance_dir)
 
-            pid = os.path.join(pipeline_ui_server.instances_dir, instance_dir)
+            pid = os.path.join(pipeline_ui_server.instance_dirs_to_pipelines, instance_dir)
 
             #pipeline_holder = pipeline_ui_server.get_and_maybe_load_pipeline_holder(instance_dir=instance_dir)
             emit_call = pipeline_ui_server.prepare_emit_task_details_message(pid, task_key, room)

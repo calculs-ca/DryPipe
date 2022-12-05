@@ -1,3 +1,4 @@
+import logging
 import os
 import time
 
@@ -7,22 +8,36 @@ from dry_pipe.monitoring import PipelineMetricsTable, fetch_task_group_metrics
 from dry_pipe.pipeline_state import PipelineState
 from dry_pipe.task_state import TaskState
 
+logger = logging.getLogger(__name__)
 
-def all_pipeline_states_as_json(instances_dir):
-    return [
-        {
-            "dir": pipeline_state.dir_basename(),
-            "state": pipeline_state.state_name,
-            "totals": pipeline_state.totals_row()
-        }
-        for pipeline_state in PipelineState.iterate_from_instances_dir(instances_dir)
-        if not pipeline_state.is_completed()
-    ]
+def all_pipeline_states_as_json(instance_dirs_to_pipelines):
+
+    def g():
+        for d, p in instance_dirs_to_pipelines.items():
+            for pipeline_state in PipelineState.iterate_from_instances_dir(d):
+                if pipeline_state.is_completed():
+                    continue
+                yield {
+                    "dir": pipeline_state.instance_dir_key(),
+                    "state": pipeline_state.state_name,
+                    "totals": pipeline_state.totals_row()
+                }
+
+    return list(g())
 
 
-def task_details_message(instances_dir, pid_task_key):
+def full_instances_dir_for_pdir(instance_dirs_to_pipelines, pdir):
+    for d, p in instance_dirs_to_pipelines.items():
+        last = os.path.split(d)[-1]
+        if last == pdir:
+            return d
 
-    pid, task_key = pid_task_key.split("|")
+
+
+def task_details_message(instance_dirs_to_pipelines, pid_task_key):
+
+    pdir, pid, task_key = pid_task_key.split("|")
+    instances_dir = full_instances_dir_for_pdir(instance_dirs_to_pipelines, pdir)
 
     task_state = TaskState.from_task_control_dir(
         os.path.join(instances_dir, pid), task_key
@@ -31,12 +46,11 @@ def task_details_message(instances_dir, pid_task_key):
     return task_state.as_json()
 
 
-def pipeline_counts_message(instances_dir, pid):
+def pipeline_counts_message(instance_dirs_to_pipelines, pid):
 
     def prepare_counts_message(pipeline_instance_dir):
 
         pipeline_state = PipelineState.from_pipeline_instance_dir(pipeline_instance_dir)
-        instance_dir = pipeline_state.dir_basename()
 
         actions_by_task_key = {
             task_action.task_key: task_action
@@ -77,7 +91,7 @@ def pipeline_counts_message(instances_dir, pid):
             # SHOULD SEND DAG HERE ?
             # "dag": pipeline.summarized_dependency_graph(),
             "tsv": all_task_states_as_tsv(pipeline_state.instance_dir(), task_state_visitor),
-            "pipelineDir": pipeline_state.dir_basename(),
+            "pipelineDir": pipeline_state.instance_dir_key(),
             "partial_task_infos": partial_task_infos,
             "snapshot_time": snapshot_time
         }
@@ -105,6 +119,13 @@ def pipeline_counts_message(instances_dir, pid):
 
         return f"{header}\n{res}"
 
-    pipeline_state = PipelineState.from_pipeline_instance_dir(os.path.join(instances_dir, pid))
+    pdir, pid = pid.split("|")
+
+    pipeline_instance_dir = os.path.join(
+        full_instances_dir_for_pdir(instance_dirs_to_pipelines, pdir),
+        pid
+    )
+
+    pipeline_state = PipelineState.from_pipeline_instance_dir(pipeline_instance_dir)
 
     return prepare_counts_message(pipeline_state.instance_dir())

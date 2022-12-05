@@ -79,6 +79,9 @@ class PipelineState:
 
         self.last_update_time = self.refresh_last_update_time()
 
+    def __str__(self):
+        return f"PipelineState({self.state_name},{self.instance_dir()})"
+
     def refresh_last_update_time(self):
         self.last_update_time = pathlib.Path(self.pipeline_instance_work_dir).stat()
         return self.last_update_time
@@ -130,6 +133,11 @@ class PipelineState:
 
     def instance_dir(self):
         return os.path.dirname(self.pipeline_instance_work_dir)
+
+    def instance_dir_key(self):
+
+        parent, pid = self.instance_dir().split("/")[-2:]
+        return f"{parent}|{pid}"
 
     def _counts_cache_file(self):
         return os.path.join(self.pipeline_instance_work_dir, f"counts.json")
