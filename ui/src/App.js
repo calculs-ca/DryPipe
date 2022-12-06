@@ -225,8 +225,7 @@ const App = ({customPipelineInstanceLink, uninitializedPipelineListMessage}) => 
                         stateCounts.running,
                         stateCounts.completed,
                         stateCounts.failed,
-                        stateCounts.killed,
-                        stateCounts.ignored
+                        stateCounts.killed
                     ])
                 }
             </td>
@@ -265,7 +264,6 @@ const App = ({customPipelineInstanceLink, uninitializedPipelineListMessage}) => 
                 {countCel(pipeline.totals.completed, expandPipelineRow)}
                 {countCel(pipeline.totals.failed, expandPipelineRow)}
                 {countCel(pipeline.totals.killed, expandPipelineRow)}
-                {countCel(pipeline.totals.ignored, expandPipelineRow)}
                 {totalTasksForGroup(pipeline.totals)}
             </React.Fragment>
 
@@ -303,7 +301,6 @@ const App = ({customPipelineInstanceLink, uninitializedPipelineListMessage}) => 
                                 {countCel(taskGroup.counts.completed, selectTaskGroupInTasksView(taskGroup.taskGroupKey, "completed"))}
                                 {countCel(taskGroup.counts.failed, selectTaskGroupInTasksView(taskGroup.taskGroupKey, "failed"))}
                                 {countCel(taskGroup.counts.killed, selectTaskGroupInTasksView(taskGroup.taskGroupKey, "killed"))}
-                                {countCel(taskGroup.counts.ignored, selectTaskGroupInTasksView(taskGroup.taskGroupKey, "ignored"))}
                                 {totalTasksForGroup(taskGroup.counts)}
                                 {idx === 0 &&
                                     <td
@@ -334,7 +331,6 @@ const App = ({customPipelineInstanceLink, uninitializedPipelineListMessage}) => 
                     <th>completed</th>
                     <th>failed</th>
                     <th>killed</th>
-                    <th>ignored</th>
                     <th>totals</th>
                     <th></th>
                 </tr>

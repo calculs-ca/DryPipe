@@ -174,7 +174,6 @@ const TasksView = ({pipelineList, taskFilter: localTaskFilter, closeFunc, socket
             <ToggleIsSelected displayState="completed"/>
             <ToggleIsSelected displayState="failed"/>
             <ToggleIsSelected displayState="killed"/>
-            <ToggleIsSelected displayState="ignored"/>
         </div>
     </>
 
