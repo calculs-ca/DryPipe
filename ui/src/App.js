@@ -28,15 +28,27 @@ const pipelineListReducer = (state, action) => {
                 p =>  ! state.list.find(existingP => p.dir === existingP.dir)
             )
 
-            console.log(newPipelines)
+            const l = [
+                ...state.list,
+                ...newPipelines
+            ]
 
             return {
                 initialized: true,
                 selectedPipelineDir: state.selectedPipelineDir,
-                list: [
-                    ...state.list,
-                    ...newPipelines
-                ]
+                list: l.map(p => {
+                    const updatedorNewP = action.list.find(p0 => p0 === p.dir)
+
+                    if(!updatedorNewP) {
+                        return p
+                    }
+
+                    debugger
+                    return {
+                        ...p,
+                        totals: updatedorNewP.totals
+                    }
+                })
             }
 
         case 'unSelect':
@@ -245,6 +257,18 @@ const App = ({customPipelineInstanceLink, uninitializedPipelineListMessage}) => 
 
         const expandPipelineRow = () => observePipeline(pipeline.dir)
 
+        const totalsTD = (keyPrefix) =>
+            <React.Fragment key={`${keyPrefix}-${pipeline.dir}`}>
+                <td>totals</td>
+                {countCel(pipeline.totals.waiting, expandPipelineRow)}
+                {countCel(pipeline.totals.running, expandPipelineRow)}
+                {countCel(pipeline.totals.completed, expandPipelineRow)}
+                {countCel(pipeline.totals.failed, expandPipelineRow)}
+                {countCel(pipeline.totals.killed, expandPipelineRow)}
+                {countCel(pipeline.totals.ignored, expandPipelineRow)}
+                {totalTasksForGroup(pipeline.totals)}
+            </React.Fragment>
+
         const totalsTableRow = (pipeline) =>
             <React.Fragment key={`f-${pipeline.dir}-tot`}>
                 <tr>
@@ -257,14 +281,7 @@ const App = ({customPipelineInstanceLink, uninitializedPipelineListMessage}) => 
                         style={tableCellStyle}>
                         {firstCell()}
                     </td>
-                    <td>totals</td>
-                    {countCel(pipeline.totals.waiting, expandPipelineRow)}
-                    {countCel(pipeline.totals.running, expandPipelineRow)}
-                    {countCel(pipeline.totals.completed, expandPipelineRow)}
-                    {countCel(pipeline.totals.failed, expandPipelineRow)}
-                    {countCel(pipeline.totals.killed, expandPipelineRow)}
-                    {countCel(pipeline.totals.ignored, expandPipelineRow)}
-                    {totalTasksForGroup(pipeline.totals)}
+                    {totalsTD("tot1")}
                 </tr>
             </React.Fragment>
 
@@ -298,14 +315,7 @@ const App = ({customPipelineInstanceLink, uninitializedPipelineListMessage}) => 
                     )
                 }
                 <tr key={`tot-${pipeline.dir}`}>
-                    <td>totals</td>
-                    {countCel(pipeline.totals.waiting, null)}
-                    {countCel(pipeline.totals.running, null)}
-                    {countCel(pipeline.totals.completed, null)}
-                    {countCel(pipeline.totals.failed, null)}
-                    {countCel(pipeline.totals.killed, null)}
-                    {countCel(pipeline.totals.ignored, null)}
-                    {totalTasksForGroup(pipeline.totals)}
+                    {totalsTD("tot1")}
                 </tr>
             </React.Fragment>
         }
