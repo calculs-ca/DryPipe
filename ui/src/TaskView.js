@@ -25,6 +25,26 @@ const taskHistory = historyRows => {
     </table>
 }
 
+const psTable = psRows => {
+
+    const [headers, row] = psRows
+
+    return <table className="table is-bordered is-fullwidth is-hoverable">
+        <thead>
+        <tr>
+            {
+                headers.map(h => <th key={`h-${h}`}>{h}</th>)
+            }
+        </tr>
+        </thead>
+        <tbody>
+            {
+                row.map(h => <td key={`r-${h}`}>{h}</td>)
+            }
+        </tbody>
+    </table>
+}
+
 const useTailLikeScrollToBottom = text => {
 
     const textAreaRef = useRef()
@@ -191,6 +211,22 @@ const TaskView = ({task, socket, selectedPipeline}) => {
                     value={task.err || ""}
                 />
             </div>
+        </div>
+        <div className="field">
+            <label className="label">drypipe.log</label>
+            <div className="control">
+                <textarea
+                    ref={errLogRef}
+                    style={{caretColor: "transparent"}}
+                    spellCheck="false"
+                    className="textarea is-family-monospace  has-text-info has-background-dark"
+                    onChange={() => {}}
+                    value={task.drypipe_log || ""}
+                />
+            </div>
+        </div>
+        <div>
+            {psTable(task.ps)}
         </div>
         <div>
             {taskHistory(task.history)}

@@ -8,7 +8,7 @@ from datetime import datetime
 from itertools import groupby
 
 from dry_pipe.actions import TaskAction
-from dry_pipe.script_lib import parse_in_out_meta, PortablePopen, load_pid, load_slurm_job_id
+from dry_pipe.script_lib import parse_in_out_meta, PortablePopen, load_pid, load_slurm_job_id, ps_resources
 
 """
 
@@ -584,13 +584,23 @@ class TaskState:
 
         snapshot_time = int(time.time_ns())
 
+        def _ps_resources():
+            pid_file = os.path.join(self.control_dir(), "pid")
+            if os.path.exists(pid_file):
+                with open(pid_file) as f:
+                    return [
+                        list(t)
+                        for t in ps_resources(int(f.read()))
+                    ]
+
         return {
             'key': self.task_key,
             'state': self.state_name,
             'step': self.step_number(),
             'out': file_content("out.log"),
             'err': file_content("err.log"),
-            'control_err': file_content("control-err.log"),
+            'drypipe_log': file_content("drypipe.log"),
+            'ps': _ps_resources(),
             'history': list(self.load_history_rows()),
             'action': action,
             'snapshot_time': snapshot_time
