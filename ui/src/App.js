@@ -1,12 +1,10 @@
-import React, {useCallback, useState, useReducer, useEffect} from "react";
-import * as d3 from "d3"
+import React, {useReducer, useEffect} from "react";
+import {select as d3_select} from 'd3-selection';
 import {stateCountsSummaryPerTaskGroup, sumStateTotals} from "./parsePipelineDAG"
 import TasksView from "./TasksView";
-import TaskView from "./TaskView";
 import {taskFilterReducer} from "./taskFilterReducer";
 import {buildDAG} from "./buildDAG";
-import { io } from "socket.io-client"
-import {flow, map, zip, sum} from "lodash/fp";
+import {flow, sum} from "lodash/fp";
 
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {faChevronDown, faChevronRight, faProjectDiagram} from '@fortawesome/free-solid-svg-icons'
@@ -163,7 +161,7 @@ const App = ({customPipelineInstanceLink, uninitializedPipelineListMessage}) => 
             const cs = stateCountsSummaryPerTaskGroup(o.tsv)
             cs.forEach(o => {
                 for (const [displayState, count] of Object.entries(o.counts)) {
-                    d3.select(`.task_count_${displayState}_${o.taskGroupKey}`)
+                    d3_select(`.task_count_${displayState}_${o.taskGroupKey}`)
                     .text(`${count}`)
                     .attr("opacity", count === 0 ? 0.3 : 0.8)
                 }

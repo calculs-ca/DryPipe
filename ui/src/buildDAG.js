@@ -1,5 +1,6 @@
 import dagreD3 from "dagre-d3";
-import * as d3 from "d3";
+import {select as d3_select} from 'd3-selection';
+import {zoomIdentity, zoom} from 'd3-zoom';
 
 export const buildDAG = (taskFilterDispatcher, graphData) => {
 
@@ -29,15 +30,15 @@ export const buildDAG = (taskFilterDispatcher, graphData) => {
         return g
     }
 
-    const svg = d3.select("svg")
+    const svg = d3_select("svg")
     const inner = svg.select("g")
 
-    const zoom = d3.zoom().on("zoom", (event) => {
+    const z = zoom().on("zoom", (event) => {
 
         inner.attr("transform", event.transform)
     })
 
-    svg.call(zoom);
+    svg.call(z);
 
     // Create the renderer
     const render = new dagreD3.render();
@@ -105,7 +106,7 @@ export const buildDAG = (taskFilterDispatcher, graphData) => {
 
     svg.call(
         zoom.transform,
-        d3.zoomIdentity.translate(
+        zoomIdentity.translate(
             (svg.attr("width") - g.graph().width * initialScale) / 2, 20
         ).scale(initialScale)
     )

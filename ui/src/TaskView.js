@@ -1,4 +1,4 @@
-import React, {useEffect, useReducer, useRef, useState} from "react";
+import React, {useEffect, useRef, useState} from "react";
 
 const taskHistory = historyRows => {
 
@@ -31,16 +31,14 @@ const psTable = psRows => {
 
     return <table className="table is-bordered is-fullwidth is-hoverable">
         <thead>
-        <tr>
-            {
-                headers.map(h => <th key={`h-${h}`}>{h}</th>)
-            }
-        </tr>
+            <tr>
+                {headers.map(h => <th key={`h-${h}`}>{h}</th>)}
+            </tr>
         </thead>
         <tbody>
-            {
-                row.map(h => <td key={`r-${h}`}>{h}</td>)
-            }
+            <tr>
+                {row.map((h, idx) => <td key={`r-${idx}`}>{h}</td>)}
+            </tr>
         </tbody>
     </table>
 }
@@ -226,7 +224,7 @@ const TaskView = ({task, socket, selectedPipeline}) => {
             </div>
         </div>
         <div>
-            {psTable(task.ps)}
+            {task.ps && psTable(task.ps)}
         </div>
         <div>
             {taskHistory(task.history)}
