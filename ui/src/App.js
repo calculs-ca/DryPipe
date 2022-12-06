@@ -28,6 +28,8 @@ const pipelineListReducer = (state, action) => {
                 p =>  ! state.list.find(existingP => p.dir === existingP.dir)
             )
 
+            console.log(newPipelines)
+
             return {
                 initialized: true,
                 selectedPipelineDir: state.selectedPipelineDir,
@@ -206,7 +208,14 @@ const App = ({customPipelineInstanceLink, uninitializedPipelineListMessage}) => 
         const totalTasksForGroup = stateCounts =>
             <td style={tableCellStyle}>
                 {
-                    flow(sum)([stateCounts.waiting, stateCounts.running, stateCounts.completed, stateCounts.failed, stateCounts.ignored])
+                    flow(sum)([
+                        stateCounts.waiting,
+                        stateCounts.running,
+                        stateCounts.completed,
+                        stateCounts.failed,
+                        stateCounts.killed,
+                        stateCounts.ignored
+                    ])
                 }
             </td>
 
@@ -253,9 +262,9 @@ const App = ({customPipelineInstanceLink, uninitializedPipelineListMessage}) => 
                     {countCel(pipeline.totals.running, expandPipelineRow)}
                     {countCel(pipeline.totals.completed, expandPipelineRow)}
                     {countCel(pipeline.totals.failed, expandPipelineRow)}
+                    {countCel(pipeline.totals.killed, expandPipelineRow)}
                     {countCel(pipeline.totals.ignored, expandPipelineRow)}
                     {totalTasksForGroup(pipeline.totals)}
-                    <td/>
                 </tr>
             </React.Fragment>
 
@@ -276,6 +285,7 @@ const App = ({customPipelineInstanceLink, uninitializedPipelineListMessage}) => 
                                 {countCel(taskGroup.counts.running, selectTaskGroupInTasksView(taskGroup.taskGroupKey, "running"))}
                                 {countCel(taskGroup.counts.completed, selectTaskGroupInTasksView(taskGroup.taskGroupKey, "completed"))}
                                 {countCel(taskGroup.counts.failed, selectTaskGroupInTasksView(taskGroup.taskGroupKey, "failed"))}
+                                {countCel(taskGroup.counts.killed, selectTaskGroupInTasksView(taskGroup.taskGroupKey, "killed"))}
                                 {countCel(taskGroup.counts.ignored, selectTaskGroupInTasksView(taskGroup.taskGroupKey, "ignored"))}
                                 {totalTasksForGroup(taskGroup.counts)}
                                 {idx === 0 &&
@@ -293,6 +303,7 @@ const App = ({customPipelineInstanceLink, uninitializedPipelineListMessage}) => 
                     {countCel(pipeline.totals.running, null)}
                     {countCel(pipeline.totals.completed, null)}
                     {countCel(pipeline.totals.failed, null)}
+                    {countCel(pipeline.totals.killed, null)}
                     {countCel(pipeline.totals.ignored, null)}
                     {totalTasksForGroup(pipeline.totals)}
                 </tr>
@@ -312,6 +323,7 @@ const App = ({customPipelineInstanceLink, uninitializedPipelineListMessage}) => 
                     <th>running</th>
                     <th>completed</th>
                     <th>failed</th>
+                    <th>killed</th>
                     <th>ignored</th>
                     <th>totals</th>
                     <th></th>

@@ -100,7 +100,7 @@ STATE_EQUIVALENCE_FOR_DISPLAY_WEB = {
     "upload-failed":       "waiting",
     "download-failed":     "waiting",
     "scheduled":           "waiting",
-    "killed":              "waiting",
+    "killed":              "killed",
 
     "launched":            "running",
     "completed-unsigned":  "running",

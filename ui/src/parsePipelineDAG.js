@@ -53,7 +53,6 @@ export const statesToDisplayStateMap = {
     "upload-failed":       "waiting",
     "download-failed":     "waiting",
     "scheduled":           "waiting",
-    "killed":              "waiting",
 
     "launched":            "running",
     "completed-unsigned":  "running",
@@ -70,6 +69,7 @@ export const statesToDisplayStateMap = {
     "completed":           "completed",
 
     "failed":              "failed",
+    "killed":              "killed",
     "timed-out":           "failed",
     "crashed":             "failed",
     "ignored":             "ignored"
@@ -134,9 +134,9 @@ function transpose(matrix) {
 
 export const sumStateTotals = countsSummary => {
 
-    const [waiting, running, completed, failed, ignored] = transpose(
-        countsSummary.map(g => [g.counts.waiting, g.counts.running, g.counts.completed, g.counts.failed, g.counts.ignored])
+    const [waiting, running, completed, failed, killed, ignored] = transpose(
+        countsSummary.map(g => [g.counts.waiting, g.counts.running, g.counts.completed, g.counts.failed, g.counts.killed, g.counts.ignored])
     ).map(counts => flow(sum)(counts))
 
-    return {waiting, running, completed, failed, ignored}
+    return {waiting, running, completed, failed, killed, ignored}
 }

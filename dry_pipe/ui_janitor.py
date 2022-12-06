@@ -1,6 +1,7 @@
 import logging
 import os
 
+from dry_pipe import PortablePopen, TaskState
 from dry_pipe.actions import TaskAction
 from dry_pipe.pubsub import SubscriptionRegistry
 from dry_pipe.pubsub_messages import all_pipeline_states_as_json, task_details_message, pipeline_counts_message, \
@@ -80,15 +81,26 @@ class UIJanitor:
         instances_dir = full_instances_dir_for_pdir(self.instance_dirs_to_pipelines, pdir)
 
         pipeline_instance_dir = os.path.join(instances_dir, pid)
+        task_control_dir = os.path.join(pipeline_instance_dir, ".drypipe", task_key)
 
-        if is_cancel is not None and is_cancel:
+        if action_name == "kill":
+            cmd = [os.path.join(task_control_dir, "task"), "kill"]
+            logger.info("will run %s", cmd)
+            p = PortablePopen(cmd)
+            p.wait_and_raise_if_non_zero()
+            logger.info("\n".join(p.read_stdout_lines()))
+        elif action_name == "restart":
+            task_state = TaskState.from_task_control_dir(pipeline_instance_dir, task_key)
+            task_state.transition_to_prepared(force=True)
+            logger.info("task %s requeued", task_control_dir)
+
+        elif is_cancel is not None and is_cancel:
+            # load existing action:
             action = TaskAction.load_from_task_control_dir(
                 os.path.join(pipeline_instance_dir, ".drypipe", task_key)
             )
-
             if action is not None:
                 action.delete()
-
         else:
             TaskAction.submit(pipeline_instance_dir, task_key, action_name, message.get("step"))
 
