@@ -350,7 +350,7 @@ def _janitor_ng(pipeline_instance, wait_for_completion=False, fail_silently=Fals
 
                 if task.task_conf.is_process():
                     if currently_running >= cpu_count:
-                        daemon_thread_helper.logger.info(
+                        daemon_thread_helper.logger.debug(
                             "exceeded cpu load %s tasks running, will resume launching when below threshold",
                             currently_running
                         )

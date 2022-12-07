@@ -49,7 +49,11 @@ class PortablePopen:
         if stderr is None:
             raise Exception(f"stderr can't be None")
 
-        self.process_args = [str(p) for p in process_args]
+        if isinstance(process_args, list):
+            self.process_args = [str(p) for p in process_args]
+        else:
+            self.process_args = process_args
+
         self.popen = subprocess.Popen(
             process_args,
             stdout=stdout,
@@ -87,9 +91,8 @@ class PortablePopen:
     def raise_if_non_zero(self):
         r = self.popen.returncode
         if r != 0:
-            invocation = ' '.join(self.process_args)
             raise Exception(
-                f"process invocation returned non zero {r}: {invocation}\nstderr: {self.safe_stderr_as_string()}"
+                f"process invocation returned non zero {r}: {self.process_args}\nstderr: {self.safe_stderr_as_string()}"
             )
 
     def wait_and_raise_if_non_zero(self):

@@ -184,7 +184,7 @@ class RemoteSSH(Executor):
 
     def _launch_command(self, command, exception_func=lambda stderr_text: stderr_text):
 
-        with PortablePopen(command,shell=True) as p:
+        with PortablePopen(command, shell=True) as p:
             p.wait_and_raise_if_non_zero()
 
     def do_rsync_container(self, image_path):
