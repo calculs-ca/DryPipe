@@ -17,7 +17,10 @@ def create_pipeline_with_remote_tasks(remote_task_conf):
             precious_output=dsl.file("name-of-pipeline-host.txt")
         ).calls(
             "xyz/write-hostname-to-file-other-script.sh"
-        )()
+        ).calls("""
+            #!/usr/bin/env bash
+            echo "54321abc" > $__pipeline_instance_dir/file-in-instance-dir.txt
+        """)()
 
         yield local_task
 
@@ -25,10 +28,11 @@ def create_pipeline_with_remote_tasks(remote_task_conf):
             key="remote_task",
             task_conf=remote_task_conf
         ).consumes(
-            name_of_pipeline_host=local_task.out.precious_output
-            #TODO: add var dep
+            name_of_pipeline_host=local_task.out.precious_output,
+            file_in_instance_dir=dsl.file("file-in-instance-dir.txt")
         ).produces(
-            precious_output=dsl.file("precious-remote-output.txt")
+            precious_output=dsl.file("precious-remote-output.txt"),
+            v=dsl.var(str)
         ).calls(
             "xyz/write-hostname-to-file-other-script.sh" if use_remote_code_dir else """
             #!/usr/bin/env bash
@@ -41,7 +45,12 @@ def create_pipeline_with_remote_tasks(remote_task_conf):
               cat $name_of_pipeline_host >> $precious_output
             fi
             
-            echo "hello from $(cat /etc/hostname)" >> $precious_output        
+            echo "hello from $(cat /etc/hostname)" >> $precious_output
+            
+            echo "file_in_instance_dir:"
+            cat $file_in_instance_dir        
+            
+            export v=$(cat $file_in_instance_dir)
         """)()
 
         yield remote_task
@@ -81,3 +90,7 @@ def complete_and_validate_pipeline_instance(pipeline_instance, test_case):
     test_case.assertTrue(local_task_result in remote_task_result)
 
     test_case.assertTrue(len(remote_task_result.split("\n")) == 2)
+
+    z = remote_task.out.v.fetch()
+
+    test_case.assertEqual(z, "54321abc")

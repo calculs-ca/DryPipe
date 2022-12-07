@@ -367,6 +367,8 @@ class Task:
             yield k, v.serialized_value()
 
         for k, v in self.pre_existing_files.items():
+            if collect_deps_and_outputs_func is not None:
+                collect_deps_and_outputs_func(v.absolute_path(self), None)
             yield k, abs_from_pipeline_instance_dir(v.absolute_path(self))
 
         for upstream_task, upstream_input_files, upstream_input_vars in self.upstream_deps_iterator():
