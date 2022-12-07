@@ -95,12 +95,14 @@ class DaemonThreadHelper:
 
             send_email_error_report_if_configured(f"drypipe daemon {daemon_name} has crashed", exception=exception)
 
-            os._exit(0)
+            return True
 
         self._reset_ssh_connections_if_exception_recoverable(exception)
 
         self.last_exception_at = datetime.now()
         time.sleep(DaemonThreadHelper.SLEEP_SECONDS_AFTER_DAEMON_FAIL)
+
+        return False
 
     def _reset_ssh_connections_if_exception_recoverable(self, ex):
 
@@ -214,7 +216,8 @@ class Janitor:
                 daemon_thread_helper.logger.exception(ex)
                 if sync_mode:
                     raise ex
-                daemon_thread_helper.handle_exception_in_daemon_loop(ex)
+                if daemon_thread_helper.handle_exception_in_daemon_loop(ex):
+                    self.request_shutdown()
 
     def start(self):
 
@@ -252,7 +255,8 @@ class Janitor:
 
                 except Exception as ex:
                     daemon_thread_helper.logger.exception(ex)
-                    daemon_thread_helper.handle_exception_in_daemon_loop(ex)
+                    if daemon_thread_helper.handle_exception_in_daemon_loop(ex):
+                        self.request_shutdown()
 
         def download_j():
 
@@ -281,7 +285,9 @@ class Janitor:
 
                 except Exception as ex:
                     daemon_thread_helper.logger.exception(ex)
-                    daemon_thread_helper.handle_exception_in_daemon_loop(ex)
+                    if daemon_thread_helper.handle_exception_in_daemon_loop(ex):
+                        self.request_shutdown()
+
 
         # setup stalled transfer for restart
         for p in self.pipelines:
