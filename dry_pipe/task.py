@@ -690,6 +690,7 @@ class Task:
             f.write('    script_lib.transition_to_completed(state_file)\n\n\n')
 
             f.write('script_lib.handle_main(go)\n')
+            f.write('logging.shutdown()\n')
 
         os.chmod(shell_script_file, 0o764)
 

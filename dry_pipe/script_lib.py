@@ -130,10 +130,10 @@ def write_pipeline_lib_script(file_handle):
 def task_script_header():
 
     return f"{python_shebang()}\n" + textwrap.dedent(f"""            
-        import os
-        import sys 
+        import os 
         import importlib.machinery
-        import importlib.util        
+        import importlib.util    
+        import logging    
 
         is_slurm = os.environ.get("__is_slurm") == "True"        
         if is_slurm:
@@ -591,7 +591,7 @@ def launch_task_from_remote(task_key, is_slurm, wait_for_completion, drypipe_tas
         scr = os.path.join(control_dir, 'task')
         cmd = ["nohup", "bash", "-c", f"python3 {scr} {back_ground}"]
 
-    logger.info("launching from remote: %s", ' '.join(cmd))
+    logger.info("launching from remote: %s", ' '.join(cmd) if isinstance(cmd, list) else cmd)
 
     with open(os.path.join(control_dir, 'out.log'), 'w') as out:
         with open(os.path.join(control_dir, 'err.log'), 'w') as err:
