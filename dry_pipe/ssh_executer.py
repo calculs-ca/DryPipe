@@ -45,17 +45,22 @@ class RemoteSSH(Executor):
         from pssh.clients import SSHClient
         pkey = os.path.expanduser(self.key_filename) \
             if self.key_filename is not None and self.key_filename.startswith("~") else self.key_filename
-        try:
-            with perf_logger_timer("RemoteSSH.connect") as t:
+        with perf_logger_timer("RemoteSSH.connect") as t:
+            try:
+                logger_ssh.debug(
+                    "will connect: host=%s user=%s key=%s", self.ssh_host, self.ssh_username, pkey
+                )
                 self.ssh_client = SSHClient(
                     self.ssh_host,
                     self.ssh_username,
                     pkey=pkey
                 )
-            logger_ssh.info("new ssh connection established %s at %s", self.ssh_username, self.ssh_host)
-        except Exception as ex:
-            logger_ssh.exception("%s", [self.ssh_host, self.ssh_username, pkey])
-            raise ex
+                logger_ssh.info("new ssh connection established %s at %s", self.ssh_username, self.ssh_host)
+            except Exception as ex:
+                logger_ssh.exception(
+                    "failed connecting: host=%s user=%s key=%s", self.ssh_host, self.ssh_username, pkey
+                )
+                raise ex
 
     def invoke_remote(self, cmd, bash_error_ok=False):
         logger_ssh.debug("will invoke '%s' at %s", cmd, self.ssh_host)

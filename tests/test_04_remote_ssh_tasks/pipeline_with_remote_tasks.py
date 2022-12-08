@@ -45,12 +45,13 @@ def create_pipeline_with_remote_tasks(remote_task_conf):
               cat $name_of_pipeline_host >> $precious_output
             fi
             
-            echo "hello from $(cat /etc/hostname)" >> $precious_output
-            
+            echo "hello from $(cat /etc/hostname)" >> $precious_output            
+        """).calls("""
+            #!/usr/bin/env bash
             echo "file_in_instance_dir:"
             cat $file_in_instance_dir        
             
-            export v=$(cat $file_in_instance_dir)
+            export v=$(cat $file_in_instance_dir)        
         """)()
 
         yield remote_task

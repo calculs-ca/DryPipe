@@ -130,6 +130,9 @@ class DaemonThreadHelper:
             self.ssh_executer_per_remote_site_key[task_conf.remote_site_key] = ssh_executer
             ssh_executer.connect()
 
+        if ssh_executer.ssh_client is None:
+            raise Exception(f"{task_conf.remote_site_key} has no ssh_client")
+
         return ssh_executer
 
 
