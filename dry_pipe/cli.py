@@ -22,12 +22,14 @@ from dry_pipe.pipeline_state import PipelineState
 from dry_pipe.script_lib import env_from_sourcing, parse_in_out_meta, create_task_logger, iterate_out_vars_from, \
     write_out_vars
 from dry_pipe.task_state import NON_TERMINAL_STATES
+from importlib.metadata import version
 
 logger = logging.getLogger(__name__)
 
 
 @click.group()
 @click.option('-v', '--verbose')
+@click.version_option(message=version("dry-pipe"))
 @click.pass_context
 def cli_group(ctx, verbose):
     ctx.ensure_object(dict)
