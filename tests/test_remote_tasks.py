@@ -1,10 +1,10 @@
+import glob
 import os
-import time
 import unittest
-import uuid
 
 from dry_pipe import TaskConf
 from pipeline_with_two_remote_sites import create_pipeline_generator_two_remote_sites
+from pipelines_with_remote_tasks import dag_gen_fileset_output
 from test_04_remote_ssh_tasks import pipeline_with_remote_tasks
 from test_04_remote_ssh_tasks.pipeline_with_remote_tasks import \
     complete_and_validate_pipeline_instance
@@ -12,6 +12,24 @@ from test_utils import TestSandboxDir, ensure_remote_dirs_dont_exist
 
 
 class RemoteTaskTests1(unittest.TestCase):
+
+    def test_remote_task_with_fileset_output(self):
+        d = TestSandboxDir(self)
+
+        gen, validator = dag_gen_fileset_output(TaskConf(
+            executer_type="process",
+            ssh_specs=f"maxl@ip32.ccs.usherbrooke.ca:~/.ssh/id_rsa",
+            remote_base_dir="/nfs3_ib/ip32-ib/home/maxl/drypipe-tests",
+            remote_containers_dir="/nfs3_ib/ip32-ib/home/maxl/drypipe-tests/containers"
+        ), self)
+
+        pipeline_instance = d.pipeline_instance_from_generator(gen)
+
+        ensure_remote_dirs_dont_exist(pipeline_instance)
+
+        pipeline_instance.run_sync()
+
+        validator(pipeline_instance)
 
     def test_remote_tasks_basics(self):
 

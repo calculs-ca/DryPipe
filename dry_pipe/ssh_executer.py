@@ -261,6 +261,21 @@ class RemoteSSH(Executor):
             pipeline_instance_dir = os.path.dirname(os.path.dirname(task_control_dir))
             remote_pid_basename = os.path.basename(pipeline_instance_dir)
 
+            output_filesets = os.path.join(task_control_dir, "remote-output-filesets.txt")
+
+            if os.path.exists(output_filesets):
+                cmd = f"{rsync_call} -a -m --partial --include-from={output_filesets} "+\
+                      f"{remote_dir}/{remote_pid_basename}/output/{task_state.task_key}/ "+\
+                      f"{pipeline_instance_dir}/output/{task_state.task_key}/"
+
+                def error_msg_0(err):
+                    return Exception(
+                        f"downloading of filesets task results {output_filesets} " +
+                        f"from {self.ssh_host} failed:\n{cmd}\n{err}"
+                    )
+
+                self._launch_command(cmd, error_msg_0)
+
             cmd = f"{rsync_call} --dirs -aR --partial --files-from={task_control_dir}/remote-outputs.txt " + \
                   f"{remote_dir}/{remote_pid_basename} {pipeline_instance_dir}"
 
