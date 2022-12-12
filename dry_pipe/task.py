@@ -757,8 +757,9 @@ class Task:
             with open(remote_outputs, "w") as f:
 
                 for dep_file in output_file_list:
-                    f.write(dep_file)
-                    f.write("\n")
+                    if not "*" in dep_file:
+                        f.write(dep_file)
+                        f.write("\n")
 
                 f.write(self.history_file())
                 f.write("\n")
@@ -770,6 +771,18 @@ class Task:
                 f.write("\n")
                 f.write(self.out_log())
                 f.write("\n")
+
+            remote_output_filesets = os.path.join(self.v_abs_control_dir(), "remote-output-filesets.txt")
+            output_filesets = [
+                dep_file for dep_file in output_file_list if "*" in dep_file
+            ]
+
+            if len(output_filesets) > 0:
+                with open(remote_output_filesets, "w") as f:
+                    for dep_file in output_filesets:
+                        f.write("+ ")
+                        f.write(os.path.basename(dep_file))
+                        f.write("\n")
 
     def seconds_since_last_activity(self):
 
