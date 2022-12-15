@@ -177,6 +177,7 @@ class DryPipeDsl:
         """
 
         task_matchers = []
+        current_pattern_idx = 0
 
         for pattern in patterns:
 
@@ -191,9 +192,13 @@ class DryPipeDsl:
                         tasks.append(task)
 
             if len(tasks) == 0:
-                raise Exception(f"with_completed_matching_tasks({pattern}) matched zero tasks")
+                if current_pattern_idx == 0:
+                    raise Exception(f"with_completed_matching_tasks({pattern}) matched zero tasks")
+                else:
+                    return []
 
             task_matchers.append(TaskMatch(pattern, tasks))
+            current_pattern_idx += 1
 
         if len(task_matchers) == 1:
             yield task_matchers[0]

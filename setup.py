@@ -1,5 +1,3 @@
-import os
-
 from setuptools import setup
 
 minimal_requirements = [
@@ -15,7 +13,7 @@ minimal_requirements = [
 
 setup(
     name='dry_pipe',
-    version='0.7.10',
+    version='0.7.11',
     packages=['dry_pipe'],
     install_requires=minimal_requirements,
     include_package_data=True,
