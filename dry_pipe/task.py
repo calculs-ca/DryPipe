@@ -677,6 +677,7 @@ class Task:
         with open(shell_script_file, "w") as f:
             f.write(task_script_header())
             f.write("env = script_lib.source_task_env(os.path.join(__script_location, 'task-env.sh'))\n")
+            f.write("task_conf_dict = script_lib.load_task_conf_dict()\n")
             f.write("script_lib.ensure_upstream_tasks_completed(env)\n\n")
 
             f.write("\n\ndef go():\n")
@@ -747,6 +748,8 @@ class Task:
                 f.write(self.task_env_file())
                 f.write("\n")
                 f.write(self.script_file())
+                f.write("\n")
+                f.write(self.task_conf_file())
                 f.write("\n")
 
                 if self.task_conf.is_slurm():
@@ -1222,7 +1225,7 @@ class TaskStep:
 
         if self.python_call is not None:
             indented_line(
-                f"script_lib.run_python('{python_bin}', '{self.python_call.mod_func()}'{container_arg})"
+                f"script_lib.run_python(task_conf_dict, '{self.python_call.mod_func()}'{container_arg})"
             )
         else:
             if self.shell_snippet is not None:

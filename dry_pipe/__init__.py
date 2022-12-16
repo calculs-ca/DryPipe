@@ -555,7 +555,8 @@ class TaskConf:
             remote_containers_dir=None,
             init_bash_command=None,
             python_interpreter_switches=["-u"],
-            fields_from_json=None
+            fields_from_json=None,
+            extra_env=None
     ):
 
         if executer_type is None:
@@ -589,6 +590,13 @@ class TaskConf:
         self.remote_containers_dir = remote_containers_dir
         self.init_bash_command = init_bash_command
         self.python_interpreter_switches = python_interpreter_switches
+        self.extra_env = extra_env
+
+        if self.python_bin is None:
+            if self.is_remote():
+                self.python_bin = "/usr/bin/python3"
+            else:
+                self.python_bin = sys.executable
 
         if self.ssh_specs is not None:
             ssh_specs_parts = self.ssh_specs.split(":")
@@ -655,7 +663,8 @@ class TaskConf:
             self.remote_base_dir,
             self.remote_containers_dir,
             self.init_bash_command,
-            self.python_interpreter_switches
+            self.python_interpreter_switches,
+            extra_env=self.extra_env
         )
 
     def override_python_bin(self, python_bin):
@@ -671,7 +680,8 @@ class TaskConf:
             self.remote_base_dir,
             self.remote_containers_dir,
             self.init_bash_command,
-            self.python_interpreter_switches
+            self.python_interpreter_switches,
+            extra_env=self.extra_env
         )
 
     def override_executer(self, executer_type):
@@ -687,7 +697,8 @@ class TaskConf:
             self.remote_base_dir,
             self.remote_containers_dir,
             self.init_bash_command,
-            self.python_interpreter_switches
+            self.python_interpreter_switches,
+            extra_env=self.extra_env
         )
 
     _remote_ssh_executers = {}

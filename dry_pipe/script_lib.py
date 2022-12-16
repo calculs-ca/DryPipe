@@ -154,11 +154,21 @@ def _exit_process():
     logging.shutdown()
     os._exit(0)
 
+def load_task_conf_dict():
+    with open(os.path.join(os.environ["__control_dir"], "task-conf.json")) as _task_conf:
+        tcd = json.loads(_task_conf.read())
 
-def run_python(python_bin, mod_func, container=None):
+        extra_env = tcd["extra_env"]
+        if extra_env is not None:
+            for k, v in extra_env.items():
+                os.environ[k] = v
+        return tcd
+
+def run_python(task_conf_dict, mod_func, container=None):
+
     switches = "-u"
     cmd = [
-        python_bin,
+        task_conf_dict["python_bin"],
         switches,
         "-m",
         "dry_pipe.cli",
