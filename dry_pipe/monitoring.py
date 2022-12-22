@@ -159,7 +159,7 @@ def fetch_task_group_metrics(pipeline_instance_dir, task_key_grouper, task_state
     )
 
 
-def fetch_task_groups_stats(pipeline_instance_dir):
+def fetch_task_groups_stats(pipeline_instance_dir, no_header=False, units='seconds'):
 
     def gen_step_durations():
 
@@ -200,13 +200,25 @@ def fetch_task_groups_stats(pipeline_instance_dir):
                 total_time = (row_time(last_step_completion_row) - row_time(last_step_start_row)).total_seconds()
                 yield f"{task_group_key}:{step_number}", total_time
 
+    if not no_header:
+        yield "task:step\tmin_t\tmax_t\ttotal_t\tavg_t\ts_dev"
+
+    if units == "minutes":
+        unit_converter = lambda i: round(i / 60, 2)
+    elif units == "seconds":
+        unit_converter = lambda i: round(i)
+    elif units == 'hours':
+        unit_converter = lambda i: round(i / (60 * 60), 2)
+    else:
+        raise Exception(f"unknown units: {units}, valid units are 'seconds', 'minutes', 'hours' ")
+
     for step_name, step_duration_tuples in itertools.groupby(
             sorted(gen_step_durations(), key=lambda t: t[0]),
             key=lambda t: t[0]
     ):
 
         step_durations = sorted([
-            time for s, time in step_duration_tuples
+            unit_converter(time) for s, time in step_duration_tuples
         ])
 
         min_t = step_durations[0]
@@ -215,4 +227,11 @@ def fetch_task_groups_stats(pipeline_instance_dir):
         avg_t = total_t / len(step_durations)
         s_dev = 0 if len(step_durations) == 1 else statistics.stdev(step_durations)
 
-        yield step_name, min_t, max_t, total_t, avg_t, s_dev
+        yield (
+            step_name,
+            unit_converter(min_t),
+            unit_converter(max_t),
+            unit_converter(total_t),
+            unit_converter(avg_t),
+            s_dev
+        )

@@ -116,10 +116,14 @@ class RegressionTests(unittest.TestCase):
             d.pipeline_instance_from_generator(correct_timestamps_in_task_history, completed=True)
 
 
-        stats = list(fetch_task_groups_stats(pipeline_for_correct_timestamps_in_task_history.pipeline_instance_dir))
+        stats = list(
+            fetch_task_groups_stats(
+                pipeline_for_correct_timestamps_in_task_history.pipeline_instance_dir, no_header=True
+            )
+        )
 
         self.assertEqual(len(stats), 3)
 
         for step_name, min_t, max_t, total_t, avg_t, s_dev in stats:
             self.assertEqual(min_t, max_t)
-            self.assertTrue(avg_t > 1)
+            self.assertTrue(avg_t >= 1)
