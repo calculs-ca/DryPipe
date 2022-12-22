@@ -83,10 +83,13 @@ class PortablePopen:
             yield line.decode("utf8")
 
     def safe_stderr_as_string(self):
+        i = 0
         try:
-            return self.stderr_as_string()
-        except Exception as _:
-            return ""
+            s = self.popen.stderr.read()
+            i = 1
+            return s.decode("utf8")
+        except Exception as e:
+            return f"failed to capture process stderr ({i}): {e}"
 
     def raise_if_non_zero(self):
         r = self.popen.returncode
