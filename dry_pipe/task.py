@@ -129,65 +129,7 @@ class Task:
         return self.key.split(".")[1]
 
     def as_json(self):
-
-        def file_lines(file):
-            if not os.path.exists(file):
-                return None
-
-            return f"tail -1000\n {tail(file, lines=1000)}"
-
-        task_state = self.get_state()
-
-        action = TaskAction.load_from_task_state(task_state)
-
-        action = None if action is None else action.action_name
-
-        snapshot_time = int(time.time_ns())
-
-        def missing_deps():
-            c = 0
-            for d in self.iterate_unsatisfied_deps():
-
-                c += 1
-
-                if c >= 10:
-                    yield "more missing deps..."
-                    break
-
-                yield list(d)[0]
-
-        missing_deps_list = list(missing_deps())
-
-        if self.is_remote():
-
-            with self.task_conf.create_executer() as ssh_executor:
-                f_out, f_err, f_history_file, last_activity_time = ssh_executor.fetch_logs_and_history(self)
-
-            return {
-                'key': self.key,
-                'state': task_state.state_name,
-                'step': task_state.step_number(),
-                'out': f_out,
-                'err': f_err,
-                'history': list(task_state.load_history_rows(f_history_file)),
-                'action': action,
-                'snapshot_time': snapshot_time,
-                "missing_deps": missing_deps_list
-            }
-        else:
-            return {
-                'key': self.key,
-                'state': task_state.state_name,
-                'step': task_state.step_number(),
-                'out': file_lines(self.v_abs_out_log()),
-                'err': file_lines(self.v_abs_err_log()),
-                'control_err': file_lines(self.v_abs_control_error_log()),
-                'history': list(task_state.load_history_rows()),
-                'action': action,
-                'snapshot_time': snapshot_time,
-                "missing_deps": missing_deps_list
-            }
-
+        raise Exception(f"deprecated, use get_state().as_json()")
 
     def all_produced_files(self):
         for f, item in self.out.produces.items():
