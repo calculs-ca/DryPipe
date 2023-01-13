@@ -43,7 +43,7 @@ def task_details_message(instance_dirs_to_pipelines, pid_task_key):
         os.path.join(instances_dir, pid), task_key
     )
 
-    return task_state.as_json()
+    return task_state.as_json(timeout=5)
 
 
 def pipeline_counts_message(instance_dirs_to_pipelines, pid):

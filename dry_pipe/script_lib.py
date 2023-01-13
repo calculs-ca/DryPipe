@@ -98,8 +98,8 @@ class PortablePopen:
                 f"process invocation returned non zero {r}: {self.process_args}\nstderr: {self.safe_stderr_as_string()}"
             )
 
-    def wait_and_raise_if_non_zero(self):
-        self.popen.wait()
+    def wait_and_raise_if_non_zero(self, timeout=None):
+        self.popen.wait(timeout)
         self.raise_if_non_zero()
 
 

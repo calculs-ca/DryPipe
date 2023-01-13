@@ -6,6 +6,7 @@ import mmap
 import copy
 from datetime import datetime
 from itertools import groupby
+from subprocess import TimeoutExpired
 
 from dry_pipe.actions import TaskAction
 from dry_pipe.script_lib import parse_in_out_meta, PortablePopen, load_pid, load_slurm_job_id, ps_resources
@@ -569,14 +570,16 @@ class TaskState:
                 if state2 not in possible_next_states:
                     yield f"{state1} can't be followed by {state2}"
 
-    def as_json(self):
+    def as_json(self, timeout=None):
 
         def file_content(file):
             f = os.path.join(self.control_dir(), file)
             if not os.path.exists(f):
                 return None
 
-            return f"tail -1000\n {tail(f, lines=1000)}"
+            n = 1000
+
+            return f"tail -{n}\n {tail(f, lines=n, timeout=timeout)}"
 
         action = TaskAction.load_from_task_state(self)
 
@@ -607,7 +610,7 @@ class TaskState:
         }
 
 
-def tail(filename, lines=20, line_limit=1000):
+def tail(filename, lines=20, line_limit=1000, timeout=None):
 
     if not os.path.exists(filename):
         return ""
@@ -615,7 +618,10 @@ def tail(filename, lines=20, line_limit=1000):
     cmd = f"tail -{lines} {filename}"
 
     with PortablePopen(cmd.split(" ")) as p:
-        p.wait_and_raise_if_non_zero()
+        try:
+            p.wait_and_raise_if_non_zero(timeout)
+        except TimeoutExpired:
+            return f"tail command timed out: {cmd}"
 
         def read():
             for line in p.read_stdout_lines():
