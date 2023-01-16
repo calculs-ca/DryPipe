@@ -20,6 +20,14 @@
     ]
   },
   "loggers": {
+    "pssh.host_logger": {
+      "level": "WARNING",
+      "handlers": ["console"]
+    },
+    "pssh.clients.native.single": {
+      "level": "WARNING",
+      "handlers": ["console"]
+    },
     "dry_pipe.janitors": {
       "level": "DEBUG",
       "handlers": ["console"]

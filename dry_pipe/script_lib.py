@@ -339,20 +339,22 @@ def parse_in_out_meta(name_to_meta_dict):
         yield producing_task_key, filter_and_map(lambda t: t != "file"), filter_and_map(lambda t: t == "file")
 
 
-def read_task_state(control_dir=None, no_state_file_ok=False):
+def read_task_state(control_dir=None, state_file=None):
 
     if control_dir is None:
         control_dir = os.environ["__control_dir"]
 
-    glob_exp = os.path.join(control_dir, "state.*")
-    state_file = list(glob.glob(glob_exp))
+    if state_file is None:
+        glob_exp = os.path.join(control_dir, "state.*")
+        state_file = list(glob.glob(glob_exp))
 
-    if len(state_file) == 0:
-        raise Exception(f"no state file in {control_dir}, {glob_exp}")
-    if len(state_file) > 1:
-        raise Exception(f"more than one state file found in {control_dir}, {glob_exp}")
+        if len(state_file) == 0:
+            raise Exception(f"no state file in {control_dir}, {glob_exp}")
+        if len(state_file) > 1:
+            raise Exception(f"more than one state file found in {control_dir}, {glob_exp}")
 
-    state_file = state_file[0]
+        state_file = state_file[0]
+
     base_file_name = os.path.basename(state_file)
     name_parts = base_file_name.split(".")
     state_name = name_parts[1]
@@ -925,18 +927,21 @@ def detect_slurm_crashes():
                 task_conf = json.loads(tc.read())
                 slurm_account = task_conf.get("slurm_account")
                 if slurm_account is not None and slurm_account != "":
-                    yield slurm_account, slurm_job_id, control_dir
+                    yield slurm_account, slurm_job_id, control_dir, state_file, slurm_job_id_file
 
     all_job_ids_and_slurm_accounts = list(iterate_all_job_ids_and_slurm_accounts())
 
-    all_slurm_accounts = set([a for a, _, _ in all_job_ids_and_slurm_accounts])
+    all_slurm_accounts = set([t[0] for t in all_job_ids_and_slurm_accounts])
 
     if len(all_slurm_accounts) == 0:
         return
 
     all_slurm_accounts = ','.join(all_slurm_accounts)
 
-    job_ids_to_control_dirs = {job_id: control_dir for _, job_id, control_dir in all_job_ids_and_slurm_accounts}
+    job_ids_to_control_dirs = {
+        slurm_job_id: (control_dir, state_file, slurm_job_id_file)
+        for slurm_account, slurm_job_id, control_dir, state_file, slurm_job_id_file in all_job_ids_and_slurm_accounts
+    }
 
     potential_slurm_zombies_job_ids = job_ids_to_control_dirs.keys()
 
@@ -948,14 +953,20 @@ def detect_slurm_crashes():
         crashed_job_ids = set(potential_slurm_zombies_job_ids) - running_job_ids
 
         for job_id in crashed_job_ids:
-            control_dir = job_ids_to_control_dirs[job_id]
+            control_dir, state_file, slurm_job_id_file = job_ids_to_control_dirs[job_id]
+
+            # prevent race condition
+            if not (os.path.exists(state_file) and os.path.exists(slurm_job_id_file)):
+                continue
 
             task_logger = create_task_logger(control_dir)
 
-            step_number, control_dir, state_file, state_name = read_task_state(control_dir)
-            _transition_state_file(state_file, "crashed", step_number, this_logger=task_logger)
-
-            print(f"WARNING: zombie slurm job detected, slurm_job_id: {job_id}")
+            try:
+                step_number, control_dir, state_file, state_name = read_task_state(control_dir)
+                _transition_state_file(state_file, "crashed", step_number, this_logger=task_logger)
+                print(f"WARNING: zombie slurm job detected, slurm_job_id: {job_id}")
+            except FileNotFoundError as ex:
+                print(f"WARNING: race condition encountered on {state_file}")
 
 def detect_process_crashes():
 
@@ -1025,3 +1036,5 @@ def handle_script_lib_main():
         #detect_process_crashes()
     else:
         raise Exception('invalid args')
+
+    logging.shutdown()
