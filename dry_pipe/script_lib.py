@@ -895,6 +895,8 @@ def _scan_control_dirs(pipeline_instance_dir, filename):
     for f in glob.glob(os.path.join(pipeline_instance_dir, ".drypipe", "*", filename)):
         control_dir = os.path.dirname(f)
         state_file = list(glob.glob(os.path.join(control_dir, "state.*")))
+        if len(state_file) == 0:
+            continue
         with open(f) as _f:
             slurm_job_id_or_pid = _f.read().strip()
             if len(state_file) == 0:
