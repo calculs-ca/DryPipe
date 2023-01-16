@@ -132,7 +132,10 @@ def write_pipeline_lib_script(file_handle):
 
 def task_script_header():
 
-    return f"{python_shebang()}\n" + textwrap.dedent(f"""            
+    is_zombi_test_case = os.environ.get("IS_ZOMBI_TEST_CASE") == "True"
+    bsheb = python_shebang() if not is_zombi_test_case else "#!/brokenshebang"
+
+    return f"{bsheb}\n" + textwrap.dedent(f"""            
         import os 
         import importlib.machinery
         import importlib.util    
@@ -382,9 +385,9 @@ def _append_to_history(control_dir, state_name, step_number=None):
         f.write("\n")
 
 
-def _transition_state_file(state_file, next_state_name, step_number=None):
+def _transition_state_file(state_file, next_state_name, step_number=None, this_logger=logger):
 
-    logger.debug("_transition_state_file: %s", state_file)
+    this_logger.debug("_transition_state_file: %s", state_file)
 
     control_dir = os.path.dirname(state_file)
 
@@ -397,8 +400,8 @@ def _transition_state_file(state_file, next_state_name, step_number=None):
 
     next_state_file = os.path.join(control_dir, next_state_basename)
 
-    logger.info("will transition to: %s", next_state_basename)
-    logger.debug("next_state_file: %s", next_state_file)
+    this_logger.info("will transition to: %s", next_state_basename)
+    this_logger.debug("next_state_file: %s", next_state_file)
 
     os.rename(
         state_file,
@@ -888,6 +891,91 @@ def scancel_all():
 def segterm_all():
     pass
 
+def _scan_control_dirs(pipeline_instance_dir, filename):
+    for f in glob.glob(os.path.join(pipeline_instance_dir, ".drypipe", "*", filename)):
+        control_dir = os.path.dirname(f)
+        state_file = list(glob.glob(os.path.join(control_dir, "state.*")))
+        with open(f) as _f:
+            slurm_job_id_or_pid = _f.read().strip()
+            if len(state_file) == 0:
+                yield slurm_job_id_or_pid, None, None, None
+            else:
+                state = os.path.basename(state_file[0]).split(".")[1]
+                yield slurm_job_id_or_pid, state, control_dir, state_file[0]
+
+def detect_slurm_crashes():
+
+    pipeline_instance_dir = os.path.dirname(os.path.dirname(sys.argv[0]))
+
+    def iterate_all_job_ids_and_slurm_accounts():
+        for slurm_job_id, state, control_dir, state_file in _scan_control_dirs(pipeline_instance_dir, "slurm_job_id"):
+            if state not in ["launched", "scheduled", "step-started"]:
+                continue
+            with open(os.path.join(control_dir, "task-conf.json")) as tc:
+                task_conf = json.loads(tc.read())
+                slurm_account = task_conf.get("slurm_account")
+                if slurm_account is not None and slurm_account != "":
+                    yield slurm_account, slurm_job_id, control_dir
+
+    all_job_ids_and_slurm_accounts = list(iterate_all_job_ids_and_slurm_accounts())
+
+    all_slurm_accounts = set([a for a, _, _ in all_job_ids_and_slurm_accounts])
+
+    if len(all_slurm_accounts) == 0:
+        return
+
+    all_slurm_accounts = ','.join(all_slurm_accounts)
+
+    job_ids_to_control_dirs = {job_id: control_dir for _, job_id, control_dir in all_job_ids_and_slurm_accounts}
+
+    potential_slurm_zombies_job_ids = job_ids_to_control_dirs.keys()
+
+    with PortablePopen(
+        ['squeue', '--noheader', "--format=%i", f"--users={all_slurm_accounts}"]
+    ) as p:
+        p.wait_and_raise_if_non_zero()
+        running_job_ids = set(p.stdout_as_string().split("\n"))
+        crashed_job_ids = set(potential_slurm_zombies_job_ids) - running_job_ids
+
+        for job_id in crashed_job_ids:
+            control_dir = job_ids_to_control_dirs[job_id]
+
+            task_logger = create_task_logger(control_dir)
+
+            step_number, control_dir, state_file, state_name = read_task_state(control_dir)
+            _transition_state_file(state_file, "crashed", step_number, this_logger=task_logger)
+
+            print(f"WARNING: zombie slurm job detected, slurm_job_id: {job_id}")
+
+def detect_process_crashes():
+
+    pipeline_instance_dir = os.path.dirname(os.path.dirname(sys.argv[0]))
+
+    potential_process_zombies = {
+        pid: (state, control_dir, state_file)
+        for pid, state, control_dir, state_file in _scan_control_dirs(pipeline_instance_dir, "pid")
+        if state in ["launched", "scheduled", "step-started"]
+    }
+
+    potential_zombies_pids = potential_process_zombies.keys()
+
+    if len(potential_zombies_pids) > 0:
+        pids = ','.join(potential_zombies_pids)
+        with PortablePopen(["ps", f"--pid={pids}", "o", "pid", "--no-header"]) as p:
+            p.wait_and_raise_if_non_zero()
+            running_pids = set(p.stdout_as_string().split("\n"))
+            crashed_pids = set(pids) - running_pids
+
+            for pid in crashed_pids:
+                state, control_dir, state_file = potential_process_zombies[pid]
+
+                task_logger = create_task_logger(control_dir)
+
+                step_number, control_dir, state_file, state_name = read_task_state()
+                _transition_state_file(state_file, "crashed", step_number, this_logger=task_logger)
+
+                print(f"WARNING: zombie tasks detected, pid: {pid}")
+
 
 def handle_script_lib_main():
 
@@ -905,5 +993,11 @@ def handle_script_lib_main():
         terminate_all()
     elif "segterm-all" in sys.argv:
         segterm_all()
+    elif "detect-slurm-crashes" in sys.argv:
+        detect_slurm_crashes()
+        #detect_process_crashes()
+    elif "detect-crashes" in sys.argv:
+        detect_slurm_crashes()
+        detect_process_crashes()
     else:
         raise Exception('invalid args')

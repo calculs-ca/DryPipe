@@ -99,6 +99,36 @@ class RemoteSSH(Executor):
         else:
             return False
 
+    def _remote_script_lib_path(self, pipeline_instance_dir):
+        remote_pid_basename = os.path.basename(pipeline_instance_dir)
+
+        remote_pipeline_instance_dir = os.path.join(self.remote_base_dir, remote_pid_basename)
+
+        return os.path.join(
+            remote_pipeline_instance_dir,
+            '.drypipe',
+            'script_lib'
+        )
+
+    def detect_zombies(self, pipeline):
+        with perf_logger_timer("RemoteSSH.detect_zombies") as t:
+            stdout = self.invoke_remote(" ".join([
+                self._remote_script_lib_path(pipeline.pipeline_instance_dir),
+                "detect-crashes"
+            ]))
+
+            zombies_detected = [
+                line
+                for line in stdout.split("\n")
+                if line.startswith("WARNING: zombie")
+            ]
+
+            if len(zombies_detected) == 0:
+                return None
+
+            return stdout
+
+
     def fetch_remote_task_states(self, pipeline):
         with perf_logger_timer("RemoteSSH.fetch_remote_task_states") as t:
             remote_pid_basename = os.path.basename(pipeline.pipeline_instance_dir)
@@ -394,15 +424,7 @@ class RemoteSSH(Executor):
         task_local_logger = create_task_logger(os.path.join(task.v_abs_control_dir()))
         try:
 
-            remote_pid_basename = os.path.basename(task.pipeline_instance.pipeline_instance_dir)
-
-            remote_pipeline_instance_dir = os.path.join(self.remote_base_dir, remote_pid_basename)
-
-            remote_script_lib_path = os.path.join(
-                remote_pipeline_instance_dir,
-                '.drypipe',
-                'script_lib'
-            )
+            remote_script_lib_path = self._remote_script_lib_path(task.pipeline_instance.pipeline_instance_dir)
 
             drypipe_task_debug = os.environ.get("DRYPIPE_TASK_DEBUG") == "True"
 

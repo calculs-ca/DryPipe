@@ -201,8 +201,8 @@ class Janitor:
                     )
 
                     if sync_mode:
-                        _upload_janitor(daemon_thread_helper, pipeline_instance, daemon_thread_helper.logger)
-                        _download_janitor(daemon_thread_helper, pipeline_instance)
+                        _upload_janitor(daemon_thread_helper, pipeline_instance)
+                        _download_janitor(daemon_thread_helper, pipeline_instance, sync_mode)
 
                     if work_done_on_pipeline_instance > 0:
                         work_done += work_done_on_pipeline_instance
@@ -251,7 +251,7 @@ class Janitor:
 
                     for pipeline in daemon_thread_helper.iterate_on_pipeline_instances():
 
-                        if _upload_janitor(daemon_thread_helper, pipeline, daemon_thread_helper.logger) > 0:
+                        if _upload_janitor(daemon_thread_helper, pipeline) > 0:
                             daemon_thread_helper.register_work()
 
                     daemon_thread_helper.end_round()
@@ -279,7 +279,7 @@ class Janitor:
 
                         download_j_logger.debug("will check remote tasks of %s", pipeline.instance_dir_base_name())
 
-                        has_worked = _download_janitor(daemon_thread_helper, pipeline, download_j_logger) > 0
+                        has_worked = _download_janitor(daemon_thread_helper, pipeline) > 0
 
                         if has_worked:
                             daemon_thread_helper.register_work()
@@ -343,7 +343,7 @@ def _janitor_ng(pipeline_instance, wait_for_completion=False, fail_silently=Fals
         if task_state.is_completed():
             tasks_completed += 1
             continue
-        if task_state.is_failed():
+        if task_state.is_failed() or task_state.is_crashed():
             continue
         elif task_state.is_completed_unsigned():
             work_done += 1
@@ -379,7 +379,7 @@ def _janitor_ng(pipeline_instance, wait_for_completion=False, fail_silently=Fals
     return work_done
 
 
-def _upload_janitor(daemon_thread_helper, pipeline, logger):
+def _upload_janitor(daemon_thread_helper, pipeline):
 
     work_done = 0
 
@@ -396,16 +396,25 @@ def _upload_janitor(daemon_thread_helper, pipeline, logger):
     return work_done
 
 
-def _download_janitor(daemon_thread_helper, pipeline, download_j_logger=None):
+def _download_janitor(daemon_thread_helper, pipeline, is_sync_mode):
 
-    if download_j_logger is None:
-        download_j_logger = logging.getLogger()
+    download_j_logger = janitor_sub_logger("download_d")
 
     work_done = 0
 
+    frequency_mod = 2 if is_sync_mode else 5
+
     for task_conf in pipeline.remote_sites_task_confs():
         remote_executor = daemon_thread_helper.get_executer(task_conf)
-        download_j_logger.debug("handle remote exec %s ", remote_executor)
+
+        if daemon_thread_helper.round_counter % frequency_mod == 0:
+            download_j_logger.info("will check for remote zombies")
+            zombies_detected_msg = remote_executor.detect_zombies(pipeline)
+            if zombies_detected_msg is not None:
+                send_email_error_report_if_configured(f"zombie tasks detected", details=zombies_detected_msg)
+                module_logger.warning("zombies detected: %s", zombies_detected_msg)
+
+        download_j_logger.debug("handle remote exec %s ", remote_executor.server_connection_key())
 
         running_task_count = 0
 

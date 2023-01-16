@@ -91,7 +91,7 @@ STATE_EQUIVALENCE_FOR_DISPLAY = {
     "timed-out":           "timed-out",
     "killed":              "killed",
 #    "ignored":             "ignored",
-#    "crashed":             "crashed"
+    "crashed":             "failed"
 }
 
 STATE_EQUIVALENCE_FOR_DISPLAY_WEB = {
@@ -354,6 +354,9 @@ class TaskState:
 
     def is_timed_out(self):
         return self.state_name == "timed-out"
+
+    def is_crashed(self):
+        return self.state_name == "crashed"
 
     def is_waiting_for_deps(self):
         return self.state_name == "waiting-for-deps"
