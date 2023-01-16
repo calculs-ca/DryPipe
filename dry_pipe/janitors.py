@@ -396,7 +396,7 @@ def _upload_janitor(daemon_thread_helper, pipeline):
     return work_done
 
 
-def _download_janitor(daemon_thread_helper, pipeline, is_sync_mode):
+def _download_janitor(daemon_thread_helper, pipeline, is_sync_mode=False):
 
     download_j_logger = janitor_sub_logger("download_d")
 
