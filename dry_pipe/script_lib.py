@@ -891,28 +891,36 @@ def scancel_all():
 def segterm_all():
     pass
 
-def _scan_control_dirs(pipeline_instance_dir, filename):
-    for f in glob.glob(os.path.join(pipeline_instance_dir, ".drypipe", "*", filename)):
-        control_dir = os.path.dirname(f)
-        state_file = list(glob.glob(os.path.join(control_dir, "state.*")))
-        if len(state_file) == 0:
-            continue
-        with open(f) as _f:
-            slurm_job_id_or_pid = _f.read().strip()
-            if len(state_file) == 0:
-                yield slurm_job_id_or_pid, None, None, None
-            else:
-                state = os.path.basename(state_file[0]).split(".")[1]
-                yield slurm_job_id_or_pid, state, control_dir, state_file[0]
-
 def detect_slurm_crashes():
 
     pipeline_instance_dir = os.path.dirname(os.path.dirname(sys.argv[0]))
 
+    def try_to_read_job_id(f):
+        try:
+            with open(f) as _f:
+                return _f.read()
+        except Exception as _:
+            return None
+
     def iterate_all_job_ids_and_slurm_accounts():
-        for slurm_job_id, state, control_dir, state_file in _scan_control_dirs(pipeline_instance_dir, "slurm_job_id"):
+
+        for slurm_job_id_file in glob.glob(os.path.join(pipeline_instance_dir, ".drypipe", "*", "slurm_job_id")):
+            slurm_job_id = try_to_read_job_id(slurm_job_id_file)
+            if slurm_job_id is None:
+                continue
+
+            control_dir = os.path.dirname(slurm_job_id_file)
+            state_file = list(glob.glob(os.path.join(control_dir, "state.*")))
+
+            if len(state_file) == 0:
+                continue
+
+            state_file = state_file[0]
+            state = os.path.basename(state_file).split(".")[1]
+
             if state not in ["launched", "scheduled", "step-started"]:
                 continue
+
             with open(os.path.join(control_dir, "task-conf.json")) as tc:
                 task_conf = json.loads(tc.read())
                 slurm_account = task_conf.get("slurm_account")
@@ -950,6 +958,20 @@ def detect_slurm_crashes():
             print(f"WARNING: zombie slurm job detected, slurm_job_id: {job_id}")
 
 def detect_process_crashes():
+
+    def _scan_control_dirs(pipeline_instance_dir, filename):
+        for f in glob.glob(os.path.join(pipeline_instance_dir, ".drypipe", "*", filename)):
+            control_dir = os.path.dirname(f)
+            state_file = list(glob.glob(os.path.join(control_dir, "state.*")))
+            if len(state_file) == 0:
+                continue
+            with open(f) as _f:
+                slurm_job_id_or_pid = _f.read().strip()
+                if len(state_file) == 0:
+                    yield slurm_job_id_or_pid, None, None, None
+                else:
+                    state = os.path.basename(state_file[0]).split(".")[1]
+                    yield slurm_job_id_or_pid, state, control_dir, state_file[0]
 
     pipeline_instance_dir = os.path.dirname(os.path.dirname(sys.argv[0]))
 
@@ -1000,6 +1022,6 @@ def handle_script_lib_main():
         #detect_process_crashes()
     elif "detect-crashes" in sys.argv:
         detect_slurm_crashes()
-        detect_process_crashes()
+        #detect_process_crashes()
     else:
         raise Exception('invalid args')
