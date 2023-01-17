@@ -114,19 +114,21 @@ class RemoteSSH(Executor):
         with perf_logger_timer("RemoteSSH.detect_zombies") as t:
             stdout = self.invoke_remote(" ".join([
                 self._remote_script_lib_path(pipeline.pipeline_instance_dir),
-                "detect-crashes --is-debug"
+                f"detect-crashes {self.ssh_username} --is-debug"
             ]))
 
-            zombies_detected = [
-                line
-                for line in stdout.split("\n")
-                if line.startswith("WARNING: zombie")
-            ]
+            warning_msg = []
+            zombies_detected = 0
 
-            if len(zombies_detected) == 0:
+            for line in stdout.split("\n"):
+                if line.startswith("WARNING: zombie"):
+                    zombies_detected += 1
+                    warning_msg.append(line)
+
+            if zombies_detected == 0:
                 return None
 
-            return stdout
+            return "\n".join(warning_msg)
 
 
     def fetch_remote_task_states(self, pipeline):

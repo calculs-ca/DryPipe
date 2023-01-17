@@ -412,7 +412,7 @@ def _download_janitor(daemon_thread_helper, pipeline, is_sync_mode=False):
             zombies_detected_msg = remote_executor.detect_zombies(pipeline)
             if zombies_detected_msg is not None:
                 send_email_error_report_if_configured(f"zombie tasks detected", details=zombies_detected_msg)
-                module_logger.warning("zombies detected: %s", zombies_detected_msg)
+                module_logger.error("zombies detected: %s", zombies_detected_msg)
 
         download_j_logger.debug("handle remote exec %s ", remote_executor.server_connection_key())
 

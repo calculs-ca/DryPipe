@@ -912,7 +912,7 @@ def scancel_all():
 def segterm_all():
     pass
 
-def detect_slurm_crashes(is_debug):
+def detect_slurm_crashes(user, is_debug):
 
     pipeline_instance_dir = os.path.dirname(os.path.dirname(sys.argv[0]))
 
@@ -921,7 +921,7 @@ def detect_slurm_crashes(is_debug):
     def try_to_read_job_id(f):
         try:
             with open(f) as _f:
-                return _f.read()
+                return _f.read().strip()
         except Exception as _:
             return None
 
@@ -944,57 +944,49 @@ def detect_slurm_crashes(is_debug):
             if state not in ["launched", "scheduled", "step-started"]:
                 continue
 
-            with open(os.path.join(control_dir, "task-conf.json")) as tc:
-                task_conf = json.loads(tc.read())
-                slurm_account = task_conf.get("slurm_account")
-                if slurm_account is not None and slurm_account != "":
-                    yield slurm_account, slurm_job_id, control_dir, state_file, slurm_job_id_file
+            yield slurm_job_id, control_dir, state_file, slurm_job_id_file
 
-    all_job_ids_and_slurm_accounts = list(iterate_all_job_ids_and_slurm_accounts())
+    all_job_ids_and_info = list(iterate_all_job_ids_and_slurm_accounts())
 
-    all_slurm_accounts = set([t[0] for t in all_job_ids_and_slurm_accounts])
-
-    if len(all_slurm_accounts) == 0:
+    if len(all_job_ids_and_info) == 0:
         janitor_logger.debug("no slurm jobs at this time")
         return
 
-    all_slurm_accounts = ','.join(all_slurm_accounts)
-
-    job_ids_to_control_dirs = {
+    job_ids_to_info = {
         slurm_job_id: (control_dir, state_file, slurm_job_id_file)
-        for slurm_account, slurm_job_id, control_dir, state_file, slurm_job_id_file in all_job_ids_and_slurm_accounts
+        for slurm_job_id, control_dir, state_file, slurm_job_id_file in all_job_ids_and_info
     }
 
-    potential_slurm_zombies_job_ids = job_ids_to_control_dirs.keys()
+    potential_slurm_zombies_job_ids = job_ids_to_info.keys()
 
-    with PortablePopen(
-        ['squeue', '--noheader', "--format=%i", f"--users={all_slurm_accounts}"]
-    ) as p:
+    squeue_cmd = ['squeue', '--noheader', "--format=%i", f"--users={user}"]
+    with PortablePopen(squeue_cmd) as p:
         p.wait_and_raise_if_non_zero()
         stdout = p.stdout_as_string()
-        running_job_ids = set(stdout.split("\n"))
-        janitor_logger.debug("%s scheduled or running jobs: %s", len(running_job_ids), stdout)
+        janitor_logger.debug("%s returned %s", " ".join(squeue_cmd), stdout)
+        running_job_ids = [s.strip() for s in stdout.split("\n")]
+        janitor_logger.debug("%s scheduled or running jobs", len(running_job_ids))
 
         for job_id in potential_slurm_zombies_job_ids:
             if job_id not in running_job_ids:
 
-                control_dir, state_file, slurm_job_id_file = job_ids_to_control_dirs[job_id]
+                control_dir, state_file, slurm_job_id_file = job_ids_to_info[job_id]
 
                 # prevent race condition
                 if not (os.path.exists(state_file) and os.path.exists(slurm_job_id_file)):
-                    janitor_logger.info("race condition detected %s in:", control_dir)
+                    janitor_logger.info("race condition detected %s in:", state_file)
                     continue
 
-                janitor_logger.debug("zombie detected %s in:", control_dir)
+                janitor_logger.debug("zombie job %s detected, in %s:", job_id, state_file)
 
                 task_logger = create_task_logger(control_dir)
 
                 try:
                     step_number, control_dir, state_file, state_name = read_task_state(control_dir)
                     _transition_state_file(state_file, "crashed", step_number, this_logger=task_logger)
-                    print(f"WARNING: zombie slurm job detected, slurm_job_id: {job_id}")
+                    print(f"WARNING: zombie slurm job_id={job_id} detected, in {control_dir}")
                 except FileNotFoundError as ex:
-                    janitor_logger.info(f"race condition encountered on {state_file}")
+                    janitor_logger.info(f"race condition encountered on %s", state_file)
 
 def detect_process_crashes():
 
@@ -1057,10 +1049,12 @@ def handle_script_lib_main():
     elif "segterm-all" in sys.argv:
         segterm_all()
     elif "detect-slurm-crashes" in sys.argv:
-        detect_slurm_crashes("--is-debug" in sys.argv)
+        user = sys.argv[2]
+        detect_slurm_crashes(user, "--is-debug" in sys.argv)
         #detect_process_crashes()
     elif "detect-crashes" in sys.argv:
-        detect_slurm_crashes("--is-debug" in sys.argv)
+        user = sys.argv[2]
+        detect_slurm_crashes(user, "--is-debug" in sys.argv)
         #detect_process_crashes()
     else:
         raise Exception('invalid args')
