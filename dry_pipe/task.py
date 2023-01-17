@@ -638,6 +638,7 @@ class Task:
         os.chmod(shell_script_file, 0o764)
 
         if self.task_conf.is_slurm():
+            pid_name = os.path.basename(self.pipeline_instance.pipeline_instance_dir)
 
             with open(self.v_abs_sbatch_launch_script(), "w") as f:
                 f.write(f"{bash_shebang()}\n\n")
@@ -657,7 +658,7 @@ class Task:
                      "    --export=__script_location=$__script_location,__is_slurm=True,DRYPIPE_TASK_DEBUG=$DRYPIPE_TASK_DEBUG \\",
                      "    --signal=B:USR1@50 \\",
                      "    --parsable \\",
-                    f"    --job-name={self.key} $SBATCH_EXTRA_ARGS \\",
+                    f"    --job-name={self.key}-{pid_name} $SBATCH_EXTRA_ARGS \\",
                      "    $__script_location/task)"
                 ]))
 

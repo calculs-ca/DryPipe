@@ -281,9 +281,10 @@ def _terminate_descendants_and_exit(p1, p2):
         _exit_process()
 
 
-def _delete_pid_and_slurm_job_id():
+def _delete_pid_and_slurm_job_id(sloc=None):
     try:
-        sloc = os.environ["__script_location"]
+        if sloc is None:
+            sloc = os.environ["__script_location"]
 
         def delete_if_exists(f):
             f = os.path.join(sloc, f)
@@ -613,6 +614,8 @@ def launch_task_from_remote(task_key, is_slurm, wait_for_completion, drypipe_tas
 
     touch(os.path.join(control_dir, 'state.launched.0'))
 
+    _delete_pid_and_slurm_job_id(control_dir)
+
     env = os.environ
 
     if is_slurm:
@@ -915,76 +918,69 @@ def segterm_all():
 def detect_slurm_crashes(user, is_debug):
 
     pipeline_instance_dir = os.path.dirname(os.path.dirname(sys.argv[0]))
+    pid_base = os.path.basename(pipeline_instance_dir)
 
     janitor_logger = create_remote_janitor_logger(pipeline_instance_dir, "zombie-detector", is_debug)
 
-    def try_to_read_job_id(f):
-        try:
-            with open(f) as _f:
-                return _f.read().strip()
-        except Exception as _:
-            return None
+    def iterate_all_expected_job_names_and_info():
 
-    def iterate_all_job_ids_and_slurm_accounts():
+        for state_file in glob.glob(os.path.join(pipeline_instance_dir, ".drypipe", "*", "state.*")):
 
-        for slurm_job_id_file in glob.glob(os.path.join(pipeline_instance_dir, ".drypipe", "*", "slurm_job_id")):
-            slurm_job_id = try_to_read_job_id(slurm_job_id_file)
-            if slurm_job_id is None:
-                continue
-
-            control_dir = os.path.dirname(slurm_job_id_file)
-            state_file = list(glob.glob(os.path.join(control_dir, "state.*")))
-
-            if len(state_file) == 0:
-                continue
-
-            state_file = state_file[0]
+            control_dir = os.path.dirname(state_file)
             state = os.path.basename(state_file).split(".")[1]
 
             if state not in ["launched", "scheduled", "step-started"]:
                 continue
 
-            yield slurm_job_id, control_dir, state_file, slurm_job_id_file
+            if not os.path.exists(os.path.join(control_dir, "slurm_job_id")):
+                continue
 
-    all_job_ids_and_info = list(iterate_all_job_ids_and_slurm_accounts())
+            task_key = os.path.basename(control_dir)
 
-    if len(all_job_ids_and_info) == 0:
-        janitor_logger.debug("no slurm jobs at this time")
+            yield f"{task_key}-{pid_base}", control_dir, state_file
+
+    all_expected_job_names_and_info = list(iterate_all_expected_job_names_and_info())
+
+    if len(all_expected_job_names_and_info) == 0:
+        janitor_logger.debug("no expected slurm jobs at this time")
         return
 
-    job_ids_to_info = {
-        slurm_job_id: (control_dir, state_file, slurm_job_id_file)
-        for slurm_job_id, control_dir, state_file, slurm_job_id_file in all_job_ids_and_info
+    job_names_to_info = {
+        job_name: (control_dir, state_file)
+        for job_name, control_dir, state_file in all_expected_job_names_and_info
     }
 
-    potential_slurm_zombies_job_ids = job_ids_to_info.keys()
+    potential_slurm_zombies_names = job_names_to_info.keys()
 
-    squeue_cmd = ['squeue', '--noheader', "--format=%i", f"--users={user}"]
+    squeue_cmd = ['squeue', '--noheader', "--format=%j", f"--user={user}"]
     with PortablePopen(squeue_cmd) as p:
         p.wait_and_raise_if_non_zero()
         stdout = p.stdout_as_string()
-        janitor_logger.debug("%s returned %s", " ".join(squeue_cmd), stdout)
-        running_job_ids = [s.strip() for s in stdout.split("\n")]
-        janitor_logger.debug("%s scheduled or running jobs", len(running_job_ids))
+        running_job_names = set([
+            s
+            for s in [s0.strip() for s0 in stdout.split("\n")]
+            if s != ""
+        ])
+        janitor_logger.debug("%s returned jobs: %s", " ".join(squeue_cmd), running_job_names)
 
-        for job_id in potential_slurm_zombies_job_ids:
-            if job_id not in running_job_ids:
+        for job_name in potential_slurm_zombies_names:
+            if job_name not in running_job_names:
 
-                control_dir, state_file, slurm_job_id_file = job_ids_to_info[job_id]
+                control_dir, state_file = job_names_to_info[job_name]
 
                 # prevent race condition
-                if not (os.path.exists(state_file) and os.path.exists(slurm_job_id_file)):
-                    janitor_logger.info("race condition detected %s in:", state_file)
+                if not os.path.exists(state_file):
+                    janitor_logger.info("race condition detected for %s", state_file)
                     continue
 
-                janitor_logger.debug("zombie job %s detected, in %s:", job_id, state_file)
+                janitor_logger.debug("zombie job %s detected, in %s:", job_name, state_file)
 
                 task_logger = create_task_logger(control_dir)
 
                 try:
                     step_number, control_dir, state_file, state_name = read_task_state(control_dir)
                     _transition_state_file(state_file, "crashed", step_number, this_logger=task_logger)
-                    print(f"WARNING: zombie slurm job_id={job_id} detected, in {control_dir}")
+                    print(f"WARNING: zombie slurm job_id={job_name} detected, in {control_dir}")
                 except FileNotFoundError as ex:
                     janitor_logger.info(f"race condition encountered on %s", state_file)
 
