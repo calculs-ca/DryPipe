@@ -15,13 +15,8 @@ from pathlib import Path
 from threading import Thread
 
 
-def create_task_logger(task_control_dir):
-    if os.environ.get("DRYPIPE_TASK_DEBUG") != "True":
-        logging_level = logging.INFO
-    else:
-        logging_level = logging.DEBUG
-    _logger = logging.Logger("task-logger", logging_level)
-    file_handler = logging.FileHandler(filename=os.path.join(task_control_dir, "drypipe.log"))
+def init_logger(_logger, filename, logging_level):
+    file_handler = logging.FileHandler(filename=filename)
     file_handler.setLevel(logging_level)
     file_handler.setFormatter(
         logging.Formatter("%(asctime)s - %(levelname)s - %(message)s", datefmt='%Y-%m-%d %H:%M:%S%z')
@@ -29,6 +24,30 @@ def create_task_logger(task_control_dir):
     _logger.addHandler(file_handler)
     return _logger
 
+def create_task_logger(task_control_dir):
+    if os.environ.get("DRYPIPE_TASK_DEBUG") != "True":
+        logging_level = logging.INFO
+    else:
+        logging_level = logging.DEBUG
+    _logger = logging.Logger("task-logger", logging_level)
+    return init_logger(
+        _logger,
+        os.path.join(task_control_dir, "drypipe.log"),
+        logging_level
+    )
+
+
+def create_remote_janitor_logger(pipeline_instance_dir, logger_name, is_debug):
+    if is_debug:
+        logging_level = logging.DEBUG
+    else:
+        logging_level = logging.INFO
+    _logger = logging.Logger(logger_name, logging_level)
+    return init_logger(
+        _logger,
+        os.path.join(pipeline_instance_dir, ".drypipe", f"{logger_name}.log"),
+        logging_level
+    )
 
 __script_location = os.environ.get("__script_location")
 
@@ -893,9 +912,11 @@ def scancel_all():
 def segterm_all():
     pass
 
-def detect_slurm_crashes():
+def detect_slurm_crashes(is_debug):
 
     pipeline_instance_dir = os.path.dirname(os.path.dirname(sys.argv[0]))
+
+    janitor_logger = create_remote_janitor_logger(pipeline_instance_dir, "zombie-detector", is_debug)
 
     def try_to_read_job_id(f):
         try:
@@ -934,6 +955,7 @@ def detect_slurm_crashes():
     all_slurm_accounts = set([t[0] for t in all_job_ids_and_slurm_accounts])
 
     if len(all_slurm_accounts) == 0:
+        janitor_logger.debug("no slurm jobs at this time")
         return
 
     all_slurm_accounts = ','.join(all_slurm_accounts)
@@ -949,24 +971,30 @@ def detect_slurm_crashes():
         ['squeue', '--noheader', "--format=%i", f"--users={all_slurm_accounts}"]
     ) as p:
         p.wait_and_raise_if_non_zero()
-        running_job_ids = set(p.stdout_as_string().split("\n"))
-        crashed_job_ids = set(potential_slurm_zombies_job_ids) - running_job_ids
+        stdout = p.stdout_as_string()
+        running_job_ids = set(stdout.split("\n"))
+        janitor_logger.debug("%s scheduled or running jobs: %s", len(running_job_ids), stdout)
 
-        for job_id in crashed_job_ids:
-            control_dir, state_file, slurm_job_id_file = job_ids_to_control_dirs[job_id]
+        for job_id in potential_slurm_zombies_job_ids:
+            if job_id not in running_job_ids:
 
-            # prevent race condition
-            if not (os.path.exists(state_file) and os.path.exists(slurm_job_id_file)):
-                continue
+                control_dir, state_file, slurm_job_id_file = job_ids_to_control_dirs[job_id]
 
-            task_logger = create_task_logger(control_dir)
+                # prevent race condition
+                if not (os.path.exists(state_file) and os.path.exists(slurm_job_id_file)):
+                    janitor_logger.info("race condition detected %s in:", control_dir)
+                    continue
 
-            try:
-                step_number, control_dir, state_file, state_name = read_task_state(control_dir)
-                _transition_state_file(state_file, "crashed", step_number, this_logger=task_logger)
-                print(f"WARNING: zombie slurm job detected, slurm_job_id: {job_id}")
-            except FileNotFoundError as ex:
-                print(f"WARNING: race condition encountered on {state_file}")
+                janitor_logger.debug("zombie detected %s in:", control_dir)
+
+                task_logger = create_task_logger(control_dir)
+
+                try:
+                    step_number, control_dir, state_file, state_name = read_task_state(control_dir)
+                    _transition_state_file(state_file, "crashed", step_number, this_logger=task_logger)
+                    print(f"WARNING: zombie slurm job detected, slurm_job_id: {job_id}")
+                except FileNotFoundError as ex:
+                    janitor_logger.info(f"race condition encountered on {state_file}")
 
 def detect_process_crashes():
 
@@ -1029,10 +1057,10 @@ def handle_script_lib_main():
     elif "segterm-all" in sys.argv:
         segterm_all()
     elif "detect-slurm-crashes" in sys.argv:
-        detect_slurm_crashes()
+        detect_slurm_crashes("--is-debug" in sys.argv)
         #detect_process_crashes()
     elif "detect-crashes" in sys.argv:
-        detect_slurm_crashes()
+        detect_slurm_crashes("--is-debug" in sys.argv)
         #detect_process_crashes()
     else:
         raise Exception('invalid args')

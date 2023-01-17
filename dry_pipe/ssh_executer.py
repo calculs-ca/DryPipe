@@ -114,7 +114,7 @@ class RemoteSSH(Executor):
         with perf_logger_timer("RemoteSSH.detect_zombies") as t:
             stdout = self.invoke_remote(" ".join([
                 self._remote_script_lib_path(pipeline.pipeline_instance_dir),
-                "detect-crashes"
+                "detect-crashes --is-debug"
             ]))
 
             zombies_detected = [
