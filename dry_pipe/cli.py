@@ -461,6 +461,40 @@ def requeue_single(pipeline, single):
 
     print(f"Task {single} requeued")
 
+def _parse_instances_dir_to_pipelines(instances_dir_to_pipelines, env=None):
+
+    for d_to_p in instances_dir_to_pipelines.split(","):
+
+        instances_dir, mod_func = d_to_p.split("=")
+
+        if not os.path.exists(instances_dir):
+            pathlib.Path(instances_dir).mkdir(parents=True)
+
+        pipeline = Pipeline.load_from_module_func(mod_func)
+        pipeline.env_vars = env
+        yield instances_dir, pipeline, mod_func
+
+@click.command()
+@click.pass_context
+@click.option(
+    '--instances-dir-to-pipelines',
+    type=click.STRING,
+    help="see 'watch' command"
+)
+def dump_remote_task_confs(ctx, instances_dir_to_pipelines):
+
+    def g():
+        for instances_dir, pipeline, mod_func in _parse_instances_dir_to_pipelines(instances_dir_to_pipelines):
+            yield {
+                "constructor_func": mod_func,
+                "pipeline_instances_dir": instances_dir,
+                "remote_task_confs": [
+                    tc.as_json() for tc in pipeline.remote_task_confs
+                ]
+            }
+
+    print(json.dumps(list(g()), indent=2))
+
 
 @click.command()
 @click.pass_context
@@ -479,19 +513,12 @@ def watch(ctx, instances_dir_to_pipelines, env):
 
     _configure_logging(None)
 
-    def g():
-        for d_to_p in instances_dir_to_pipelines.split(","):
-
-            instances_dir, mod_func = d_to_p.split("=")
-
-            if not os.path.exists(instances_dir):
-                pathlib.Path(instances_dir).mkdir(parents=True)
-
-            pipeline = Pipeline.load_from_module_func(mod_func)
-            pipeline.env_vars = env
-            yield instances_dir, pipeline
-
-    janitor = Janitor(pipeline_instances_iterator=Pipeline.pipeline_instances_iterator(dict(g())))
+    janitor = Janitor(
+        pipeline_instances_iterator=Pipeline.pipeline_instances_iterator({
+            k: v
+            for k, v, _ in _parse_instances_dir_to_pipelines(instances_dir_to_pipelines, env)
+        })
+    )
 
     janitor.start()
 
@@ -854,6 +881,7 @@ def _register_commands():
     cli_group.add_command(stats)
     cli_group.add_command(reset)
     cli_group.add_command(requeue)
+    cli_group.add_command(dump_remote_task_confs)
 
 def run_cli():
     _register_commands()
