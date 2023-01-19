@@ -34,6 +34,7 @@ class DaemonThreadHelper:
         self.logger = logger
         self.ssh_executer_per_remote_site_key = {}
         self.last_exception_at = None
+        self.cpu_count = count_cpus()
 
     def iterate_on_pipeline_instances(self):
 
@@ -328,7 +329,6 @@ def _janitor_ng(pipeline_instance, wait_for_completion=False, fail_silently=Fals
             # assert task.get_state().is_waiting_for_deps()
 
     currently_running = TaskState.count_running_local(pipeline_instance)
-    cpu_count = count_cpus()
     throttled_count = 0
 
     for task_state in TaskState.fetch_all(pipeline_instance.pipeline_instance_dir):
@@ -358,7 +358,7 @@ def _janitor_ng(pipeline_instance, wait_for_completion=False, fail_silently=Fals
                 work_done += 1
 
                 if task.task_conf.is_process():
-                    if currently_running >= cpu_count:
+                    if currently_running >= daemon_thread_helper.cpu_count:
                         daemon_thread_helper.logger.debug(
                             "exceeded cpu load %s tasks running, will resume launching when below threshold",
                             currently_running
