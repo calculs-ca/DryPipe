@@ -93,6 +93,11 @@ class Pipeline:
         if task_conf is None:
             task_conf = TaskConf("process")
 
+        if remote_task_confs is not None:
+            for tc in remote_task_confs:
+                if not isinstance(tc, TaskConf):
+                    raise Exception(f"invalid type {type(tc)} given to remote_task_confs")
+
         def gen_task_set(pipeline_instance):
 
             try:

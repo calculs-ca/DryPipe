@@ -481,7 +481,12 @@ def _parse_instances_dir_to_pipelines(instances_dir_to_pipelines, env=None):
     type=click.STRING,
     help="see 'watch' command"
 )
-def dump_remote_task_confs(ctx, instances_dir_to_pipelines):
+@click.option(
+    '-o',
+    type=click.STRING,
+    help="output file"
+)
+def dump_remote_task_confs(ctx, instances_dir_to_pipelines, o):
 
     def g():
         for instances_dir, pipeline, mod_func in _parse_instances_dir_to_pipelines(instances_dir_to_pipelines):
@@ -492,8 +497,13 @@ def dump_remote_task_confs(ctx, instances_dir_to_pipelines):
                     tc.as_json() for tc in pipeline.remote_task_confs
                 ]
             }
+    res = json.dumps(list(g()), indent=2)
 
-    print(json.dumps(list(g()), indent=2))
+    if o is None:
+        print(res)
+    else:
+        with open(o, "w") as o_f:
+            o_f.write(res)
 
 
 @click.command()
