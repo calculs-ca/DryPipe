@@ -6,7 +6,6 @@ import getpass
 import logging.config
 
 from dry_pipe.script_lib import PortablePopen
-from dry_pipe.utils import count_cpus
 
 LOCAL_PROCESS_IDENTIFIER_VAR = "____DRY_PIPE_TASK"
 logger = logging.getLogger(__name__)
@@ -220,11 +219,6 @@ class Local(Executor):
 
     def __init__(self, before_execute_bash):
         self.before_execute_bash = before_execute_bash
-        self.cpu_count = count_cpus()
-
-    def has_cpu_capacity_to_launch(self):
-
-        return self.count_running_tasks() <= self.cpu_count
 
     fail_silently_for_test = False
 
