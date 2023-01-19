@@ -7,7 +7,7 @@ import sys
 import textwrap
 from fnmatch import fnmatch
 
-from dry_pipe.script_lib import PortablePopen
+from dry_pipe.script_lib import PortablePopen, parse_ssh_specs
 from dry_pipe.utils import bash_shebang
 from dry_pipe.internals import \
     Executor, Local, PreExistingFile, IndeterminateFile, ProducedFile, \
@@ -556,7 +556,8 @@ class TaskConf:
             init_bash_command=None,
             python_interpreter_switches=["-u"],
             fields_from_json=None,
-            extra_env=None
+            extra_env=None,
+            label=None
     ):
 
         if executer_type is None:
@@ -591,6 +592,7 @@ class TaskConf:
         self.init_bash_command = init_bash_command
         self.python_interpreter_switches = python_interpreter_switches
         self.extra_env = extra_env
+        self.label = label
 
         if self.python_bin is None:
             if self.is_remote():
@@ -599,16 +601,7 @@ class TaskConf:
                 self.python_bin = sys.executable
 
         if self.ssh_specs is not None:
-            ssh_specs_parts = self.ssh_specs.split(":")
-            if len(ssh_specs_parts) == 2:
-                ssh_username_ssh_host, self.key_filename = ssh_specs_parts
-            elif len(ssh_specs_parts) == 1:
-                ssh_username_ssh_host = ssh_specs_parts[0]
-                self.key_filename = "~/.ssh/id_rsa"
-            else:
-                raise Exception(f"bad ssh_specs format: {self.ssh_specs}")
-
-            self.ssh_username, self.ssh_host = ssh_username_ssh_host.split("@")
+            self.ssh_username, self.ssh_host, self.key_filename = parse_ssh_specs(self.ssh_specs)
 
             self.remote_site_key = ":".join([
                 self.ssh_username,

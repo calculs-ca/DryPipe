@@ -407,6 +407,33 @@ def _append_to_history(control_dir, state_name, step_number=None):
         f.write("\n")
 
 
+def parse_ssh_specs(ssh_specs):
+    ssh_specs_parts = ssh_specs.split(":")
+    if len(ssh_specs_parts) == 2:
+        ssh_username_ssh_host, key_filename = ssh_specs_parts
+    elif len(ssh_specs_parts) == 1:
+        ssh_username_ssh_host = ssh_specs_parts[0]
+        key_filename = "~/.ssh/id_rsa"
+    else:
+        raise Exception(f"bad ssh_specs format: {ssh_specs}")
+
+    ssh_username, ssh_host = ssh_username_ssh_host.split("@")
+
+    return ssh_username, ssh_host, key_filename
+
+def _rsync_with_args_and_remote_dir_ng(self, control_dir):
+    with open(os.path.join(control_dir, "task-conf.json")) as tc:
+        task_conf_as_json = json.loads(tc.read())
+        ssh_username, ssh_host, key_filename = parse_ssh_specs(task_conf_as_json["ssh_specs"])
+        remote_base_dir = task_conf_as_json["remote_base_dir"]
+        ssh_args = f"-e 'ssh -q -i {key_filename} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'"
+        timeout = f"--timeout={60 * 2}"
+        return (
+            f"rsync {ssh_args} {timeout}",
+            f"{ssh_username}@{ssh_host}:{remote_base_dir}"
+        )
+
+
 def _transition_state_file(state_file, next_state_name, step_number=None, this_logger=logger):
 
     this_logger.debug("_transition_state_file: %s", state_file)
@@ -901,6 +928,68 @@ def set_singularity_bindings():
             bind_list.append(prev_singularity_bind)
 
         os.environ['SINGULARITY_BIND'] = ",".join(bind_list)
+
+def _rsync_error_codes(code):
+    """
+    Error codes as documented here: https://download.samba.org/pub/rsync/rsync.1
+    :param code rsync error code:
+    :return (is_retryable, message):
+    """
+    if code == 1:
+        return False, 'Syntax or usage error'
+    elif code == 2:
+        return False, 'Protocol incompatibility'
+    elif code == 3:
+        return True, 'Errors selecting input/output'
+    elif code == 4:
+        return False, 'Requested action not supported'
+    elif code == 5:
+        return True, 'Error starting client-serve'
+    elif code == 6:
+        return True, 'Daemon unable to append to log-file'
+    elif code == 10:
+        return True, 'Error in socket I/O'
+    elif code == 11:
+        return True, 'Error in file I/O'
+    elif code == 12:
+        return True, 'Error in rsync protocol data stream'
+    elif code == 13:
+        return True, 'Errors with program diagnostics'
+    elif code == 14:
+        return True, 'Error in IPC code'
+    elif code == 20:
+        return True, 'Received SIGUSR1 or SIGINT'
+    elif code == 21:
+        return True, 'Some error returned by waitpid()'
+    elif code == 22:
+        return True, 'Error allocating core memory'
+    elif code == 23:
+        return True, 'Partial transfer due to error'
+    elif code == 24:
+        return True, 'Partial transfer due to vanished source file'
+    elif code == 25:
+        return True, 'The --max-delete limit stopped deletions'
+    elif code == 30:
+        return True, 'Timeout in data send/received'
+    elif code == 35:
+        return True, 'Timeout waiting for daemon'
+    else:
+        return False, f'unknown error: {code}'
+
+class RetryableRsyncException(Exception):
+    def __init__(self, message):
+        super().__init__(message)
+
+def invoke_rsync(command):
+    with PortablePopen(command, shell=True) as p:
+        p.popen.wait()
+        if p.popen.returncode != 0:
+            is_retryable, rsync_message = _rsync_error_codes(p.popen.returncode)
+            msg = f"rsync failed: {rsync_message}, \n'{command}' \n{p.safe_stderr_as_string()}"
+            if not is_retryable:
+                raise Exception(msg)
+            else:
+                raise RetryableRsyncException(msg)
 
 
 def terminate_all():

@@ -4,7 +4,7 @@ import logging.config
 
 from dry_pipe import Executor, bash_shebang
 from dry_pipe.internals import flatten
-from dry_pipe.script_lib import PortablePopen, create_task_logger
+from dry_pipe.script_lib import PortablePopen, create_task_logger, invoke_rsync, RetryableRsyncException
 from dry_pipe.task_state import TaskState
 from dry_pipe.utils import perf_logger_timer
 
@@ -94,7 +94,8 @@ class RemoteSSH(Executor):
         from pssh.exceptions import SSHException, SSHError, SFTPError
         if isinstance(ex, SSHException) or \
            isinstance(ex, SFTPError) or \
-           isinstance(ex, SSHError):
+           isinstance(ex, SSHError) or \
+           isinstance(ex, RetryableRsyncException):
             return True
         else:
             return False
@@ -219,27 +220,6 @@ class RemoteSSH(Executor):
             f"{self.ssh_username}@{self.ssh_host}:{self.remote_base_dir}"
         )
 
-    def _launch_command(self, command, exception_func=lambda stderr_text: stderr_text):
-
-        with PortablePopen(command, shell=True) as p:
-            p.wait_and_raise_if_non_zero()
-
-    def do_rsync_container(self, image_path):
-
-        rsync_call, remote_dir = self._rsync_with_args_and_remote_dir()
-
-        bn = os.path.basename(image_path)
-        dn = os.path.dirname(image_path)
-
-        self.invoke_remote(f"mkdir -p {self.remote_base_dir}/pipeline_code_dir")
-
-        cmd = f"{rsync_call} -az --partial {image_path} {remote_dir}/pipeline_code_dir"
-
-        self._launch_command(
-            cmd,
-            lambda err: Exception(f"uploading container {bn} failed:\n{cmd}\n{err}")
-        )
-
     def rsync_remote_code_dir_if_applies(self, pipeline, task_conf):
 
         remote_pipeline_code_dir = task_conf.remote_pipeline_code_dir
@@ -256,10 +236,7 @@ class RemoteSSH(Executor):
             cmd = f"{rsync_call} -az --partial " + \
                   f"{pipeline.pipeline_code_dir}/ {self.ssh_username}@{self.ssh_host}:{remote_pipeline_code_dir}"
 
-            self._launch_command(
-                cmd,
-                lambda err: Exception(f"rsync of remote_pipeline_code_dir failed:\n{cmd}\n{err}")
-            )
+            invoke_rsync(cmd)
 
     def upload_task_inputs(self, task_state):
         with perf_logger_timer("RemoteSSH.upload_task_inputs") as t:
@@ -271,19 +248,10 @@ class RemoteSSH(Executor):
 
             remote_pid_basename = os.path.basename(pipeline_instance_dir)
 
-            self.invoke_remote(f"mkdir -p {self.remote_base_dir}/{remote_pid_basename}")
-
             cmd = f"{rsync_call} -caRz --partial --recursive --files-from={task_control_dir}/local-deps.txt " + \
                   f"{pipeline_instance_dir} {remote_dir}/{remote_pid_basename}"
 
-            self._launch_command(
-                cmd,
-                lambda err: Exception(f"uploading of task inputs {task_control_dir} failed:\n{cmd}\n{err}")
-            )
-
-            # NO LONGER SUPPORTED
-            # if self.rsync_containers and task.container is not None:
-            #    self.do_rsync_container(task.container.image_path)
+            invoke_rsync(cmd)
 
     def download_task_results(self, task_state):
         with perf_logger_timer("RemoteSSH.download_task_results") as t:
@@ -300,24 +268,12 @@ class RemoteSSH(Executor):
                       f"{remote_dir}/{remote_pid_basename}/output/{task_state.task_key}/ "+\
                       f"{pipeline_instance_dir}/output/{task_state.task_key}/"
 
-                def error_msg_0(err):
-                    return Exception(
-                        f"downloading of filesets task results {output_filesets} " +
-                        f"from {self.ssh_host} failed:\n{cmd}\n{err}"
-                    )
-
-                self._launch_command(cmd, error_msg_0)
+                invoke_rsync(cmd)
 
             cmd = f"{rsync_call} --dirs -aR --partial --files-from={task_control_dir}/remote-outputs.txt " + \
                   f"{remote_dir}/{remote_pid_basename} {pipeline_instance_dir}"
 
-            def error_msg(err):
-                r = f"{task_control_dir}/remote-outputs.txt"
-                return Exception(
-                    f"downloading of task results {r} from {self.ssh_host} failed:\n{cmd}\n{err}"
-                )
-
-            self._launch_command(cmd, error_msg)
+            invoke_rsync(cmd)
 
     def fetch_remote_file(self, remote_file, local_file):
         with perf_logger_timer("RemoteSSH.fetch_remote_file") as t:
@@ -415,11 +371,7 @@ class RemoteSSH(Executor):
 
             logger_ssh.debug("will rsync new log lines \n%s", cmd)
 
-            self._launch_command(
-                cmd,
-                lambda err: Exception(
-                    f"fetching logs failed:\n{cmd}\n{err}")
-            )
+            invoke_rsync(cmd)
 
     def execute(self, task, touch_pid_file_func, wait_for_completion=False, fail_silently=False):
 
