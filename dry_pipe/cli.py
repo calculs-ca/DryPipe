@@ -474,6 +474,34 @@ def _parse_instances_dir_to_pipelines(instances_dir_to_pipelines, env=None):
         pipeline.env_vars = env
         yield instances_dir, pipeline, mod_func
 
+def _version():
+
+    frame = inspect.currentframe()
+    f_back = frame.f_back if frame is not None else None
+    f_globals = f_back.f_globals if f_back is not None else None
+    # break reference cycle
+    # https://docs.python.org/3/library/inspect.html#the-interpreter-stack
+    del frame
+
+    package_name = f_globals.get("__name__")
+
+    if package_name == "__main__":
+        package_name = f_globals.get("__package__")
+
+    if package_name:
+        package_name = package_name.partition(".")[0]
+
+    try:
+        from importlib import metadata
+    except ImportError:
+        # Python < 3.8
+        import importlib_metadata as metadata
+    try:
+        return metadata.version(package_name)
+    except metadata.PackageNotFoundError:
+        raise RuntimeError("Could not get version")
+
+
 @click.command()
 @click.pass_context
 @click.option(
@@ -497,7 +525,14 @@ def dump_remote_task_confs(ctx, instances_dir_to_pipelines, o):
                     tc.as_json() for tc in pipeline.remote_task_confs
                 ]
             }
-    res = json.dumps(list(g()), indent=2)
+
+    if False:
+        res = json.dumps({
+            "dry_pipe_version": _version(),
+            "watched_pipelines_config": list(g())
+        }, indent = 2)
+    else:
+        res = list(g())
 
     if o is None:
         print(res)
