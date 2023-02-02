@@ -609,6 +609,9 @@ class TaskConf:
                 self.remote_base_dir
             ])
 
+    def full_remote_path(self, pipeline_instance):
+        return f"{self.remote_site_key}/{pipeline_instance.instance_dir_base_name()}"
+
     def as_json(self):
         return dict(
             (key, value)

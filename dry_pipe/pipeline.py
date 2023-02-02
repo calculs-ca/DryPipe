@@ -414,11 +414,21 @@ class PipelineInstance:
         #self.calc_pre_existing_files_signatures()
         self.get_state().touch()
 
-    def remote_sites_task_confs(self):
+    def remote_sites_task_confs(self, for_zombie_detection=False):
+
+        def f(task):
+            if task.is_remote():
+                if not for_zombie_detection:
+                    return True
+                task_state = task.get_state()
+                return task_state.is_step_started() or task_state.is_launched() or task_state.is_scheduled()
+            else:
+                return False
+
         return {
             task.task_conf.remote_site_key: task.task_conf
             for task in self.tasks
-            if task.is_remote()
+            if f(task)
         }.values()
 
     def regen_tasks_if_stale(self, force=False):

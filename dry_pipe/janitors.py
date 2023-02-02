@@ -1,5 +1,4 @@
 import logging
-import os
 import time
 from datetime import datetime
 from threading import Thread
@@ -10,7 +9,13 @@ from dry_pipe.ssh_executer import RemoteSSH
 from dry_pipe.task_state import TaskState
 from dry_pipe.utils import send_email_error_report_if_configured, count_cpus
 
+def janitor_sub_logger(sub_logger):
+    return logging.getLogger(f"{__name__}.{sub_logger}")
+
 module_logger = logging.getLogger(__name__)
+download_j_logger = janitor_sub_logger("download_d")
+upload_d_logger = janitor_sub_logger("upload_d")
+main_d_logger = janitor_sub_logger("main_d")
 
 class DaemonThreadHelper:
 
@@ -137,12 +142,6 @@ class DaemonThreadHelper:
         return ssh_executer
 
 
-
-
-def janitor_sub_logger(sub_logger):
-    return logging.getLogger(f"{__name__}.{sub_logger}")
-
-
 class Janitor:
 
     def __init__(
@@ -175,7 +174,7 @@ class Janitor:
         stay_alive_when_no_more_work = not sync_mode
 
         daemon_thread_helper = DaemonThreadHelper(
-            janitor_sub_logger("main_d"), self.min_sleep, self.max_sleep, self.pipelines, sync_mode
+            main_d_logger, self.min_sleep, self.max_sleep, self.pipelines, sync_mode
         )
 
         while True:
@@ -241,7 +240,7 @@ class Janitor:
         def upload_j():
 
             daemon_thread_helper = DaemonThreadHelper(
-                janitor_sub_logger("upload_d"), self.min_sleep, self.max_sleep, self.pipelines
+                upload_d_logger, self.min_sleep, self.max_sleep, self.pipelines
             )
 
             while not self.is_shutdown():
@@ -263,8 +262,6 @@ class Janitor:
                         self.request_shutdown()
 
         def download_j():
-
-            download_j_logger = janitor_sub_logger("download_d")
 
             daemon_thread_helper = DaemonThreadHelper(
                 download_j_logger, self.min_sleep, self.max_sleep, self.pipelines
@@ -396,46 +393,51 @@ def _upload_janitor(daemon_thread_helper, pipeline):
     return work_done
 
 
-def _download_janitor(daemon_thread_helper, pipeline, is_sync_mode=False):
-
-    download_j_logger = janitor_sub_logger("download_d")
+def _download_janitor(daemon_thread_helper, pipeline_instance, is_sync_mode=False):
 
     work_done = 0
 
     frequency_mod = 2 if is_sync_mode else 5
 
-    for task_conf in pipeline.remote_sites_task_confs():
-        remote_executor = daemon_thread_helper.get_executer(task_conf)
+    if daemon_thread_helper.round_counter % frequency_mod == 0:
+        remote_task_confs_to_check = [
+            task_conf for task_conf in pipeline_instance.remote_sites_task_confs(for_zombie_detection=True)
+        ]
+        if len(remote_task_confs_to_check) == 0:
+            download_j_logger.debug("no zombies possible at this time")
 
-        if daemon_thread_helper.round_counter % frequency_mod == 0:
-            download_j_logger.info("will check for remote zombies")
-            zombies_detected_msg = remote_executor.detect_zombies(pipeline)
+        for task_conf in remote_task_confs_to_check:
+            download_j_logger.debug("will check for zombies on %s", task_conf.full_remote_path(pipeline_instance))
+            remote_executor = daemon_thread_helper.get_executer(task_conf)
+            zombies_detected_msg = remote_executor.detect_zombies(pipeline_instance)
             if zombies_detected_msg is not None:
                 send_email_error_report_if_configured(f"zombie tasks detected", details=zombies_detected_msg)
                 module_logger.error("zombies detected: %s", zombies_detected_msg)
 
-        download_j_logger.debug("handle remote exec %s ", remote_executor.server_connection_key())
+    for task_conf in pipeline_instance.remote_sites_task_confs():
+        remote_executor = daemon_thread_helper.get_executer(task_conf)
+        download_j_logger.debug("will check task states on %s", task_conf.full_remote_path(pipeline_instance))
 
         running_task_count = 0
 
-        for task_state in remote_executor.fetch_remote_task_states(pipeline):
+        for task_state in remote_executor.fetch_remote_task_states(pipeline_instance):
 
             running_task_count += 1
 
             if task_state.is_completed_unsigned():
-                task_state.transition_to_queued_remote_download(pipeline.pipeline_instance_dir, task_state.task_key)
+                task_state.transition_to_queued_remote_download(pipeline_instance.pipeline_instance_dir, task_state.task_key)
                 remote_executor.delete_remote_state_file(task_state.abs_file_name())
             else:
-                task_state.assign_remote_state_to_local_state_file(pipeline.pipeline_instance_dir, task_state)
+                task_state.assign_remote_state_to_local_state_file(pipeline_instance.pipeline_instance_dir, task_state)
 
             work_done += 1
 
         if running_task_count > 0:
-            remote_executor.fetch_new_log_lines(pipeline.pipeline_instance_dir)
+            remote_executor.fetch_new_log_lines(pipeline_instance.pipeline_instance_dir)
 
-    for task_state in TaskState.queued_for_dowload_task_states(pipeline):
+    for task_state in TaskState.queued_for_dowload_task_states(pipeline_instance):
         task_state = task_state.transition_to_download_started()
-        task = pipeline.tasks[task_state.task_key]
+        task = pipeline_instance.tasks[task_state.task_key]
         remote_executor = daemon_thread_helper.get_executer(task.task_conf)
         remote_executor.download_task_results(task_state)
         task_state = task_state.transition_to_download_completed()
