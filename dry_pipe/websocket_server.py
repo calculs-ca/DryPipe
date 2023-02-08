@@ -1,18 +1,98 @@
 import asyncio
 import json
 import logging
+import shutil
 from threading import Thread
 
 import socketio
 import uvicorn
 from socketio import AsyncNamespace
+from fastapi import FastAPI
 
 from dry_pipe.janitors import DaemonThreadHelper
 from dry_pipe.pubsub import SubscriptionRegistry, DRYPIPE_WEBSOCKET_NAMESPACE
 from dry_pipe.ui_janitor import UIJanitor
+from fastapi import File, UploadFile
+from typing import List
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import HTMLResponse
 
 logger = logging.getLogger(__name__)
+fapp = FastAPI(debug=True)
 
+
+fapp.mount("/dist", StaticFiles(directory="/home/maxou/dev/dry_pipe/ui/dist"), name="dist-dir")
+
+@fapp.get("/", response_class=HTMLResponse)
+def read_root():
+    return """
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+      <link href="https://cdnjs.cloudflare.com/ajax/libs/bulma/0.7.5/css/bulma.css" rel="stylesheet" />
+
+    <style>
+
+      .node rect {
+        stroke: #999;
+        fill: #fff;
+        stroke-width: 1.5px;
+      }
+
+      .edgePath path {
+        stroke: #333;
+        stroke-width: 1.5px;
+      }
+
+      .task-list td:nth-child(1) { width: 10%;}
+      .task-list td:nth-child(2) { width: 10%;}
+      .task-list td:nth-child(3) { width: 80%;}
+
+    </style>
+    <title></title>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script src="/dist/main.js"></script>
+  </body>
+</html>
+"""
+
+@fapp.get("/drypipe")
+def read_root():
+    return {"Hello": "World"}
+
+
+@fapp.post("/drypipe/up")
+def upload(file: UploadFile = File(...)):
+    logger.info("uploaded :%s", file.filename)
+    try:
+        with open(file.filename, 'wb') as f:
+            shutil.copyfileobj(file.file, f)
+    except Exception:
+        return {"message": "There was an error uploading the file"}
+    finally:
+        file.file.close()
+
+    return {"message": f"Successfully uploaded {file.filename}"}
+
+
+@fapp.post("/drypipe/upz/{file_path:path}")
+def upl(file_path, files: List[UploadFile] = File(...)):
+    logger.info("--->%s", file_path)
+    for f in files:
+        try:
+            logger.info("will upload: %s", f.filename)
+            with open(f.filename, 'wb') as file_writer:
+                shutil.copyfileobj(f.file, file_writer)
+        except Exception as x:
+            logger.error(x)
+            return {"message": "There was an error uploading the file(s)"}
+        finally:
+            f.close()
+
+    return {"message": f"Successfully uploaded {[f.filename for f in files]}"}
 
 class WebsocketServer(AsyncNamespace):
 
@@ -41,25 +121,20 @@ class WebsocketServer(AsyncNamespace):
 
             janitor_thread = Thread(target=lambda: server_websocket_adapter.janitor())
             janitor_thread.start()
-            logger.info("ui_janitor thread started")
+            logger.info("ui_janitor thread started.")
 
             app = socketio.ASGIApp(
                 socket_io_server,
                 socketio_path="/socket.io",
-                #other_asgi_app=App(),
-                #    static_files={
-                #        "/main.js": map_static_file("dist/main.js"),
-                #        "/main.js.map": map_static_file("dist/main.js.map")
-                #    }
+                other_asgi_app=fapp
             )
 
             logger.info(f"web monitor running on: http://{bind_address}:{port} (Press CTRL+C to quit)")
 
             uvicorn.run(
-                #"dry_pipe.server:app",
                 app,
                 host=bind_address, port=port,
-                log_level="error"
+                log_level="info"
                 #reload=True,
                 #reload_dirs=["/home/maxou/dev/dry_pipe/dry_pipe"],
                 #reload_delay=2.0
