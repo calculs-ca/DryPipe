@@ -594,6 +594,13 @@ class TaskConf:
         self.extra_env = extra_env
         self.label = label
 
+        if extra_env is not None:
+            if not isinstance(extra_env, dict):
+                raise Exception(f"extra_env must be a dict of strings, got {type(extra_env)}")
+            for k, v in extra_env.items():
+                if not isinstance(v, str):
+                    raise Exception(f"invalid value given to extra_env['{k}']: {type(v)}, must be str")
+
         if self.python_bin is None:
             if self.is_remote():
                 self.python_bin = "/usr/bin/python3"

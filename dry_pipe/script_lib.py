@@ -186,7 +186,7 @@ def load_task_conf_dict():
         extra_env = tcd["extra_env"]
         if extra_env is not None:
             for k, v in extra_env.items():
-                os.environ[k] = v
+                os.environ[k] = os.path.expandvars(v)
         return tcd
 
 def run_python(task_conf_dict, mod_func, container=None):
