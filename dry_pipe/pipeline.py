@@ -128,7 +128,7 @@ class Pipeline:
                     elif isinstance(t_i, TaskBuilder):
                         raise ValidationError(
                             f" task(key='{t_i.key}') declaration is incomplete, " +
-                            "you probably need to invoke .calls(...) on it.")
+                            "you probably need to invoke .calls(...), or '.calls(...)()' on it.")
                     else:
                         raise ValidationError(
                             f"iterator has yielded an invalid type: {type(t_i)}: '{t_i}', " +
