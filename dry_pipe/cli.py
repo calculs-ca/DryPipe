@@ -884,7 +884,7 @@ def stats(ctx, instance_dir):
 @click.command()
 @click.pass_context
 @click.option('-p', '--pipeline', help="a_module:a_func, a function that returns a pipeline.")
-def prepare_remote_sites(pipeline):
+def prepare_remote_sites(ctx, pipeline):
 
     pipeline_spec = pipeline
 
@@ -894,8 +894,16 @@ def prepare_remote_sites(pipeline):
 
     pipeline = Pipeline.load_from_module_func(pipeline_spec)
 
-    pipeline.prepare_remote_sites()
+    from rich.console import Console
+    from rich.panel import Panel
+    console = Console()
 
+    for f, msg in pipeline.prepare_remote_sites_funcs():
+        console.print(Panel(f"[turquoise2]{msg}"))
+        with console.status("rsync upload in progress..."):
+            f()
+
+    console.print(f"done.")
 
 @click.command()
 @click.pass_context
@@ -927,6 +935,7 @@ def _register_commands():
     cli_group.add_command(reset)
     cli_group.add_command(requeue)
     cli_group.add_command(dump_remote_task_confs)
+    cli_group.add_command(prepare_remote_sites)
 
 def run_cli():
     _register_commands()

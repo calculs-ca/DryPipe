@@ -56,9 +56,10 @@ class TestSandboxDir:
             pipeline_instance_dir=self.sandbox_dir
         )
 
-    def pipeline_instance_from_generator(self, task_generator, completed=False, env_vars=None, fail_silently=False, task_conf=None):
+    def pipeline_instance_from_generator(
+            self, task_generator, completed=False, env_vars=None, fail_silently=False, task_conf=None, remote_task_confs=None):
         from base_tests import test_containers_dir
-        pi = DryPipe.create_pipeline(task_generator).create_pipeline_instance(
+        pi = DryPipe.create_pipeline(task_generator, remote_task_confs=remote_task_confs).create_pipeline_instance(
             pipeline_instance_dir=self.sandbox_dir,
             env_vars=env_vars,
             containers_dir=test_containers_dir(),

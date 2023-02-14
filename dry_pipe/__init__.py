@@ -65,7 +65,8 @@ class DryPipe:
         remote_task_confs=None,
         task_groupers={
             "by_task_type": Task.key_grouper
-        }
+        },
+        pipeline_code_dir_ls_command=None
     ):
         """
         :param generator_of_tasks: a python generator function that generates Tasks
@@ -91,7 +92,7 @@ class DryPipe:
 
         return Pipeline(
             generator_of_tasks, pipeline_code_dir, task_conf, containers_dir, env_vars, remote_task_confs,
-            task_groupers
+            task_groupers, pipeline_code_dir_ls_command
         )
 
     @staticmethod

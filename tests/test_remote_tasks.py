@@ -2,8 +2,9 @@ import glob
 import os
 import unittest
 
+import pipeline_with_code_and_container_upsync
 import pipelines_with_external_file_deps_and_remote_task
-from dry_pipe import TaskConf
+from dry_pipe import TaskConf, DryPipe
 from pipeline_with_two_remote_sites import create_pipeline_generator_two_remote_sites
 from pipelines_with_remote_tasks import dag_gen_fileset_output
 from test_04_remote_ssh_tasks import pipeline_with_remote_tasks
@@ -13,6 +14,32 @@ from test_utils import TestSandboxDir, ensure_remote_dirs_dont_exist
 
 
 class RemoteTaskTests1(unittest.TestCase):
+
+    def test_prepare_code_dir_remote_site(self):
+
+        d = TestSandboxDir(self)
+
+        gen, validator, tc = pipeline_with_code_and_container_upsync.dag_gen(self)
+
+        pipeline_code_dir = os.path.dirname(os.path.dirname(__file__))
+
+        pipeline_instance = DryPipe.create_pipeline(
+            gen,
+            pipeline_code_dir=pipeline_code_dir,
+            remote_task_confs=[tc]
+        ).create_pipeline_instance(
+            pipeline_instance_dir=d.sandbox_dir,
+            task_conf=tc
+        )
+
+        ensure_remote_dirs_dont_exist(pipeline_instance)
+
+        pipeline_instance.pipeline.prepare_remote_sites()
+
+        pipeline_instance.run_sync()
+
+        validator(pipeline_instance)
+
 
     def test_remote_file_cache(self):
 

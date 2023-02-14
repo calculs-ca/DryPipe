@@ -82,7 +82,8 @@ class Pipeline:
             containers_dir=None,
             env_vars=None,
             remote_task_confs=None,
-            task_groupers=None
+            task_groupers=None,
+            pipeline_code_dir_ls_command=None
     ):
         if pipeline_code_dir is None:
             pipeline_code_dir = os.path.dirname(os.path.abspath(inspect.getmodule(generator_of_tasks).__file__))
@@ -189,6 +190,7 @@ class Pipeline:
         self.generator_of_tasks = generator_of_tasks
         self.env_vars = env_vars
         self.remote_task_confs = remote_task_confs
+        self.pipeline_code_dir_ls_command = pipeline_code_dir_ls_command
 
         def _wrap_task_grouper(grouper_name, grouper_func):
             #if task_key.count(".") != 1:
@@ -219,7 +221,8 @@ class Pipeline:
                 task_conf=task_conf or self.task_conf,
                 containers_dir=containers_dir or self.containers_dir,
                 env_vars=env_vars or self.env_vars,
-                task_groupers=self.task_groupers
+                task_groupers=self.task_groupers,
+                remote_task_confs=self.remote_task_confs
             )
         else:
             p = self
@@ -237,21 +240,30 @@ class Pipeline:
 
         return PipelineInstancesIterator(instances_dir_for_pipeline_dict, ignore_completed)
 
-    def prepare_remote_sites(self, printer=None):
+    def prepare_remote_sites_funcs(self):
         if self.remote_task_confs is None:
             raise Exception(f"no remote_task_confs have been assigned for this pipeline")
-        for task_conf in self.remote_task_confs:
-            ssh_executer = task_conf.create_executer()
-            if printer is not None:
-                printer(
-                    f"Will rsync {self.pipeline_code_dir} to \n {task_conf}:{task_conf.remote_pipeline_code_dir}"
-                )
-            ssh_executer.connect()
-            try:
-                ssh_executer.rsync_remote_code_dir_if_applies(self, task_conf)
-            finally:
-                ssh_executer.close()
 
+        for task_conf in self.remote_task_confs:
+
+            def go():
+                ssh_executer = task_conf.create_executer()
+                ssh_executer.rsync_remote_code_dir_if_applies(self, task_conf)
+            yield go, f"Will rsync {self.pipeline_code_dir} to {task_conf.remote_pipeline_code_dir}"
+
+
+        for task_conf in self.remote_task_confs:
+            if task_conf.container is not None:
+                ssh_executer = task_conf.create_executer()
+                def go():
+                    ssh_executer.rsync_remote_container(task_conf)
+
+                yield go, f"Will upload container {task_conf.container} to "+\
+                          f"{ssh_executer.user_at_host()}:{task_conf.remote_containers_dir}"
+
+    def prepare_remote_sites(self):
+        for f, msg in self.prepare_remote_sites_funcs():
+            f()
 
 class PipelineInstancesIterator:
 

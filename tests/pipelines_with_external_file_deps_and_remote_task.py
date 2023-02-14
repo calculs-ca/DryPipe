@@ -9,8 +9,9 @@ def dag_gen(remote_task_conf, test_case):
     external_dep1 = os.path.join(d,"test-external-dependency1.sh")
     external_dep2 = os.path.join(d,"test-external-dependency2.sh")
 
-    def dag_gen(dsl):
-        t1 = dsl.task(
+    def g(dsl):
+
+        yield dsl.task(
             key=f"t1",
             task_conf=remote_task_conf
         ).consumes(
@@ -33,12 +34,10 @@ def dag_gen(remote_task_conf, test_case):
             export the_other_value=$THE_OTHER_VALUE            
         """)()
 
-        yield t1
-
     def validate(pipeline_instance):
         remote_task = pipeline_instance.tasks["t1"]
 
         test_case.assertEqual(remote_task.out.the_value.fetch(), 'abc-cba')
         test_case.assertEqual(remote_task.out.the_other_value.fetch(), 'xyz-zyx')
 
-    return dag_gen, validate
+    return g, validate

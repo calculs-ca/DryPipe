@@ -220,6 +220,27 @@ class RemoteSSH(Executor):
             f"{self.ssh_username}@{self.ssh_host}:{self.remote_base_dir}"
         )
 
+    def rsync_remote_container(self, task_conf):
+
+        with perf_logger_timer("RemoteSSH.rsync_remote_code_dir_if_applies") as t:
+
+            rsync_call, remote_dir = self._rsync_with_args_and_remote_dir()
+
+            if not os.path.exists(task_conf.container):
+                raise Exception(f"file not found: {task_conf.container}")
+
+            if not os.path.isabs(task_conf.container):
+                raise Exception(f"path of container {task_conf.container} must be absolute")
+
+            invoke_rsync(
+                f"ssh {self.ssh_username}@{self.ssh_host} 'mkdir -p {task_conf.remote_containers_dir}'"
+            )
+
+            cmd = f"{rsync_call} -az --partial " + \
+                  f"{task_conf.container} {self.ssh_username}@{self.ssh_host}:{task_conf.remote_containers_dir}"
+
+            invoke_rsync(cmd)
+
     def rsync_remote_code_dir_if_applies(self, pipeline, task_conf):
 
         remote_pipeline_code_dir = task_conf.remote_pipeline_code_dir
@@ -227,16 +248,32 @@ class RemoteSSH(Executor):
         if remote_pipeline_code_dir is None:
             return
 
-        with perf_logger_timer("RemoteSSH.rsync_remote_code_dir_if_applies") as t:
+        with tempfile.NamedTemporaryFile(suffix='.txt') as tmp_file_list:
 
-            rsync_call, remote_dir = self._rsync_with_args_and_remote_dir()
+            if pipeline.pipeline_code_dir_ls_command is None:
+                if os.path.exists(os.path.join(pipeline.pipeline_code_dir, ".git")):
+                    pipeline_code_dir_ls_command = f"cd {pipeline.pipeline_code_dir} && git ls-files"
+                else:
+                    raise Exception(f"not implemented !")
+            else:
+                pipeline_code_dir_ls_command = \
+                    f"cd {pipeline.pipeline_code_dir} && {pipeline.pipeline_code_dir_ls_command}"
 
-            self.invoke_remote(f"mkdir -p {remote_pipeline_code_dir}")
+            with PortablePopen(pipeline_code_dir_ls_command, shell=True, stdout=tmp_file_list) as p:
+                p.wait_and_raise_if_non_zero()
 
-            cmd = f"{rsync_call} -az --partial " + \
-                  f"{pipeline.pipeline_code_dir}/ {self.ssh_username}@{self.ssh_host}:{remote_pipeline_code_dir}"
+            with perf_logger_timer("RemoteSSH.rsync_remote_code_dir_if_applies") as t:
 
-            invoke_rsync(cmd)
+                rsync_call, remote_dir = self._rsync_with_args_and_remote_dir()
+
+                invoke_rsync(
+                    f"ssh {self.ssh_username}@{self.ssh_host} 'mkdir -p {remote_pipeline_code_dir}'"
+                )
+
+                cmd = f"{rsync_call} -az --partial --files-from={tmp_file_list.name} " + \
+                      f"{pipeline.pipeline_code_dir}/ {self.ssh_username}@{self.ssh_host}:{remote_pipeline_code_dir}"
+
+                invoke_rsync(cmd)
 
     def upload_task_inputs(self, task_state):
         with perf_logger_timer("RemoteSSH.upload_task_inputs") as t:
