@@ -181,13 +181,36 @@ def _exit_process():
 
 def load_task_conf_dict():
     with open(os.path.join(os.environ["__control_dir"], "task-conf.json")) as _task_conf:
-        tcd = json.loads(_task_conf.read())
+        task_conf_as_json = json.loads(_task_conf.read())
 
-        extra_env = tcd["extra_env"]
+        extra_env = task_conf_as_json["extra_env"]
         if extra_env is not None:
             for k, v in extra_env.items():
                 os.environ[k] = os.path.expandvars(v)
-        return tcd
+
+        def override_deps(dep_file, bucket):
+            dep_file = os.path.join(os.path.join(os.environ["__control_dir"], dep_file))
+            if not os.path.exists(dep_file):
+                return
+
+            file_cache = os.path.join(task_conf_as_json["remote_base_dir"], "file-cache", bucket)
+
+            logger.debug("will resolve external file deps: %s", file_cache)
+
+            with open(dep_file) as f:
+                deps = {l.strip() for l in f.readlines() if l != ""}
+                for k, v in os.environ.items():
+                    if v in deps:
+                        if v.startswith("/"):
+                            v = v[1:]
+                        new_v = os.path.join(file_cache, v)
+                        os.environ[k] = new_v
+                        logger.debug("override var '%s' -> '%s'", k, new_v)
+
+        override_deps("external-deps.txt", "shared")
+        override_deps("external-deps-pipeline-instance.txt", os.environ["__pipeline_instance_name"])
+
+        return task_conf_as_json
 
 def run_python(task_conf_dict, mod_func, container=None):
 

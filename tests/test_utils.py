@@ -131,7 +131,7 @@ if __name__ == '__main__':
     zaz()
 
 
-def ensure_remote_dirs_dont_exist(pipeline_instance):
+def ensure_remote_dirs_dont_exist(pipeline_instance, clear_file_cache=False):
 
     remote_dir_for_test = pipeline_instance.instance_dir_base_name()
 
@@ -139,3 +139,6 @@ def ensure_remote_dirs_dont_exist(pipeline_instance):
         complete_remote_dir_for_test = f"{task_conf.remote_base_dir}/{remote_dir_for_test}"
         with task_conf.create_executer() as rex:
             rex.invoke_remote(f"rm -Rf {complete_remote_dir_for_test}")
+
+            if clear_file_cache:
+                rex.invoke_remote(f"rm -Rf {task_conf.remote_base_dir}/.file-cache")

@@ -253,6 +253,32 @@ class RemoteSSH(Executor):
 
             invoke_rsync(cmd)
 
+            def upsync_if_required(file_deps, bucket):
+                if os.path.exists(file_deps):
+                    cache_dir = f"{self.remote_base_dir}/file-cache{bucket}"
+
+                    invoke_rsync(
+                        f"ssh {self.ssh_username}@{self.ssh_host} 'mkdir -p {cache_dir}'"
+                    )
+
+                    fname = os.path.basename(file_deps)
+
+                    cmd = f"{rsync_call} -caRz --partial --recursive --files-from={task_control_dir}/{fname} " + \
+                          f"/ {remote_dir}/file-cache{bucket}"
+
+                    invoke_rsync(cmd)
+
+            upsync_if_required(
+                os.path.join(task_control_dir, "external-deps.txt"),
+                "/shared/"
+            )
+
+            upsync_if_required(
+                os.path.join(task_control_dir, "external-deps-pipeline-instance.txt"),
+                f"/{remote_pid_basename}/"
+            )
+
+
     def download_task_results(self, task_state):
         with perf_logger_timer("RemoteSSH.download_task_results") as t:
             task_control_dir = task_state.control_dir()

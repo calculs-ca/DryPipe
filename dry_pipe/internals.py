@@ -284,15 +284,16 @@ class Slurm(Executor):
 
 class IndeterminateFile:
 
-    def __init__(self, file_path, manage_signature):
+    def __init__(self, file_path, manage_signature, remote_cache_bucket=None):
         self.file_path = file_path.strip()
         self.manage_signature = manage_signature
+        self.remote_cache_bucket = remote_cache_bucket
 
     def produced_file(self, var_name, producing_task):
         return ProducedFile(self.file_path, var_name, self.manage_signature, producing_task)
 
     def pre_existing_file(self):
-        return PreExistingFile(self.file_path, self.manage_signature)
+        return PreExistingFile(self.file_path, self.manage_signature, self.remote_cache_bucket)
 
 
 class FileSet:
@@ -340,13 +341,14 @@ class SubPipeline:
 
 class PreExistingFile:
 
-    def __init__(self, file_path, manage_signature=False):
+    def __init__(self, file_path, manage_signature=False, remote_cache_bucket=None):
 
         if file_path is None or file_path == "" or file_path == ".":
             raise ValidationError(f"invalid file {file_path}")
 
         self.file_path = file_path
         self.manage_signature = manage_signature
+        self.remote_cache_bucket = remote_cache_bucket
 
     def to_hash(self):
         return self.file_path

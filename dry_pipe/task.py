@@ -309,9 +309,13 @@ class Task:
             yield k, v.serialized_value()
 
         for k, v in self.pre_existing_files.items():
+            ap = v.absolute_path(self)
             if collect_deps_and_outputs_func is not None:
-                collect_deps_and_outputs_func(v.absolute_path(self), None)
-            yield k, abs_from_pipeline_instance_dir(v.absolute_path(self))
+                collect_deps_and_outputs_func(ap, None, v.remote_cache_bucket)
+            if os.path.isabs(ap):
+                yield k, ap
+            else:
+                yield k, abs_from_pipeline_instance_dir(ap)
 
         for upstream_task, upstream_input_files, upstream_input_vars in self.upstream_deps_iterator():
             for input_file in upstream_input_files:
@@ -576,12 +580,22 @@ class Task:
     def prepare(self):
 
         is_remote = self.is_remote()
+        external_dep_file_list = []
+        external_dep_file_pipeline_instance_list = []
         dependent_file_list = []
         output_file_list = []
 
-        def collect_deps_and_outputs(dep_file, output_file):
+        def collect_deps_and_outputs(dep_file, output_file, external_dep_type=None):
             if dep_file is not None:
-                dependent_file_list.append(dep_file)
+                if os.path.isabs(dep_file):
+                    if external_dep_type is None:
+                        external_dep_file_list.append(dep_file)
+                    elif external_dep_type == "pipeline-instance":
+                        external_dep_file_pipeline_instance_list.append(dep_file)
+                    else:
+                        raise Exception(f"invalid remote_cache_bucket: {external_dep_type}")
+                else:
+                    dependent_file_list.append(dep_file)
             elif output_file is not None:
                 output_file_list.append(output_file)
             else:
@@ -673,6 +687,25 @@ class Task:
         if is_remote:
             local_deps = os.path.join(self.v_abs_control_dir(), "local-deps.txt")
 
+            def write_external_deps_file(dep_list, out_file_name):
+                if len(dep_list) > 0:
+                    out_file = os.path.join(self.v_abs_control_dir(), out_file_name)
+                    with open(out_file, "w") as _out_file:
+                        for d in dep_list:
+                            _out_file.write(d)
+                            _out_file.write("\n")
+                    return out_file
+                else:
+                    return None
+
+            external_files_deps_file = write_external_deps_file(
+                external_dep_file_list, "external-deps.txt"
+            )
+
+            external_files_deps_pipeline_instance_file = write_external_deps_file(
+                external_dep_file_pipeline_instance_list, "external-deps-pipeline-instance.txt"
+            )
+
             with open(local_deps, "w") as f:
 
                 for dep_file in dependent_file_list:
@@ -694,6 +727,14 @@ class Task:
                 f.write("\n")
                 f.write(self.task_conf_file())
                 f.write("\n")
+                if external_files_deps_file is not None:
+                    f.write(os.path.join(self.control_dir(), os.path.basename(external_files_deps_file)))
+                    f.write("\n")
+                if external_files_deps_pipeline_instance_file is not None:
+                    f.write(
+                        os.path.join(self.control_dir(), os.path.basename(external_files_deps_pipeline_instance_file))
+                    )
+                    f.write("\n")
 
                 if self.task_conf.is_slurm():
                     f.write(self.sbatch_launch_script())

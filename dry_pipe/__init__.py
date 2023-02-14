@@ -273,12 +273,17 @@ class DryPipeDsl:
         """
         return Val(v)
 
-    def file(self, name, manage_signature=None):
+    def file(self, name, manage_signature=None, remote_cache_bucket="pipeline-instance"):
+
+        if remote_cache_bucket is not None:
+            legal_values = ["pipeline-instance", "task"]
+            if remote_cache_bucket not in legal_values:
+                raise Exception(f"remote_cache_bucket can't be {remote_cache_bucket}, must be one of {legal_values}")
 
         if type(name) != str:
             raise ValidationError(f"invalid file name, must be a string {name}")
 
-        return IndeterminateFile(name, manage_signature)
+        return IndeterminateFile(name, manage_signature, remote_cache_bucket)
 
     def fileset(self, glob_pattern):
 
