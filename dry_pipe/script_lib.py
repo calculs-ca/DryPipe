@@ -573,6 +573,8 @@ def resolve_container_path(container):
     if not os.path.exists(resolved_path):
         raise Exception(f"container file not found: {container}")
 
+    logger.debug("container: %s resolves to: %s", container, resolved_path)
+
     return resolved_path
 
 def run_script(script, container=None):
@@ -662,6 +664,9 @@ def launch_task_from_remote(task_key, is_slurm, wait_for_completion, drypipe_tas
     pipeline_instance_dir = os.path.dirname(os.path.dirname(sys.argv[0]))
 
     control_dir = os.path.join(pipeline_instance_dir, '.drypipe', task_key)
+
+    if drypipe_task_debug:
+        os.environ["DRYPIPE_TASK_DEBUG"] = "True"
 
     logger = create_task_logger(control_dir)
 
