@@ -228,7 +228,7 @@ def run_python(task_conf_dict, mod_func, container=None):
         cmd = [
             "singularity",
             "exec",
-            os.path.join(os.environ['__containers_dir'], container)
+            resolve_container_path(container)
         ] + cmd
 
     env = {**os.environ}
@@ -558,6 +558,22 @@ def write_out_vars(out_vars):
 
     logger.info("out vars written: %s", ",".join(all_vars))
 
+def resolve_container_path(container):
+
+    containers_dir = os.environ['__containers_dir']
+
+    if os.path.isabs(container):
+        if os.path.exists(container):
+            resolved_path = container
+        else:
+            resolved_path = os.path.join(containers_dir, os.path.basename(container))
+    else:
+        resolved_path = os.path.join(containers_dir, container)
+
+    if not os.path.exists(resolved_path):
+        raise Exception(f"container file not found: {container}")
+
+    return resolved_path
 
 def run_script(script, container=None):
 
@@ -570,11 +586,10 @@ def run_script(script, container=None):
     cmd = ["bash", "-c", f". {script} 1>> {out} 2>> {err} ; {dump_env}"]
 
     if container is not None:
-        container_full_path = os.path.join(os.environ['__containers_dir'], container)
         cmd = [
             "singularity",
             "exec",
-            container_full_path,
+            resolve_container_path(container),
         ] + cmd
 
         singularity_bindings = []
@@ -601,7 +616,7 @@ def run_script(script, container=None):
 
             env["SINGULARITY_BIND"] = f"{bindings_prefix}{','.join(singularity_bindings)}"
 
-    logger.info("run_script: %s", cmd)
+    logger.info("run_script: %s", " ".join(cmd))
 
     has_failed = False
     try:

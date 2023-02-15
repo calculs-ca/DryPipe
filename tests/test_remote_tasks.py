@@ -15,11 +15,14 @@ from test_utils import TestSandboxDir, ensure_remote_dirs_dont_exist
 
 class RemoteTaskTests1(unittest.TestCase):
 
-    def test_prepare_code_dir_remote_site(self):
+    def _test_prepare_code_dir_remote_site(self, with_container):
 
         d = TestSandboxDir(self)
 
-        gen, validator, tc = pipeline_with_code_and_container_upsync.dag_gen(self)
+        gen, validator, tc = pipeline_with_code_and_container_upsync.dag_gen(
+            self,
+            with_container
+        )
 
         pipeline_code_dir = os.path.dirname(os.path.dirname(__file__))
 
@@ -40,6 +43,13 @@ class RemoteTaskTests1(unittest.TestCase):
 
         validator(pipeline_instance)
 
+    def test_prepare_code_dir_remote_site(self):
+        self._test_prepare_code_dir_remote_site(None)
+
+    def test_prepare_code_dir_remote_site_with_container(self):
+        pipeline_code_dir = os.path.dirname(os.path.dirname(__file__))
+        container = os.path.join(pipeline_code_dir, "tests", "containers", "singularity-test-container.sif")
+        self._test_prepare_code_dir_remote_site(container)
 
     def test_remote_file_cache(self):
 

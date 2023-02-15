@@ -227,7 +227,7 @@ class RemoteSSH(Executor):
             rsync_call, remote_dir = self._rsync_with_args_and_remote_dir()
 
             if not os.path.exists(task_conf.container):
-                raise Exception(f"file not found: {task_conf.container}")
+                raise Exception(f"file not found: '{task_conf.container}'")
 
             if not os.path.isabs(task_conf.container):
                 raise Exception(f"path of container {task_conf.container} must be absolute")

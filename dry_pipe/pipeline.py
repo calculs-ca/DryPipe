@@ -249,7 +249,9 @@ class Pipeline:
             def go():
                 ssh_executer = task_conf.create_executer()
                 ssh_executer.rsync_remote_code_dir_if_applies(self, task_conf)
-            yield go, f"Will rsync {self.pipeline_code_dir} to {task_conf.remote_pipeline_code_dir}"
+
+            ssh_executer = task_conf.create_executer()
+            yield go, f"Will rsync {self.pipeline_code_dir} to {ssh_executer.user_at_host()}:{task_conf.remote_pipeline_code_dir}"
 
 
         for task_conf in self.remote_task_confs:

@@ -5,12 +5,21 @@ from dry_pipe import DryPipe, TaskConf
 
 def dag_gen(test_case, container=None):
 
-    tc = TaskConf(
+    tc32 = TaskConf(
         executer_type="process",
         ssh_specs=f"maxl@ip32.ccs.usherbrooke.ca:~/.ssh/id_rsa",
         remote_base_dir="/nfs3_ib/ip32-ib/home/maxl/drypipe-tests",
         remote_pipeline_code_dir="/nfs3_ib/ip32-ib/home/maxl/drypipe-tests/code-dir",
         remote_containers_dir="/nfs3_ib/ip32-ib/home/maxl/drypipe-tests/containers",
+        container=container
+    )
+
+    tc = TaskConf(
+        executer_type="process",
+        ssh_specs=f"maxl@ip29.ccs.usherbrooke.ca:~/.ssh/id_rsa",
+        remote_base_dir="/home/maxl/drypipe-tests",
+        remote_pipeline_code_dir="/home/maxl/drypipe-tests/code-dir",
+        remote_containers_dir="/home/maxl/drypipe-tests/containers",
         container=container
     )
 
