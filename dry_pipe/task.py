@@ -248,6 +248,16 @@ class Task:
                 ])
             )
 
+        for name, file in self.pre_existing_files.items():
+            yield (
+                f"__meta_{name}",
+                ":".join([
+                    "file",
+                    "",
+                    ""
+                ])
+            )
+
         yield "END_META", "END_META"
 
     def get_env_vars(self, writer, collect_deps_and_outputs_func=None):

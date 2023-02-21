@@ -7,6 +7,12 @@ import logging.config
 from dry_pipe import DryPipe, script_lib
 
 
+def test_suite_base_dir():
+    return os.path.dirname(__file__)
+
+def file_in_test_suite(f):
+    return os.path.join(test_suite_base_dir(), f)
+
 def setup_log_conf(log_file):
     log_conf_file = os.path.join(
         os.path.dirname(__file__),

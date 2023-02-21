@@ -1,6 +1,7 @@
 import os
 import unittest
 
+import pipeline_with_kwargs_consuming_task
 import pipeline_with_single_bash_task
 import pipeline_with_single_python_task
 import pipeline_with_variable_passing
@@ -115,3 +116,14 @@ class MinimalistPipelinesTests(unittest.TestCase):
         )
 
         pipeline_with_multistep_tasks_with_shared_vars.validate(self, pipeline_instance)
+
+    def test_kwargs_consuming_task(self):
+
+        d = TestSandboxDir(self)
+
+        pipeline_instance = d.pipeline_instance_from_generator(
+            pipeline_with_kwargs_consuming_task.gen_dag,
+            completed=True
+        )
+
+        pipeline_with_kwargs_consuming_task.validate(self, pipeline_instance)

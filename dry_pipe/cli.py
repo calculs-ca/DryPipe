@@ -720,11 +720,13 @@ def call(ctx, mod_func, task_env):
 
     var_type_dict = {}
 
-    for producing_task_key, var_metas, file_metas in parse_in_out_meta({
-        k: v
+    meta = {
+        k : v
         for k, v in env.items()
         if k.startswith("__meta_")
-    }):
+    }
+
+    for producing_task_key, var_metas, _ in parse_in_out_meta(meta):
         #if producing_task_key != "":
         #    continue
 
@@ -732,8 +734,11 @@ def call(ctx, mod_func, task_env):
             name_in_producing_task, var_name, typez = var_meta
             var_type_dict[var_name] = typez
 
-    def get_and_parse_arg(k):
+
+    def get_and_parse_arg(k, allow_none):
         v = env.get(k)
+        if allow_none and v is None:
+            return None
         if v is None:
             tk = os.environ['__task_key']
             raise Exception(
@@ -761,10 +766,31 @@ def call(ctx, mod_func, task_env):
 
         return v
 
-    args = [
-        get_and_parse_arg(k)
+    args_tuples = [
+        (k, get_and_parse_arg(k, allow_none=False))
         for k, v in python_task.signature.parameters.items()
+        if not k == "kwargs"
     ]
+
+    args = [v for _, v in args_tuples]
+
+    if "kwargs" not in python_task.signature.parameters:
+        kwargs = {}
+    else:
+
+        args_names = [k for k, _ in args_tuples]
+
+        kwargs = {
+            k : get_and_parse_arg(k, allow_none=True)
+            for k, _ in var_type_dict.items()
+            if k not in args_names
+        }
+
+        for k, v in meta.items():
+            if v.startswith("file") and k not in args_names and k not in kwargs:
+                f = k[7:]
+                kwargs[f] = env.get(f)
+
 
     control_dir = env["__control_dir"]
 
@@ -775,7 +801,7 @@ def call(ctx, mod_func, task_env):
     out_vars = None
 
     try:
-        out_vars = python_task.func(* args)
+        out_vars = python_task.func(* args, ** kwargs)
     except Exception as ex:
         traceback.print_exc()
         logging.shutdown()

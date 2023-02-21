@@ -128,7 +128,13 @@ class OutputVar:
         v = varz.get(self.name)
         if v is None:
             return None
-        return self.unformat_for_python(v)
+        try:
+            return self.unformat_for_python(v)
+        except ValueError as ve:
+            raise ValueError(
+                f"type conversion error while parsing output var '{self.name}'"+
+                f" produced by {self.producing_task}:\n{ve}"
+            )
 
 
 class InputVar:
