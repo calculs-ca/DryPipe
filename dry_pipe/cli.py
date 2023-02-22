@@ -119,7 +119,8 @@ def _pipeline_from_pipeline_func(pipeline_func, instance_dir):
 @click.pass_context
 @click.option('--clean', is_flag=True)
 @click.option('--instance-dir', type=click.Path(), default=None)
-def prepare(ctx, clean, instance_dir):
+@click.option('--regen-all', is_flag=True, default=False)
+def prepare(ctx, clean, instance_dir, regen_all):
 
     if _bad_entrypoint(ctx):
         return
@@ -141,6 +142,11 @@ def prepare(ctx, clean, instance_dir):
     tasks_completed = 0
 
     for task in pipeline.tasks:
+
+        if regen_all:
+            task.prepare()
+            print(f"regenerated {task.key}")
+            continue
 
         tasks_total += 1
 
