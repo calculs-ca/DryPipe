@@ -116,74 +116,29 @@ def _pipeline_from_pipeline_func(pipeline_func, instance_dir):
 
 
 @click.command()
-@click.pass_context
-@click.option('--clean', is_flag=True)
+@click.option('-p', '--pipeline', help="a_module:a_func, a function that returns a pipeline.")
 @click.option('--instance-dir', type=click.Path(), default=None)
 @click.option('--regen-all', is_flag=True, default=False)
-def prepare(ctx, clean, instance_dir, regen_all):
+@click.option('--env', type=click.STRING, default=None)
+def prepare(pipeline, instance_dir, regen_all, env):
 
-    if _bad_entrypoint(ctx):
-        return
+    pipeline_instance = _pipeline_instance_creater(instance_dir, pipeline, env)()
 
-    pipeline_func = ctx.obj["pipeline_func"]
-
-    pipeline = _pipeline_from_pipeline_func(pipeline_func, instance_dir)
-
-    if clean:
-        pipeline.clean_all()
-
-    pipeline.init_work_dir()
-
-    pipeline.get_state().touch()
-
-    tasks_total = 0
-    work_done = 0
-    tasks_in_non_terminal_states = 0
-    tasks_completed = 0
-
-    for task in pipeline.tasks:
+    for task in pipeline_instance.tasks:
 
         if regen_all:
             task.prepare()
             print(f"regenerated {task.key}")
-            continue
-
-        tasks_total += 1
-
-        task_state = task.get_state()
-
-        if task_state is None:
-            task.create_state_file_and_control_dir()
-            work_done += 1
-            task_state = task.get_state()
-
-        if task_state.state_name in NON_TERMINAL_STATES:
-            tasks_in_non_terminal_states += 1
-
-        if task_state.is_waiting_for_deps():
-
-            if not task.has_unsatisfied_deps():
-                if task_state.is_prepared():
-                    continue
-                else:
-                    task_state.transition_to_prepared(task)
-                    task_state = task.get_state()
-                    task_state.transition_to_queued(task)
-                    task.prepare()
-                    tasks_in_non_terminal_states += 1
-                    work_done += 1
-
-        elif task_state.is_completed():
-            if task_state.action_if_exists() is None:
-                tasks_completed += 1
-
-    if tasks_total == tasks_completed:
-        pipeline_state = pipeline.get_state()
-        if not pipeline_state.is_completed():
-            pipeline_state.transition_to_completed()
 
 
-def _pipeline_instance_creater(instance_dir, module_func_pipeline, env_vars):
+def _pipeline_instance_creater(instance_dir, module_func_pipeline, env):
+
+    env_vars = None
+    if env is not None:
+        env_vars = {}
+        for k_v in env.split(","):
+            k, v = k_v.split("=")
+            env_vars[k] = v
 
     if module_func_pipeline is None:
         module_func_pipeline = PipelineInstance.guess_pipeline_from_hints(instance_dir)
@@ -297,14 +252,7 @@ def run(
                 click.echo("no pipeline instance created, exiting.")
                 return
 
-    env_vars = None
-    if env is not None:
-        env_vars = {}
-        for k_v in env.split(","):
-            k, v = k_v.split("=")
-            env_vars[k] = v
-
-    pipeline_instance = _pipeline_instance_creater(instance_dir, pipeline_mod_func, env_vars)()
+    pipeline_instance = _pipeline_instance_creater(instance_dir, pipeline_mod_func, env)()
 
     if clean:
         pipeline_instance.clean()
