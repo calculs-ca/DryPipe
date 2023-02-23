@@ -426,6 +426,7 @@ class TaskBuilder:
                     yield k, v
                 else:
                     raise ValidationError(
+                        f"invalid arg in Task({self.key}).consumes({k})\n"+
                         f"produces takes only DryPipe.file or DryPipe.vars, ex:\n " +
                         "1:    task(...).produces(var_name=DryPipe.file('abc.tsv'))\n"
                         " 2:    task(...).produces(vars=DryPipe.vars(x=123,s='a'))",
