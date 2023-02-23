@@ -616,7 +616,9 @@ def run_script(script, container=None):
             else:
                 bindings_prefix = ""
 
-            env["SINGULARITY_BIND"] = f"{bindings_prefix}{','.join(singularity_bindings)}"
+            new_bind = f"{bindings_prefix}{','.join(singularity_bindings)}"
+            env["SINGULARITY_BIND"] = new_bind
+            logger.info("SINGULARITY_BIND=%s", new_bind)
 
     logger.info("run_script: %s", " ".join(cmd))
 
