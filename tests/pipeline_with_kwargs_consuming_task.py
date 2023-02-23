@@ -20,14 +20,31 @@ def add_all(x, r1, __task_key, **kwargs):
     if __task_key != "t1":
         raise Exception(f"__task_key lost !")
 
-    os.system(f"cp {f} > {r1}")
+    cmd = f"cp {f} {r1}"
+    print(cmd)
+    os.system(cmd)
 
     return {
         "result": x + y + z
     }
 
 @DryPipe.python_call()
-def f1(x, **kwargs):
+def f1(r, **kwargs):
+
+    if r != 11.1:
+        raise Exception(f"expected 110.01, got {r}")
+
+    r1 = kwargs.get("r1")
+    if r1 is None:
+        raise Exception(f"expected 'r' in **kwargs")
+
+    if not os.path.exists(r1):
+        raise Exception(f"file {r1} should exist")
+
+    with open(r1) as _f:
+        o = json.loads(_f.read())
+        if o["x"] != 123:
+            raise Exception(f"unexpected value in {r1}")
 
     return {
         "r2": 543
@@ -73,3 +90,7 @@ def validate(test_case, pipeline_instance):
 
     if res != 11.1:
         raise Exception(f"expected 110.01, got {res}")
+
+    t2 = pipeline_instance.tasks["t2"]
+
+    test_case.assertEqual(t2.get_state().state_name, "completed")
