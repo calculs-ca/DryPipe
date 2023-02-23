@@ -769,7 +769,7 @@ def call(ctx, mod_func, task_env):
 
     task_logger = create_task_logger(control_dir)
 
-    task_logger.info("will invoke PythonCall: %s(%s)", mod_func, ', '.join([str(a) for a in args]))
+    task_logger.info("will invoke PythonCall: %s(%s,%s)", mod_func, args, kwargs)
 
     out_vars = None
 
@@ -805,8 +805,8 @@ def call(ctx, mod_func, task_env):
 
             write_out_vars(prev_out_vars)
 
-        for pid_file in glob.glob(os.path.join(control_dir, "*.pid")):
-            os.remove(pid_file)
+        #for pid_file in glob.glob(os.path.join(control_dir, "*.pid")):
+        #    os.remove(pid_file)
 
     except Exception as ex:
         traceback.print_exc()
