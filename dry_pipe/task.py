@@ -298,7 +298,6 @@ class Task:
         yield "__sig_dir", "out_sigs",
         yield "__out_log", self.v_exp_out_log()
         yield "__err_log", self.v_exp_err_log()
-        yield "__pid_file_glob_matcher", self.v_exp_pid_file_glob_matcher()
 
         out_files = []
 
@@ -848,9 +847,6 @@ class Task:
     def work_dir(self):
         return os.path.join("output", self.key)
 
-    def pid_file_glob_matcher(self):
-        return os.path.join(self.control_dir(), "*.pid")
-
     def slurm_job_id(self):
 
         slurm_job_id_file = self.v_abs_slurm_job_id_file()
@@ -1055,12 +1051,12 @@ class Task:
                     if not os.path.exists(file):
                         raise Exception(f"{self} did not produce file '{name}':'{file}' as specified.")
 
-        for producing_task_key, var_metas, file_metas in parse_in_out_meta(self.get_state().gen_meta_dict()):
-            if producing_task_key != "":
-                continue
+            for producing_task_key, var_metas, file_metas in parse_in_out_meta(self.get_state().gen_meta_dict()):
+                if producing_task_key != "":
+                    continue
 
-            for name_in_producing_task, var_name, typez in file_metas:
-                print("!")
+                for name_in_producing_task, var_name, typez in file_metas:
+                    print("!")
 
 
     def reset_logs(self):
