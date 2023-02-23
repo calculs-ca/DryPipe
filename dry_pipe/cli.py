@@ -712,7 +712,7 @@ def call(ctx, mod_func, task_env):
         v = env.get(k)
         if allow_none and v is None:
             return None
-        if v is None:
+        if v is None and k != "test":
             tk = os.environ['__task_key']
             raise Exception(
                 f"Task {tk} called {mod_func} with None assigned to arg {k}\n" +
