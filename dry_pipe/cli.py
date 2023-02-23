@@ -691,6 +691,10 @@ def call(ctx, mod_func, task_env):
         # or if pipeline provided --task=key
         env = env_from_sourcing(task_env)
 
+    control_dir = env["__control_dir"]
+
+    task_logger = create_task_logger(control_dir)
+
     var_type_dict = {}
 
     meta = {
@@ -753,6 +757,8 @@ def call(ctx, mod_func, task_env):
 
         args_names = [k for k, _ in args_tuples]
 
+        task_logger.debug("args list: %s", args_names)
+
         kwargs = {
             k : get_and_parse_arg(k, allow_none=True)
             for k, _ in var_type_dict.items()
@@ -760,14 +766,11 @@ def call(ctx, mod_func, task_env):
         }
 
         for k, v in meta.items():
-            if v.startswith("file") and k not in args_names and k not in kwargs:
+            if v.startswith("file") and k not in kwargs:
                 f = k[7:]
-                kwargs[f] = env.get(f)
+                if f not in args_names:
+                    kwargs[f] = env.get(f)
 
-
-    control_dir = env["__control_dir"]
-
-    task_logger = create_task_logger(control_dir)
 
     task_logger.info("will invoke PythonCall: %s(%s,%s)", mod_func, args, kwargs)
 
