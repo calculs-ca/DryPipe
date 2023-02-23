@@ -6,6 +6,7 @@ import logging
 import logging.config
 import pathlib
 import re
+import shutil
 import signal
 import sys
 import os
@@ -131,7 +132,25 @@ def prepare(pipeline, instance_dir, regen_all, env):
             print(f"regenerated {task.key}")
 
 
-def _pipeline_instance_creater(instance_dir, module_func_pipeline, env):
+@click.command()
+@click.option('-p', '--pipeline', help="a_module:a_func, a function that returns a pipeline.")
+@click.option('--instance-dir', type=click.Path(), default=None)
+@click.option('--dry-run', is_flag=False)
+def change_keys(pipeline, instance_dir, dry_run):
+
+    pipeline_instance = _pipeline_instance_creater(instance_dir, pipeline)()
+
+    if dry_run:
+        print("dry run, nothing will change !")
+
+    for do_it, old_key, new_key in pipeline_instance.change_keys():
+
+        if not dry_run:
+            do_it()
+
+        print(f"{old_key} -> {new_key}")
+
+def _pipeline_instance_creater(instance_dir, module_func_pipeline, env=None):
 
     env_vars = None
     if env is not None:

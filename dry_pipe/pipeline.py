@@ -385,6 +385,9 @@ class PipelineInstance:
     def hints(self):
         return PipelineInstance.load_hints(self.pipeline_instance_dir)
 
+    def output_dir(self):
+        return self._publish_dir
+
     def init_work_dir(self):
 
         pathlib.Path(self._publish_dir).mkdir(parents=True, exist_ok=True)
@@ -616,6 +619,45 @@ class PipelineInstance:
 
         for k, v in tmp_env_vars.items():
             del os.environ[k]
+
+    def change_keys(self):
+
+        tasks = list(self.tasks)
+
+        for task in tasks:
+
+            old_key = task.key
+            new_key = task.key
+
+            def go():
+                old_control_dir = os.path.join(
+                    self.work_dir,
+                    task.key
+                )
+
+                old_output_dir = os.path.join(
+                    self.output_dir(),
+                    task.key
+                )
+
+                new_control_dir = os.path.join(
+                    self.work_dir,
+                    task.new_key
+                )
+
+                new_output_dir = os.path.join(
+                    self.output_dir(),
+                    task.new_key
+                )
+
+                shutil.move(old_output_dir, new_output_dir)
+                shutil.move(old_control_dir, new_control_dir)
+
+                task.key = task.new_key
+
+                task.prepare()
+
+            yield go, old_key, new_key
 
 
 SLURM_SQUEUE_FORMAT_SPEC = "%A %L %j %l %T"
