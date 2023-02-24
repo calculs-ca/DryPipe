@@ -34,17 +34,19 @@ class Val:
     def __init__(self, value, is_glob_expression=False):
         self.is_glob_expression = is_glob_expression
         t = type(value)
+
+        msg = "must be a constant of type int, string, or float"
         if t == int or t == str or t == float:
             self.value = value
             self.typez = t
         elif t == type(int):
-            raise ValidationError(f"invalid val type dsl.val(int), you probably want to use 'dsl.var(int)'")
-        elif t == t == type(str):
-            raise ValidationError(f"invalid val type dsl.var(str), you probably want to use 'dsl.var(str)'")
-        elif type(float):
-            raise ValidationError(f"invalid val type, dsl.var(float) you probably want to use 'dsl.var(float)'")
+            raise ValidationError(f"invalid val type dsl.val(int), {msg}")
+        elif t == type(str):
+            raise ValidationError(f"invalid val type dsl.val(str), {msg}")
+        elif t == type(float):
+            raise ValidationError(f"invalid val type, dsl.val(float), {msg}")
         else:
-            raise ValidationError(f"invalid val type: {type(value)}, must be int, string, float")
+            raise ValidationError(f"invalid val type: {type(value)}, {msg}")
 
     def type_str(self):
         return _type_str(self.typez)
