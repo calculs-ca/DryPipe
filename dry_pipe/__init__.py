@@ -141,6 +141,7 @@ class TaskMatch:
     def __init__(self, pattern, tasks):
         self.pattern = pattern
         self.tasks = tasks
+        self.tasks_by_key = {t.key: t for t in tasks}
         self.all = TaskMatchAll(self)
 
 
