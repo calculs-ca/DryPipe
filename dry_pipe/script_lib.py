@@ -524,7 +524,7 @@ def sign_files():
 
     def all_files():
         for f in file_list_to_sign.split(","):
-            if os.path.exists(f):
+            if os.path.exists(f) and os.path.isfile(f):
                 yield f
 
     def checksum_one_file(f):
