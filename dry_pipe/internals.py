@@ -398,8 +398,8 @@ class ProducedFile:
     def value(self):
         return self.file_path
 
-    def __str__(self):
-        return os.path.join(self.producing_task.work_dir(), self.file_path)
+    def __fspath__(self):
+        return os.path.join(self.producing_task.v_abs_work_dir(), self.file_path)
 
     def absolute_path(self, task):
 
