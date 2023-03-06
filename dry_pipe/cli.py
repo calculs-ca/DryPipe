@@ -868,16 +868,16 @@ def reset(ctx, downstream_of, not_matching, matching, instance_dir):
 @click.command()
 @click.pass_context
 @click.option('--instance-dir', type=click.Path(), default=None)
-def stats(ctx, instance_dir):
-
-    the_stats = None
+@click.option('--no-header', is_flag=True, default=False)
+@click.option('--units',  type=click.Choice(["seconds", "minutes", "hours"]), default="minutes")
+def stats(ctx, instance_dir, no_header, units):
 
     if instance_dir is not None:
-        the_stats = fetch_task_groups_stats(instance_dir)
+        the_stats = fetch_task_groups_stats(instance_dir, no_header, units)
     else:
         pipeline_func = ctx.obj["pipeline_func"]
         pipeline = _pipeline_from_pipeline_func(pipeline_func, instance_dir)
-        the_stats = fetch_task_groups_stats(pipeline.pipeline_instance_dir)
+        the_stats = fetch_task_groups_stats(pipeline.pipeline_instance_dir, no_header, units)
 
     for stat_row in the_stats:
         print("\t".join([str(v) for v in stat_row]))

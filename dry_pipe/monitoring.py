@@ -177,9 +177,13 @@ def fetch_task_groups_stats(pipeline_instance_dir, no_header=False, units='secon
                 return int(history_row[2])
 
             def step_intervals():
+                rows_accumulation = []
                 for history_row in task_state.load_history_rows():
                     if row_name(history_row) in ["step-started", "step-completed"]:
-                        yield history_row
+                        rows_accumulation.append(history_row)
+                    elif row_name(history_row) in ["timed-out", "failed", "crashed"]:
+                        rows_accumulation = []
+                yield from rows_accumulation
 
             for step_number, rows, in itertools.groupby(
                     sorted(step_intervals(), key=row_step_number),
@@ -201,7 +205,7 @@ def fetch_task_groups_stats(pipeline_instance_dir, no_header=False, units='secon
                 yield f"{task_group_key}:{step_number}", total_time
 
     if not no_header:
-        yield "task:step\tmin_t\tmax_t\ttotal_t\tavg_t\ts_dev"
+        yield "task:step", "min_t", "max_t", "total_t", "avg_t", "s_dev"
 
     if units == "minutes":
         unit_converter = lambda i: round(i / 60, 2)
@@ -218,7 +222,7 @@ def fetch_task_groups_stats(pipeline_instance_dir, no_header=False, units='secon
     ):
 
         step_durations = sorted([
-            unit_converter(time) for s, time in step_duration_tuples
+            time for s, time in step_duration_tuples
         ])
 
         min_t = step_durations[0]
