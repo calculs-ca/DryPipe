@@ -377,7 +377,7 @@ class ProducedFile:
     def __init__(self, file_path, var_name, manage_signature, producing_task, is_dummy=False, glob_pattern=None):
 
         if file_path is None or file_path == "" or file_path == ".":
-            raise ValidationError(f"invalid file '{file_path}' for var {var_name} from {producing_task}")
+            raise ValidationError(f"invalid file '{file_path}' for var {var_name} in {producing_task}")
 
         if var_name is None or var_name == "":
             raise ValidationError(f"can't be {var_name}")
