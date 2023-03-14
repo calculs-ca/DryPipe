@@ -11,12 +11,12 @@ from itertools import groupby
 
 import textwrap
 
-from dry_pipe.script_lib import parse_in_out_meta, PortablePopen
+from dry_pipe.script_lib import parse_in_out_meta, PortablePopen, env_from_sourcing
 from dry_pipe.actions import TaskAction
 from dry_pipe import bash_shebang
 from dry_pipe.internals import \
     IndeterminateFile, ProducedFile, IncompleteVar, Val, \
-    OutputVar, InputFile, InputVar, FileSet, OutFileSet, ValidationError, flatten, TaskProps
+    OutputVar, InputFile, InputVar, FileSet, OutFileSet, ValidationError, flatten, TaskProps, PreExistingFile
 
 from dry_pipe.script_lib import task_script_header, iterate_out_vars_from
 from dry_pipe.task_state import TaskState, tail
@@ -51,6 +51,7 @@ class Task:
                 task_state.control_dir(), "task-conf.json"
             ))
             self.executer = self.task_conf.create_executer()
+            self.out = TaskOutRehydrated(self, self.pipeline_instance.pipeline_instance_dir)
             return
 
         self.python_bin = None
@@ -193,7 +194,8 @@ class Task:
 
     def _input_meta_data(self):
         # export __meta_<var-name>="(int|str|float):<producing-task-key>:<name_in_producing_task>"
-        # export __meta_<file-name>="file:<producing-task-key>:<name_in_producing_task>"
+        # input file : export __meta_<file-name>="file:<producing-task-key>:<name_in_producing_task>"
+        # output file: export __meta_<file-name>="file:'':<name_in_producing_task>"
         for _, upstream_input_files, upstream_input_vars in self.upstream_deps_iterator():
             for input_file in upstream_input_files:
                 produced_file = input_file.produced_file
@@ -1267,6 +1269,67 @@ class TaskOut:
             raise ValidationError(
                 f"please refer to task produced vars with task.out.{name}, not task.{name}."
             )
+
+class TaskOutRehydrated:
+
+    def __init__(self, task, pipeline_instance_dir):
+        self.task = task
+        self.pipeline_instance_dir = pipeline_instance_dir
+        self.produces = None
+
+    def _rehydrate(self):
+        def rehydrate_metas():
+            env = env_from_sourcing(self.task.v_abs_task_env_file())
+
+            for producing_task_key, var_metas, file_metas in parse_in_out_meta({
+                k: v
+                for k, v in env.items()
+                if k.startswith("__meta_")
+            }):
+                return var_metas, file_metas
+
+        var_metas, file_metas = rehydrate_metas()
+
+        def gen_f():
+            for f_path, var_name, t3 in file_metas:
+                if f_path == '':
+                    # input (consumed) file
+                    continue
+                yield var_name, PreExistingFile(os.path.join(self.pipeline_instance_dir, f_path))
+
+        def unserialize_type(type_str):
+            if type_str == 'int':
+                return int
+            elif type_str == 'str':
+                return str
+            elif type_str == 'float':
+                return float
+
+        def gen_v():
+            for var_name_in_producing_task, var_name_in_producing_task, typez in var_metas:
+                yield var_name_in_producing_task, \
+                    OutputVar(unserialize_type(typez), True, var_name_in_producing_task, self.task)
+
+
+        self.produces = {
+            ** dict(gen_v()),
+            ** dict(gen_f())
+        }
+
+    def __getattr__(self, name):
+
+        if self.produces is None:
+            self._rehydrate()
+
+        p = self.produces.get(name)
+
+        if p is None:
+            raise ValidationError(
+                f"task {self.task} does not declare a variable '{name}' in it's produces() clause.\n" +
+                f"Use task({self.task.key}).produces({name}=...) to specify output"
+            )
+
+        return p
 
 
 class MissingOutvars(Exception):

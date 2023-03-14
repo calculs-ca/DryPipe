@@ -12,7 +12,7 @@ from dry_pipe.task_state import TaskState
 from test_01_simple_static_pipeline.simple_static_pipeline import simple_static_pipeline, \
     run_and_validate_pipeline_execution
 from test_helpers import is_ip29
-from test_utils import TestSandboxDir, copy_pre_existing_file_deps_from_code_dir
+from test_utils import TestSandboxDir, copy_pre_existing_file_deps_from_code_dir, test_suite_base_dir
 
 
 def before_execute_bash():
@@ -243,6 +243,52 @@ class NonTrivialPipelineLocalContainerlessTests(WithManyConfigCombinationsTests)
         pi = d.pipeline_instance_from_generator(simple_static_pipeline)
 
         run_and_validate_pipeline_execution(pi, self)
+
+    def test_task_query_language(self):
+
+        pid = os.path.join(
+            test_suite_base_dir(),
+            "sandboxes",
+            "NonTrivialPipelineLocalContainerlessTests.test_non_trivial_local_containerless"
+        )
+
+        pipeline_instance = DryPipe.load_pipeline(pid)
+
+        all_tasks = [
+            t for t in pipeline_instance.query("*")
+        ]
+
+        self.assertEqual(len(all_tasks), 4)
+
+        def query_single(pattern):
+            s = [t for t in pipeline_instance.query(pattern)]
+            if len(s) != 1:
+                raise Exception(f"expected a single task {pattern}")
+            return s[0]
+
+        def check_out_file(task, outfile, f):
+
+            v = outfile.value()
+            if not os.path.exists(v):
+                raise Exception(f"file should exist {v}")
+
+            self.assertEqual(v, f"{pid}/output/{task.key}/{f}")
+
+        blast_1 = query_single("blast.1")
+
+        check_out_file(blast_1, blast_1.out.blast_out, "human_chimp_blast.tsv")
+        self.assertEqual(blast_1.out.v1.fetch(), 1111)
+        self.assertEqual(blast_1.out.v2.fetch(), 3.14)
+
+        report = query_single("report")
+
+        self.assertEqual(report.out.x.fetch(), 9876)
+        self.assertEqual(report.out.s1.fetch(), 'abc')
+
+        python_much_fancier_report_1 = query_single("python_much_fancier_report.1")
+        check_out_file(
+            python_much_fancier_report_1, python_much_fancier_report_1.out.much_fancier_report, "fancier_report1.txt"
+        )
 
 
 class NonTrivialPipelineLocalWithSingularityContainerTests(WithManyConfigCombinationsTests):

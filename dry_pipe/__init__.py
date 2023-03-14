@@ -1,4 +1,5 @@
 import collections
+import glob
 import inspect
 import json
 import os
@@ -98,6 +99,11 @@ class DryPipe:
     @staticmethod
     def pipeline_code_dir_for(task_generator_func):
         return os.path.dirname(os.path.abspath(inspect.getmodule(task_generator_func).__file__))
+
+    @staticmethod
+    def load_pipeline(pipeline_instance_dir):
+        from dry_pipe.pipeline import RehydratedPipelineInstance
+        return RehydratedPipelineInstance(pipeline_instance_dir)
 
 
 class TaskSetAccessor:

@@ -1,3 +1,4 @@
+import glob
 import importlib
 import inspect
 import logging
@@ -6,7 +7,7 @@ import pathlib
 import shutil
 from itertools import groupby
 
-from dry_pipe import TaskConf, DryPipeDsl, TaskBuilder, script_lib, bash_shebang
+from dry_pipe import TaskConf, DryPipeDsl, TaskBuilder, script_lib, bash_shebang, TaskState
 from dry_pipe.internals import ValidationError, SubPipeline
 from dry_pipe.janitors import Janitor
 from dry_pipe.pipeline_state import PipelineState
@@ -659,6 +660,36 @@ class PipelineInstance:
 
             yield go, old_key, new_key
 
+
+class RehydratedPipelineInstance:
+
+    def __init__(self, pipeline_instance_dir):
+        if pipeline_instance_dir.startswith("$"):
+            resolved_pipeline_instance_dir = os.environ.get(pipeline_instance_dir)
+            if resolved_pipeline_instance_dir is None or resolved_pipeline_instance_dir == "":
+                raise Exception(f"environment variable {pipeline_instance_dir} not set")
+            if not os.path.exists(resolved_pipeline_instance_dir):
+                raise Exception(
+                    f"path {resolved_pipeline_instance_dir} (referred by env var {pipeline_instance_dir}) not found"
+                )
+            self.pipeline_instance_dir = resolved_pipeline_instance_dir
+        elif not os.path.exists(pipeline_instance_dir):
+            raise Exception(f"path {pipeline_instance_dir} not found")
+
+        self.pipeline_instance_dir = pipeline_instance_dir
+
+    def query(self, task_key_pattern):
+
+        p = os.path.join(
+            self.pipeline_instance_dir,
+            ".drypipe",
+            task_key_pattern,
+            "state.completed"
+        )
+
+        for state_file in glob.glob(p):
+            task_state = TaskState(state_file)
+            yield Task.load_from_task_state(task_state)
 
 SLURM_SQUEUE_FORMAT_SPEC = "%A %L %j %l %T"
 

@@ -371,6 +371,8 @@ def parse_in_out_meta(name_to_meta_dict):
 
     for producing_task_key, produced_files_or_vars_meta in groupby(sorted(gen(), key=k), key=k):
 
+        produced_files_or_vars_meta = list(produced_files_or_vars_meta)
+
         def filter_and_map(condition_on_typez):
             return [
                 (name_in_producing_task, var_name, typez)
@@ -632,7 +634,7 @@ def run_script(script, container=None):
             step_output_vars = json.loads(out)
             task_output_vars = dict(iterate_out_vars_from(os.environ["__output_var_file"]))
 
-            for producing_task_key, var_metas, file_metas in parse_in_out_meta({
+            for producing_task_key, var_metas, _ in parse_in_out_meta({
                 k: v
                 for k, v in os.environ.items()
                 if k.startswith("__meta_")
@@ -906,7 +908,7 @@ def gen_input_var_exports(out=sys.stdout, env=os.environ):
     if task_key is None:
         raise Exception("env variable __task_key not set")
 
-    for producing_task_key, var_metas, file_metas in parse_in_out_meta({
+    for producing_task_key, var_metas, _ in parse_in_out_meta({
         k: v
         for k, v in env.items()
         if k.startswith("__meta_")
