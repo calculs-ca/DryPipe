@@ -263,7 +263,7 @@ class NonTrivialPipelineLocalContainerlessTests(WithManyConfigCombinationsTests)
         def query_single(pattern):
             s = [t for t in pipeline_instance.query(pattern)]
             if len(s) != 1:
-                raise Exception(f"expected a single task {pattern}")
+                raise Exception(f"expected a single task {pattern}, got {len(s)}")
             return s[0]
 
         def check_out_file(task, outfile, f):
@@ -289,6 +289,14 @@ class NonTrivialPipelineLocalContainerlessTests(WithManyConfigCombinationsTests)
         check_out_file(
             python_much_fancier_report_1, python_much_fancier_report_1.out.much_fancier_report, "fancier_report1.txt"
         )
+
+        os.environ["test_non_trivial_local_containerless"] = pid
+
+        pipeline_instance = DryPipe.load_pipeline("$test_non_trivial_local_containerless")
+
+        blast_1 = [t for t in pipeline_instance.query("blast.1")][0]
+
+        self.assertEqual(blast_1.out.v1.fetch(), 1111)
 
 
 class NonTrivialPipelineLocalWithSingularityContainerTests(WithManyConfigCombinationsTests):

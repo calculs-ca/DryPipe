@@ -665,7 +665,7 @@ class RehydratedPipelineInstance:
 
     def __init__(self, pipeline_instance_dir):
         if pipeline_instance_dir.startswith("$"):
-            resolved_pipeline_instance_dir = os.environ.get(pipeline_instance_dir)
+            resolved_pipeline_instance_dir = os.environ.get(pipeline_instance_dir[1:])
             if resolved_pipeline_instance_dir is None or resolved_pipeline_instance_dir == "":
                 raise Exception(f"environment variable {pipeline_instance_dir} not set")
             if not os.path.exists(resolved_pipeline_instance_dir):
@@ -675,8 +675,8 @@ class RehydratedPipelineInstance:
             self.pipeline_instance_dir = resolved_pipeline_instance_dir
         elif not os.path.exists(pipeline_instance_dir):
             raise Exception(f"path {pipeline_instance_dir} not found")
-
-        self.pipeline_instance_dir = pipeline_instance_dir
+        else:
+            self.pipeline_instance_dir = pipeline_instance_dir
 
     def query(self, task_key_pattern):
 
