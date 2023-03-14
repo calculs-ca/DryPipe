@@ -86,7 +86,7 @@ class OutputVar:
 
         if type not in supported:
             raise ValidationError(
-                f"var {name} in {producing_task} has invalid type. Supported types are: " +
+                f"var {name} in {producing_task} has invalid type '{type}'. Supported types are: " +
                 ', '.join([_type_str(t) for t in supported])
             )
 
