@@ -50,7 +50,7 @@ class CornerCasesRemoteZombiTests(unittest.TestCase):
         try:
             os.environ["IS_ZOMBI_TEST_CASE"] = "True"
 
-            pipeline = TestSandboxDir(self).pipeline_instance_from_generator(
+            pipeline_instance = TestSandboxDir(self).pipeline_instance_from_generator(
                 lambda dsl: pipeline_with_single_bash_task.pipeline(dsl, TaskConf(
                     executer_type="slurm",
                     slurm_account="def-rodrigu1",
@@ -60,11 +60,13 @@ class CornerCasesRemoteZombiTests(unittest.TestCase):
                 ))
             )
 
-            single_task, = pipeline.tasks
+            ensure_remote_dirs_dont_exist(pipeline_instance)
 
-            pipeline.clean()
+            single_task, = pipeline_instance.tasks
 
-            pipeline.run_sync()
+            pipeline_instance.clean()
+
+            pipeline_instance.run_sync()
 
             self.assertTrue(single_task.get_state().is_crashed())
         finally:

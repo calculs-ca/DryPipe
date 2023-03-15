@@ -14,6 +14,11 @@ from itertools import groupby
 from pathlib import Path
 from threading import Thread
 
+#APPTAINER_COMMAND="apptainer"
+APPTAINER_COMMAND="singularity"
+
+APPTAINER_BIND="APPTAINER_BIND"
+
 
 def init_logger(_logger, filename, logging_level):
     file_handler = logging.FileHandler(filename=filename)
@@ -183,6 +188,11 @@ def load_task_conf_dict():
     with open(os.path.join(os.environ["__control_dir"], "task-conf.json")) as _task_conf:
         task_conf_as_json = json.loads(_task_conf.read())
 
+        command_before_task = task_conf_as_json.get("command_before_task")
+
+        if command_before_task is not None:
+            exec_cmd_before_launch(command_before_task)
+
         extra_env = task_conf_as_json["extra_env"]
         if extra_env is not None:
             for k, v in extra_env.items():
@@ -226,7 +236,7 @@ def run_python(task_conf_dict, mod_func, container=None):
 
     if container is not None:
         cmd = [
-            "singularity",
+            APPTAINER_COMMAND,
             "exec",
             resolve_container_path(container)
         ] + cmd
@@ -332,6 +342,27 @@ def env_from_sourcing(env_file):
         p.wait_and_raise_if_non_zero()
         out = p.stdout_as_string()
         return json.loads(out)
+
+
+def exec_cmd_before_launch(command_before_task):
+
+    p = os.path.abspath(sys.executable)
+
+    dump_with_python_script = f'{p} -c "import os, json; print(json.dumps(dict(os.environ)))"'
+
+    logger.info("will execute 'command_before_task': %s", command_before_task)
+
+    out = os.environ['__out_log']
+    err = os.environ['__err_log']
+
+    with PortablePopen([
+        '/bin/bash', '-c', f"{command_before_task} 1>> {out} 2>> {err} && {dump_with_python_script}"
+    ]) as p:
+        p.wait_and_raise_if_non_zero()
+        out = p.stdout_as_string()
+        env = json.loads(out)
+        for k, v in env.items():
+            os.environ[k] = v
 
 
 def iterate_out_vars_from(file):
@@ -591,37 +622,41 @@ def run_script(script, container=None):
 
     if container is not None:
         cmd = [
-            "singularity",
+            APPTAINER_COMMAND,
             "exec",
             resolve_container_path(container),
         ] + cmd
 
-        singularity_bindings = []
+        apptainer_bindings = []
 
         root_dir_of_script = _root_dir(script)
 
         if _fs_type(root_dir_of_script) in ["autofs", "nfs", "zfs"]:
-            singularity_bindings.append(f"{root_dir_of_script}:{root_dir_of_script}")
+            apptainer_bindings.append(f"{root_dir_of_script}:{root_dir_of_script}")
 
         if os.environ.get("__is_slurm"):
             scratch_dir = os.environ['SLURM_TMPDIR']
             env['__scratch_dir'] = scratch_dir
             root_of_scratch_dir = _root_dir(scratch_dir)
-            singularity_bindings.append(f"{root_of_scratch_dir}:{root_of_scratch_dir}")
+            apptainer_bindings.append(f"{root_of_scratch_dir}:{root_of_scratch_dir}")
 
-        if len(singularity_bindings) > 0:
+        if len(apptainer_bindings) > 0:
 
-            prev_singularity_bindings = env.get("SINGULARITY_BIND")
+            prev_apptainer_bindings = env.get("APPTAINER_BIND")
 
-            if prev_singularity_bindings is not None and prev_singularity_bindings != "":
-                bindings_prefix = f"{prev_singularity_bindings},"
+            if prev_apptainer_bindings is not None and prev_apptainer_bindings != "":
+                bindings_prefix = f"{prev_apptainer_bindings},"
             else:
                 bindings_prefix = ""
 
-            env["SINGULARITY_BIND"] = f"{bindings_prefix}{','.join(singularity_bindings)}"
+            env["APPTAINER_BIND"] = f"{bindings_prefix}{','.join(apptainer_bindings)}"
 
-        new_bind = env.get("SINGULARITY_BIND")
-        logger.info("SINGULARITY_BIND=%s", new_bind)
+        new_bind = env.get("APPTAINER_BIND")
+        if new_bind is not None:
+            logger.info("APPTAINER_BIND not set")
+        else:
+            logger.info("APPTAINER_BIND=%s", new_bind)
+
 
     logger.info("run_script: %s", " ".join(cmd))
 
@@ -971,11 +1006,11 @@ def set_singularity_bindings():
             root_of_scratch_dir = root_dir(scratch_dir)
             bind_list.append(f"{root_of_scratch_dir}:{root_of_scratch_dir}")
 
-        prev_singularity_bind = os.environ.get("SINGULARITY_BIND")
-        if prev_singularity_bind is not None:
-            bind_list.append(prev_singularity_bind)
+        prev_apptainer_bind = os.environ.get(APPTAINER_BIND)
+        if prev_apptainer_bind is not None:
+            bind_list.append(prev_apptainer_bind)
 
-        os.environ['SINGULARITY_BIND'] = ",".join(bind_list)
+        os.environ['APPTAINER_BIND'] = ",".join(bind_list)
 
 def _rsync_error_codes(code):
     """

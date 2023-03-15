@@ -50,16 +50,9 @@ def load_file_as_string(f):
     with open(f) as f:
         return f.read()
 
-
 def rewrite_file(file, content):
     with open(file, "w") as f:
         f.write(content)
-
-
-def is_ip29():
-
-    return os.path.exists("/nfs3_ib/ip29-ib")
-
 
 def slurm_conf(dsl):
     return dsl.slurm(

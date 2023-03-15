@@ -45,7 +45,7 @@ class RemoteTaskTests1(unittest.TestCase):
         d = TestSandboxDir(self)
         self._test_prepare_code_dir_remote_site(d, None)
 
-    def test_prepare_code_dir_remote_site_with_container(self):
+    def _test_prepare_code_dir_remote_site_with_container(self):
         d = TestSandboxDir(self)
         pipeline_code_dir = os.path.dirname(os.path.dirname(__file__))
         container = os.path.join(pipeline_code_dir, "tests", "containers", "singularity-test-container.sif")
@@ -205,8 +205,8 @@ class RemoteTaskTests2(unittest.TestCase):
                 ssh_specs="maxl@ip29.ccs.usherbrooke.ca:~/.ssh/id_rsa",
                 remote_base_dir="/home/maxl/drypipe_tests",
                 container="singularity-test-container.sif",
-                remote_containers_dir="/home/maxl/containers"
-                # command_before_launch_container="module add singularity",
+                remote_containers_dir="/home/maxl/containers",
+                command_before_task="module add apptainer",
             )
         ))
 

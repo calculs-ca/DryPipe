@@ -551,7 +551,7 @@ class TaskConf:
           $__containers_dir/<container>
         the default value of $__containers_dir is $__pipeline_code_dir/containers
         Note: for remote tasks (when ssh_specs is defined, the container file must exist in `remote_containers_dir`)
-    :param command_before_launch_container:
+    :param command_before_task:
     :param remote_pipeline_code_dir:
     :param python_bin:
      By default, will use the same python bin as the one running the cli
@@ -580,7 +580,7 @@ class TaskConf:
             slurm_account=None,
             sbatch_options=[],
             container=None,
-            command_before_launch_container=None,
+            command_before_task=None,
             remote_pipeline_code_dir=None,
             python_bin=None,
             remote_base_dir=None,
@@ -616,7 +616,7 @@ class TaskConf:
         self.slurm_account = slurm_account
         self.sbatch_options = sbatch_options
         self.container = container
-        self.command_before_launch_container = command_before_launch_container
+        self.command_before_task = command_before_task
         self.remote_pipeline_code_dir = remote_pipeline_code_dir
         self.python_bin = python_bin
         self.remote_base_dir = remote_base_dir
@@ -692,7 +692,7 @@ class TaskConf:
             self.slurm_account,
             self.sbatch_options,
             container,
-            self.command_before_launch_container,
+            self.command_before_task,
             self.remote_pipeline_code_dir,
             self.python_bin,
             self.remote_base_dir,
@@ -709,7 +709,7 @@ class TaskConf:
             self.slurm_account,
             self.sbatch_options,
             self.container,
-            self.command_before_launch_container,
+            self.command_before_task,
             self.remote_pipeline_code_dir,
             python_bin,
             self.remote_base_dir,
@@ -726,7 +726,7 @@ class TaskConf:
             self.slurm_account,
             self.sbatch_options,
             self.container,
-            self.command_before_launch_container,
+            self.command_before_task,
             self.remote_pipeline_code_dir,
             self.python_bin,
             self.remote_base_dir,
@@ -738,12 +738,6 @@ class TaskConf:
 
     _remote_ssh_executers = {}
 
-    @staticmethod
-    def _get_or_create_remote_ssh(ssh_username, ssh_host, remote_base_dir, key_filename, command_before_launch_container):
-        from dry_pipe.ssh_executer import RemoteSSH
-
-        return RemoteSSH(ssh_username, ssh_host, remote_base_dir, key_filename, command_before_launch_container)
-
     def create_executer(self):
 
         def remote_ssh():
@@ -754,14 +748,14 @@ class TaskConf:
 
             return RemoteSSH(
                 self.ssh_username, self.ssh_host, self.remote_base_dir, self.key_filename,
-                self.command_before_launch_container
+                self.command_before_task
             )
 
         if self.executer_type == "process":
             if self.is_remote():
                 return remote_ssh()
             else:
-                return Local(self.command_before_launch_container)
+                return Local(self.command_before_task)
         else:
             if self.is_remote():
                 e = remote_ssh()
