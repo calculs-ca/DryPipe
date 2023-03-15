@@ -7,18 +7,10 @@ import unittest
 
 import test_helpers
 from dry_pipe.internals import ValidationError, ProducedFile
-from dry_pipe import DryPipe, janitors, TaskConf, DryPipeDsl
-from dry_pipe.task_state import TaskState
+from dry_pipe import DryPipe, TaskConf, DryPipeDsl
 from test_01_simple_static_pipeline.simple_static_pipeline import simple_static_pipeline, \
     run_and_validate_pipeline_execution
-from test_helpers import is_ip29
 from test_utils import TestSandboxDir, copy_pre_existing_file_deps_from_code_dir, test_suite_base_dir
-
-
-def before_execute_bash():
-    if is_ip29():
-        return "source /cvmfs/soft.computecanada.ca/config/profile/bash.sh"
-    return None
 
 
 def simple_static_pipeline_01_code_dir():
@@ -311,8 +303,7 @@ class NonTrivialPipelineLocalWithSingularityContainerTests(WithManyConfigCombina
             task_conf=TaskConf(
                 executer_type="process",
                 container="singularity-test-container.sif",
-                #python_bin="/usr/bin/python3",
-                command_before_launch_container=before_execute_bash()
+                #python_bin="/usr/bin/python3"
             )
         )
 

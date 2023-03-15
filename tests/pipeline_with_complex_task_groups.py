@@ -63,7 +63,7 @@ def pipeline_task_generator(dsl):
             key="grand_total.end"
         ).consumes(
             all_n_x_2=dsl.val(",".join(
-                map(str, task_matcher.out.n2.fetch())
+                map(str, task_matcher.all.n2.fetch())
             ))
         ).produces(
             grand_total=dsl.var(int)
