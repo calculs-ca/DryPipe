@@ -13,7 +13,7 @@ minimal_requirements = [
 
 setup(
     name='dry_pipe',
-    version='0.7.49',
+    version='0.7.50',
     packages=['dry_pipe'],
     install_requires=minimal_requirements,
     include_package_data=True,
