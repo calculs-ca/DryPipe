@@ -66,13 +66,11 @@ def _configure_logging(log_conf_file):
                 handler_class = handler["class"]
                 if handler_class == "logging.FileHandler":
                     filename = handler.get("filename")
-                    if filename is None:
+                    if filename is None or filename == "":
                         raise Exception(f"logging.FileHandler '{k}' has no filename attribute in {log_conf_file}")
-                    if "$" in handler["filename"]:
-                        raise Exception(
-                            f"filename attribute of '{k}': {filename} has undefined env variables, in {log_conf_file}"
-                        )
-                    handler["filename"] = os.path.expandvars(filename)
+                    if "$" in filename:
+                        filename = os.path.expandvars(filename)
+                        handler["filename"] = os.path.expandvars(filename)
 
             logging.config.dictConfig(conf)
         logger.info("using logging conf: %s", log_conf_file)
