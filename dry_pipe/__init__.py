@@ -609,6 +609,8 @@ class TaskConf:
 
         if fields_from_json is not None:
             self.__dict__.update(fields_from_json)
+            if "command_before_task" not in fields_from_json:
+                self.command_before_task = None
             return
 
         self.executer_type = executer_type
