@@ -174,6 +174,10 @@ class DryPipeDsl:
         """
         return SubPipeline(pipeline, namespace_prefix, self)
 
+    def query(self, task_key_pattern, external_pipeline_instance_dir):
+        pi = DryPipe.load_pipeline(external_pipeline_instance_dir)
+        return pi.query(task_key_pattern)
+
     def wait_for_matching_tasks(self, *patterns):
         """
 
@@ -355,10 +359,18 @@ class TaskBuilder:
 
         def deps():
             for k, v in kwargs.items():
-                if isinstance(v, IndeterminateFile):
+                if isinstance(v, IndeterminateFile) or isinstance(v, Val):
                     yield k, v
-                elif isinstance(v, ProducedFile) or isinstance(v, Val) or isinstance(v, OutputVar):
-                    yield k, v
+                elif isinstance(v, ProducedFile):
+                    if v.is_rehydrated():
+                        yield k, IndeterminateFile(v.file_path, manage_signature=False)
+                    else:
+                        yield k, v
+                elif isinstance(v, OutputVar):
+                    if v.is_rehydrated():
+                        yield k, Val(v.fetch())
+                    else:
+                        yield k, v
                 else:
                     raise ValidationError(
                         f"_consumes can only take DryPipe.file() or _consumes(a_file=other_task.out.name_of_file()" +
@@ -381,9 +393,15 @@ class TaskBuilder:
         def deps_from_args():
             for o in args:
                 if isinstance(o, ProducedFile):
-                    yield o.var_name, o
+                    if v.is_rehydrated():
+                        yield o.var_name, IndeterminateFile(v.file_path, manage_signature=False)
+                    else:
+                        yield o.var_name, o
                 elif isinstance(o, OutputVar):
-                    yield o.name, o
+                    if o.is_rehydrated():
+                        yield o.name, Val(o.fetch())
+                    else:
+                        yield o.name, o
                 else:
                     raise ValidationError(
                         f"bad arg: {o} passed to {self}"

@@ -32,7 +32,7 @@ def log_4_debug_daemon_mode():
 
 class TestSandboxDir:
 
-    def __init__(self, parent):
+    def __init__(self, parent, other_func=None):
 
         s = inspect.stack()
 
@@ -40,13 +40,24 @@ class TestSandboxDir:
             os.path.dirname(__file__),
             "sandboxes"
         )
+
+        if other_func is None:
+            f = s[1].function
+        else:
+            f = other_func
+
         sandbox_dir = os.path.join(
             all_sandbox_dirs,
-            f"{parent.__class__.__name__}.{s[1].function}"
+            f"{parent.__class__.__name__}.{f}"
         )
 
         self.sandbox_dir = sandbox_dir
 
+        if other_func is None:
+            self.delete_and_recreate_sandbox()
+
+
+    def delete_and_recreate_sandbox(self):
         if os.path.exists(self.sandbox_dir):
             shutil.rmtree(self.sandbox_dir)
 

@@ -254,14 +254,10 @@ class NonTrivialPipelineLocalContainerlessTests(WithManyConfigCombinationsTests)
 
         pipeline_instance = DryPipe.load_pipeline(pid)
 
-        all_tasks = [
-            t for t in pipeline_instance.query("*")
-        ]
-
-        self.assertEqual(len(all_tasks), 4)
+        self.assertEqual(len(pipeline_instance.query("*").tasks), 4)
 
         def query_single(pattern):
-            s = [t for t in pipeline_instance.query(pattern)]
+            s = [t for t in pipeline_instance.query(pattern).tasks]
             if len(s) != 1:
                 raise Exception(f"expected a single task {pattern}, got {len(s)}")
             return s[0]
@@ -294,7 +290,7 @@ class NonTrivialPipelineLocalContainerlessTests(WithManyConfigCombinationsTests)
 
         pipeline_instance = DryPipe.load_pipeline("$test_non_trivial_local_containerless")
 
-        blast_1 = [t for t in pipeline_instance.query("blast.1")][0]
+        blast_1 = [t for t in pipeline_instance.query("blast.1").tasks][0]
 
         self.assertEqual(blast_1.out.v1.fetch(), 1111)
 

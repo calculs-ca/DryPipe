@@ -7,7 +7,7 @@ import pathlib
 import shutil
 from itertools import groupby
 
-from dry_pipe import TaskConf, DryPipeDsl, TaskBuilder, script_lib, bash_shebang, TaskState
+from dry_pipe import TaskConf, DryPipeDsl, TaskBuilder, script_lib, bash_shebang, TaskState, TaskMatch
 from dry_pipe.internals import ValidationError, SubPipeline
 from dry_pipe.janitors import Janitor
 from dry_pipe.pipeline_state import PipelineState
@@ -687,9 +687,13 @@ class RehydratedPipelineInstance:
             "state.completed"
         )
 
-        for state_file in glob.glob(p):
-            task_state = TaskState(state_file)
-            yield Task.load_from_task_state(task_state)
+        return TaskMatch(
+            task_key_pattern,
+            [
+                Task.load_from_task_state(TaskState(state_file))
+                for state_file in glob.glob(p)
+            ]
+        )
 
 SLURM_SQUEUE_FORMAT_SPEC = "%A %L %j %l %T"
 

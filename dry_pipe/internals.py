@@ -95,6 +95,9 @@ class OutputVar:
         self.producing_task = producing_task
         self.may_be_none = may_be_none
 
+    def is_rehydrated(self):
+        return self.producing_task.is_rehydrated()
+
     def type_str(self):
         return _type_str(self.type)
 
@@ -388,6 +391,9 @@ class ProducedFile:
         self.manage_signature = manage_signature
         self.is_dummy = is_dummy
         self.glob_pattern = glob_pattern
+
+    def is_rehydrated(self):
+        return self.producing_task.is_rehydrated()
 
     def basename(self):
         return self.file_path

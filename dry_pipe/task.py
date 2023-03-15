@@ -120,6 +120,9 @@ class Task:
 
         self.out = TaskOut(self, self.produces)
 
+    def is_rehydrated(self):
+        return self.out.is_rehydrated()
+
     def __repr__(self):
         return f"Task(key={self.key})"
 
@@ -1252,6 +1255,9 @@ class TaskOut:
         self.task = task
         self.produces = produces
 
+    def is_rehydrated(self):
+        return False
+
     def __getattr__(self, name):
         p = self.produces.get(name)
 
@@ -1277,6 +1283,9 @@ class TaskOutRehydrated:
         self.pipeline_instance_dir = pipeline_instance_dir
         self.produces = None
 
+    def is_rehydrated(self):
+        return True
+
     def _rehydrate(self):
         def rehydrate_metas():
             env = env_from_sourcing(self.task.v_abs_task_env_file())
@@ -1295,7 +1304,12 @@ class TaskOutRehydrated:
                 if f_path == '':
                     # input (consumed) file
                     continue
-                yield var_name, PreExistingFile(os.path.join(self.pipeline_instance_dir, f_path))
+                yield var_name, ProducedFile(
+                    os.path.join(self.pipeline_instance_dir, f_path),
+                    var_name,
+                    False,
+                    self.task
+                )
 
         def unserialize_type(type_str):
             if type_str == 'int':
