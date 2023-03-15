@@ -393,7 +393,7 @@ class TaskBuilder:
         def deps_from_args():
             for o in args:
                 if isinstance(o, ProducedFile):
-                    if v.is_rehydrated():
+                    if o.is_rehydrated():
                         yield o.var_name, IndeterminateFile(v.file_path, manage_signature=False)
                     else:
                         yield o.var_name, o
