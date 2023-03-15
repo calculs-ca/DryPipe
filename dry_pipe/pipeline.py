@@ -695,7 +695,7 @@ class RehydratedPipelineInstance:
         if len(tasks) == 0:
             return []
         else:
-            return TaskMatch(task_key_pattern, tasks)
+            return tuple([TaskMatch(task_key_pattern, tasks)])
 
 
 SLURM_SQUEUE_FORMAT_SPEC = "%A %L %j %l %T"
