@@ -150,6 +150,26 @@ class TaskMatch:
         self.tasks_by_key = {t.key: t for t in tasks}
         self.all = TaskMatchAll(self)
 
+    def __iter__(self):
+        if len(self.tasks) == 0:
+            yield from ()
+        else:
+            yield self
+
+    def single(self):
+        if len(self.tasks) != 1:
+            raise Exception(f"query({self.pattern}).single() expected 1 matching task, got {len(self.tasks)}")
+        return self.tasks[0]
+
+    def single_or_none(self):
+        if len(self.tasks) > 1:
+            raise Exception(
+                f"query({self.pattern}).single_or_none() expected 0 or 1 matching task, got {len(self.tasks)}"
+            )
+        if len(self.tasks) == 1:
+            return self.tasks[0]
+        return None
+
 
 class DryPipeDsl:
 
@@ -394,7 +414,7 @@ class TaskBuilder:
             for o in args:
                 if isinstance(o, ProducedFile):
                     if o.is_rehydrated():
-                        yield o.var_name, IndeterminateFile(v.file_path, manage_signature=False)
+                        yield o.var_name, IndeterminateFile(o.file_path, manage_signature=False)
                     else:
                         yield o.var_name, o
                 elif isinstance(o, OutputVar):

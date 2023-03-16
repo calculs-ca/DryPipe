@@ -248,11 +248,26 @@ class NonTrivialPipelineLocalContainerlessTests(WithManyConfigCombinationsTests)
 
         self.assertEqual(len(pipeline_instance.query("*").tasks), 4)
 
+        self.assertIsNone(
+            pipeline_instance.query("no match").single_or_none(),
+            "query should have returned none"
+        )
+
+        with self.assertRaises(Exception) as _:
+            pipeline_instance.query("*").single_or_none()
+
+        with self.assertRaises(Exception) as _:
+            pipeline_instance.query("*").single()
+
+        with self.assertRaises(Exception) as _:
+            pipeline_instance.query("no match").single()
+
+        self.assertEqual(len([matcher for matcher in pipeline_instance.query("*")]), 1)
+
+        self.assertEqual(len([matcher for matcher in pipeline_instance.query("no match")]), 0)
+
         def query_single(pattern):
-            s = [t for t in pipeline_instance.query(pattern).tasks]
-            if len(s) != 1:
-                raise Exception(f"expected a single task {pattern}, got {len(s)}")
-            return s[0]
+            return pipeline_instance.query(pattern).single()
 
         def check_out_file(task, outfile, f):
 
