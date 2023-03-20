@@ -693,6 +693,15 @@ def call(ctx, mod_func, task_env):
 
     task_logger = create_task_logger(control_dir)
 
+    pythonpath_in_env = env.get("PYTHONPATH")
+
+    if pythonpath_in_env is not None:
+        for p in pythonpath_in_env.split(":"):
+            if not os.path.exists(p):
+                msg = f"WARNING: path {p} in PYTHONPATH does not exist, if running in apptainer, ensure proper mount"
+                print(msg, file=sys.stderr)
+                task_logger.warning(msg)
+
     var_type_dict = {}
 
     meta = {
