@@ -6,20 +6,18 @@ import json
 import os
 import pathlib
 import shutil
-import time
 from itertools import groupby
 
 import textwrap
 
-from dry_pipe.script_lib import parse_in_out_meta, PortablePopen, env_from_sourcing
-from dry_pipe.actions import TaskAction
+from dry_pipe.script_lib import parse_in_out_meta, PortablePopen, env_from_sourcing, FileCreationDefaultModes
 from dry_pipe import bash_shebang
 from dry_pipe.internals import \
     IndeterminateFile, ProducedFile, IncompleteVar, Val, \
-    OutputVar, InputFile, InputVar, FileSet, OutFileSet, ValidationError, flatten, TaskProps, PreExistingFile
+    OutputVar, InputFile, InputVar, FileSet, OutFileSet, ValidationError, flatten, TaskProps
 
 from dry_pipe.script_lib import task_script_header, iterate_out_vars_from
-from dry_pipe.task_state import TaskState, tail
+from dry_pipe.task_state import TaskState
 
 
 class Task:
@@ -640,7 +638,7 @@ class Task:
             for k, v in self.get_env_vars(f, collect_deps_and_outputs if is_remote else None):
                 f.write(f'export {k}={v}\n')
 
-        os.chmod(setenv_file, 0o764)
+        os.chmod(setenv_file, FileCreationDefaultModes.pipeline_instance_scripts)
 
         shell_script_file = self.v_abs_script_file()
 
@@ -663,7 +661,7 @@ class Task:
             f.write('script_lib.handle_main(go)\n')
             f.write('logging.shutdown()\n')
 
-        os.chmod(shell_script_file, 0o764)
+        os.chmod(shell_script_file, FileCreationDefaultModes.pipeline_instance_scripts)
 
         if self.task_conf.is_slurm():
             pid_name = os.path.basename(self.pipeline_instance.pipeline_instance_dir)
@@ -696,7 +694,7 @@ class Task:
                 f.write('echo "scancel --signal=SIGTERM $__job_id" > $__script_location/kill\n')
                 f.write('chmod u+x $__script_location/kill\n')
 
-            os.chmod(self.v_abs_sbatch_launch_script(), 0o764)
+            os.chmod(self.v_abs_sbatch_launch_script(), FileCreationDefaultModes.pipeline_instance_scripts)
 
         if is_remote:
             local_deps = os.path.join(self.v_abs_control_dir(), "local-deps.txt")
@@ -1024,13 +1022,16 @@ class Task:
             self.v_abs_control_dir(),
             os.path.join(self.v_abs_control_dir(), "out_sigs"),
         ]:
-            pathlib.Path(d).mkdir(parents=True, exist_ok=True)
+            pathlib.Path(d).mkdir(
+                parents=True, exist_ok=True, mode=FileCreationDefaultModes.pipeline_instance_directories)
 
         if not os.path.exists(self.v_abs_work_dir()):
-            pathlib.Path(self.v_abs_work_dir()).mkdir(parents=True, exist_ok=True)
+            pathlib.Path(self.v_abs_work_dir()).mkdir(
+                parents=True, exist_ok=True, mode=FileCreationDefaultModes.pipeline_instance_directories)
 
         if self.v_abs_scratch_dir() is not None:
-            pathlib.Path(self.v_abs_scratch_dir()).mkdir(parents=True, exist_ok=True)
+            pathlib.Path(self.v_abs_scratch_dir()).mkdir(
+                parents=True, exist_ok=True, mode=FileCreationDefaultModes.pipeline_instance_directories)
 
         return TaskState.create_non_existing(self.v_abs_control_dir())
 

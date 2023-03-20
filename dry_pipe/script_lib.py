@@ -553,7 +553,7 @@ def sign_files():
 
     sig_dir = os.path.join(os.environ['__control_dir'], 'out_sigs')
 
-    Path(sig_dir).mkdir(exist_ok=True)
+    Path(sig_dir).mkdir(exist_ok=True, mode=FileCreationDefaultModes.pipeline_instance_directories)
 
     def all_files():
         for f in file_list_to_sign.split(","):
@@ -717,7 +717,7 @@ def launch_task_from_remote(task_key, is_slurm, wait_for_completion, drypipe_tas
     scratch_dir = os.path.join(work_dir, "scratch")
 
     for d in [work_dir, out_sigs_dir, scratch_dir]:
-        Path(d).mkdir(exist_ok=True, parents=True)
+        Path(d).mkdir(exist_ok=True, parents=True, mode=FileCreationDefaultModes.pipeline_instance_directories)
 
     for state_file in glob.glob(os.path.join(control_dir, "state.*")):
         os.remove(state_file)
@@ -1228,3 +1228,8 @@ def handle_script_lib_main():
         raise Exception('invalid args')
 
     logging.shutdown()
+
+
+class FileCreationDefaultModes:
+    pipeline_instance_directories = 0o774
+    pipeline_instance_scripts = 0o774

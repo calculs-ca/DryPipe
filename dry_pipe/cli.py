@@ -21,7 +21,7 @@ from dry_pipe.monitoring import fetch_task_groups_stats
 from dry_pipe.pipeline import PipelineInstance, Pipeline
 from dry_pipe.pipeline_state import PipelineState
 from dry_pipe.script_lib import env_from_sourcing, parse_in_out_meta, create_task_logger, iterate_out_vars_from, \
-    write_out_vars
+    write_out_vars, FileCreationDefaultModes
 from dry_pipe.task_state import NON_TERMINAL_STATES
 
 logger = logging.getLogger(__name__)
@@ -439,7 +439,7 @@ def _parse_instances_dir_to_pipelines(instances_dir_to_pipelines, env=None):
         instances_dir, mod_func = d_to_p.split("=")
 
         if not os.path.exists(instances_dir):
-            pathlib.Path(instances_dir).mkdir(parents=True)
+            pathlib.Path(instances_dir).mkdir(parents=True, mode=FileCreationDefaultModes.pipeline_instance_directories)
 
         pipeline = Pipeline.load_from_module_func(mod_func)
         pipeline.env_vars = env
@@ -593,7 +593,7 @@ def serve_ui(ctx, instances_dir_to_pipelines, bind, port):
             instances_dir, mod_func = t.split("=")
 
             if not os.path.exists(instances_dir):
-                pathlib.Path(instances_dir).mkdir(parents=True)
+                pathlib.Path(instances_dir).mkdir(parents=True, mode=FileCreationDefaultModes.pipeline_instance_directories)
 
             pipeline = Pipeline.load_from_module_func(mod_func)
             yield instances_dir, pipeline

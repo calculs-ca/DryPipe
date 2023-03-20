@@ -11,7 +11,7 @@ from dry_pipe import TaskConf, DryPipeDsl, TaskBuilder, script_lib, bash_shebang
 from dry_pipe.internals import ValidationError, SubPipeline
 from dry_pipe.janitors import Janitor
 from dry_pipe.pipeline_state import PipelineState
-from dry_pipe.script_lib import write_pipeline_lib_script, PortablePopen
+from dry_pipe.script_lib import write_pipeline_lib_script, PortablePopen, FileCreationDefaultModes
 from dry_pipe.task import Task
 
 logger = logging.getLogger(__name__)
@@ -278,7 +278,7 @@ class PipelineInstancesIterator:
     def create_instance_in(self, pipeline_instances_dir, subdir):
 
         pid = pathlib.Path(os.path.join(pipeline_instances_dir, subdir, ".drypipe"))
-        pathlib.Path(pid).mkdir(parents=True, exist_ok=False)
+        pathlib.Path(pid).mkdir(parents=True, exist_ok=False, mode=FileCreationDefaultModes.pipeline_instance_directories)
         pathlib.Path(os.path.join(pid, "state.running")).touch()
 
     def __iter__(self):
@@ -391,8 +391,12 @@ class PipelineInstance:
 
     def init_work_dir(self):
 
-        pathlib.Path(self._publish_dir).mkdir(parents=True, exist_ok=True)
-        pathlib.Path(self.work_dir).mkdir(parents=True, exist_ok=True)
+        pathlib.Path(self._publish_dir).mkdir(
+            parents=True, exist_ok=True, mode=FileCreationDefaultModes.pipeline_instance_directories
+        )
+        pathlib.Path(self.work_dir).mkdir(
+            parents=True, exist_ok=True, mode=FileCreationDefaultModes.pipeline_instance_directories
+        )
 
         pipeline_env = os.path.join(self.work_dir, "pipeline-env.sh")
         with open(pipeline_env, "w") as f:
@@ -563,7 +567,9 @@ class PipelineInstance:
 
         if not os.path.exists(sig_dir):
 
-            pathlib.Path(sig_dir).mkdir(parents=True, exist_ok=True)
+            pathlib.Path(sig_dir).mkdir(
+                parents=True, exist_ok=True, mode=FileCreationDefaultModes.pipeline_instance_directories
+            )
 
             with PortablePopen(
                     f"{self.work_dir}/recalc-output-file-hashes.sh",
