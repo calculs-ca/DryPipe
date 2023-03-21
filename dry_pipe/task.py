@@ -10,7 +10,8 @@ from itertools import groupby
 
 import textwrap
 
-from dry_pipe.script_lib import parse_in_out_meta, PortablePopen, env_from_sourcing, FileCreationDefaultModes
+from dry_pipe.script_lib import parse_in_out_meta, PortablePopen, FileCreationDefaultModes, \
+    TaskInput, TaskOutput
 from dry_pipe import bash_shebang
 from dry_pipe.internals import \
     IndeterminateFile, ProducedFile, IncompleteVar, Val, \
@@ -45,11 +46,16 @@ class Task:
 
             from dry_pipe import TaskConf
 
-            self.task_conf = TaskConf.from_json_file(os.path.join(
+            with open(os.path.join(
                 task_state.control_dir(), "task-conf.json"
-            ))
-            self.executer = self.task_conf.create_executer()
-            self.out = TaskOutRehydrated(self, self.pipeline_instance.pipeline_instance_dir)
+            )) as f:
+                task_conf_json = json.loads(f.read())
+
+                self.task_conf = TaskConf.from_json(task_conf_json)
+                self.executer = self.task_conf.create_executer()
+                self.out = TaskOutRehydrated(
+                    self, self.pipeline_instance.pipeline_instance_dir, task_conf_json
+                )
             return
 
         self.python_bin = None
@@ -194,6 +200,52 @@ class Task:
         return lambda: cached_it
 
     def _input_meta_data(self):
+        for _, upstream_input_files, upstream_input_vars in self.upstream_deps_iterator():
+            for input_file in upstream_input_files:
+                produced_file = input_file.produced_file
+                yield TaskInput(
+                    input_file.var_name_in_consuming_task,
+                    'file',
+                    produced_file.producing_task.key,
+                    name_in_upstream_task=None,
+                    file_name=produced_file.file_path
+                )
+
+            for input_var in upstream_input_vars:
+                output_var = input_var.output_var
+                yield TaskInput(
+                    input_var.var_name_in_consuming_task,
+                    output_var.type_str(),
+                    output_var.producing_task.key,
+                    output_var.name
+                )
+
+        for name, val in self.vals.items():
+            yield TaskInput(
+                name,
+                "glob_expression" if val.is_glob_expression else val.type_str(),
+                value=val.value
+            )
+
+
+        for name, file in self.pre_existing_files.items():
+            yield TaskInput(
+                name,
+                "file",
+                file_name=file.file_path
+            )
+
+    def _output_meta_data(self):
+        for name, produced_item in self.produces.items():
+            if isinstance(produced_item, ProducedFile):
+                rel_path = produced_item.absolute_path(self)
+                yield TaskOutput(produced_item.var_name, 'file', os.path.basename(rel_path))
+            elif isinstance(produced_item, OutputVar):
+                if name != produced_item.name:
+                    raise Exception(f"{name} != {produced_item.name}")
+                yield TaskOutput(name, produced_item.type_str())
+
+    def _obsolete_input_meta_data(self):
         # export __meta_<var-name>="(int|str|float):<producing-task-key>:<name_in_producing_task>"
         # input file : export __meta_<file-name>="file:<producing-task-key>:<name_in_producing_task>"
         # output file: export __meta_<file-name>="file:'':<name_in_producing_task>"
@@ -267,8 +319,8 @@ class Task:
 
         yield "__task_key", self.key
 
-        for k, v in self._input_meta_data():
-            yield k, v
+        #for k, v in self._input_meta_data():
+        #    yield k, v
 
         gen_input_var_call = f'$__pipeline_instance_dir/.drypipe/script_lib gen-input-var-exports'
         writer.write(f'eval "$({gen_input_var_call})"\n')
@@ -618,7 +670,17 @@ class Task:
         task_conf_file = self.v_abs_task_conf_file()
 
         with open(task_conf_file, "w") as f:
-            f.write(json.dumps(self.task_conf.as_json(), indent=2))
+            task_conf_json = self.task_conf.as_json()
+
+            task_conf_json["inputs"] = [
+                i.as_json() for i in self._input_meta_data()
+            ]
+
+            task_conf_json["outputs"] = [
+                o.as_json() for o in self._output_meta_data()
+            ]
+
+            f.write(json.dumps(task_conf_json, indent=2))
 
         setenv_file = self.v_abs_task_env_file()
 
@@ -644,9 +706,9 @@ class Task:
 
         with open(shell_script_file, "w") as f:
             f.write(task_script_header())
-            f.write("env = script_lib.source_task_env(os.path.join(__script_location, 'task-env.sh'))\n")
+            #f.write("env = script_lib.source_task_env(os.path.join(__script_location, 'task-env.sh'))\n")
             f.write("task_conf_dict = script_lib.load_task_conf_dict()\n")
-            f.write("script_lib.ensure_upstream_tasks_completed(env)\n\n")
+            #f.write("script_lib.ensure_upstream_tasks_completed(env)\n\n")
 
             f.write("\n\ndef go():\n")
             f.write("\n    step_number, control_dir, state_file, state_name = script_lib.read_task_state()\n")
@@ -1279,38 +1341,28 @@ class TaskOut:
 
 class TaskOutRehydrated:
 
-    def __init__(self, task, pipeline_instance_dir):
+    def __init__(self, task, pipeline_instance_dir, task_conf_json):
         self.task = task
         self.pipeline_instance_dir = pipeline_instance_dir
         self.produces = None
+        self.task_conf_json = task_conf_json
 
     def is_rehydrated(self):
         return True
 
     def _rehydrate(self):
-        def rehydrate_metas():
-            env = env_from_sourcing(self.task.v_abs_task_env_file())
-
-            for producing_task_key, var_metas, file_metas in parse_in_out_meta({
-                k: v
-                for k, v in env.items()
-                if k.startswith("__meta_")
-            }):
-                return var_metas, file_metas
-
-        var_metas, file_metas = rehydrate_metas()
 
         def gen_f():
-            for f_path, var_name, t3 in file_metas:
-                if f_path == '':
-                    # input (consumed) file
-                    continue
-                yield var_name, ProducedFile(
-                    os.path.join(self.pipeline_instance_dir, f_path),
-                    var_name,
-                    False,
-                    self.task
-                )
+            for o in self.task_conf_json["outputs"]:
+                o = TaskOutput.from_json(o)
+                if o.type == "file":
+                    yield o.name, ProducedFile(
+                        os.path.join(self.pipeline_instance_dir, "output", self.task.key, o.produced_file_name),
+                        o.name,
+                        False,
+                        self.task
+                    )
+
 
         def unserialize_type(type_str):
             if type_str == 'int':
@@ -1321,10 +1373,11 @@ class TaskOutRehydrated:
                 return float
 
         def gen_v():
-            for var_name_in_producing_task, var_name_in_producing_task, typez in var_metas:
-                yield var_name_in_producing_task, \
-                    OutputVar(unserialize_type(typez), True, var_name_in_producing_task, self.task)
-
+            for o in self.task_conf_json["outputs"]:
+                o = TaskOutput.from_json(o)
+                if o.type != "file":
+                    yield o.name, \
+                        OutputVar(unserialize_type(o.type), True, o.name, self.task)
 
         self.produces = {
             ** dict(gen_v()),

@@ -20,8 +20,8 @@ from dry_pipe.janitors import Janitor
 from dry_pipe.monitoring import fetch_task_groups_stats
 from dry_pipe.pipeline import PipelineInstance, Pipeline
 from dry_pipe.pipeline_state import PipelineState
-from dry_pipe.script_lib import env_from_sourcing, parse_in_out_meta, create_task_logger, iterate_out_vars_from, \
-    write_out_vars, FileCreationDefaultModes
+from dry_pipe.script_lib import create_task_logger, iterate_out_vars_from, \
+    write_out_vars, FileCreationDefaultModes, TaskInput, TaskOutput
 from dry_pipe.task_state import NON_TERMINAL_STATES
 
 logger = logging.getLogger(__name__)
@@ -685,9 +685,9 @@ def call(ctx, mod_func, task_env):
 
     env = os.environ
 
-    if task_env is not None:
-        # or if pipeline provided --task=key
-        env = env_from_sourcing(task_env)
+    #if task_env is not None:
+    #    # or if pipeline provided --task=key
+    #    env = env_from_sourcing(task_env)
 
     control_dir = env["__control_dir"]
 
@@ -704,19 +704,21 @@ def call(ctx, mod_func, task_env):
 
     var_type_dict = {}
 
-    meta = {
-        k : v
-        for k, v in env.items()
-        if k.startswith("__meta_")
-    }
+    task_inputs = []
 
-    for producing_task_key, var_metas, _ in parse_in_out_meta(meta):
-        #if producing_task_key != "":
-        #    continue
+    with open(os.path.join(control_dir, "task-conf.json")) as tc:
+        tc_json = json.loads(tc.read())
+        for i in tc_json["inputs"]:
+            i = TaskInput.from_json(i)
+            #if i.type != 'file':
+            task_inputs.append(i)
+            task_logger.debug(f"input var: {i.name}:{i.type}")
+            var_type_dict[i.name] = i.type
 
-        for var_meta in var_metas:
-            name_in_producing_task, var_name, typez = var_meta
-            var_type_dict[var_name] = typez
+        for i in tc_json["outputs"]:
+            i = TaskOutput.from_json(i)
+            task_logger.info(f"{i.name} {i.type}")
+            var_type_dict[i.name] = i.type
 
 
     def get_and_parse_arg(k, allow_none):
@@ -772,11 +774,10 @@ def call(ctx, mod_func, task_env):
             if k not in args_names
         }
 
-        for k, v in meta.items():
-            if v.startswith("file") and k not in kwargs:
-                f = k[7:]
-                if f not in args_names:
-                    kwargs[f] = env.get(f)
+        for i in task_inputs:
+            if i.type == 'file' and i.name not in kwargs:
+                if i.name not in args_names:
+                    kwargs[i.name] = env.get(i.name)
 
 
     task_logger.info("will invoke PythonCall: %s(%s,%s)", mod_func, args, kwargs)

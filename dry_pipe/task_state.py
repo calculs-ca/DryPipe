@@ -9,7 +9,8 @@ from itertools import groupby
 from subprocess import TimeoutExpired
 
 from dry_pipe.actions import TaskAction
-from dry_pipe.script_lib import parse_in_out_meta, PortablePopen, load_pid, load_slurm_job_id, ps_resources
+from dry_pipe.script_lib import parse_in_out_meta, PortablePopen, load_pid, load_slurm_job_id, ps_resources, \
+    resolve_input_vars, UpstreamTasksNotCompleted
 
 """
 
@@ -311,16 +312,11 @@ class TaskState:
         return dict(gen())
 
     def is_all_deps_ready(self):
-
-        pid = self.pipeline_instance_dir()
-        for task_key, _, _ in parse_in_out_meta(self.gen_meta_dict()):
-            if task_key == "":
-                continue
-            task_state = TaskState.from_task_control_dir(pid, task_key)
-            if not task_state.is_completed():
-                return False
-
-        return True
+        try:
+            list(resolve_input_vars(self.pipeline_instance_dir(), self.task_key))
+            return TaskState
+        except UpstreamTasksNotCompleted:
+            return False
 
     def pipeline_instance_dir(self):
         return os.path.dirname(os.path.dirname(self.control_dir()))
