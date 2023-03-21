@@ -21,7 +21,8 @@ from dry_pipe.monitoring import fetch_task_groups_stats
 from dry_pipe.pipeline import PipelineInstance, Pipeline
 from dry_pipe.pipeline_state import PipelineState
 from dry_pipe.script_lib import create_task_logger, iterate_out_vars_from, \
-    write_out_vars, FileCreationDefaultModes, TaskInput, TaskOutput
+    write_out_vars, FileCreationDefaultModes, TaskInput, TaskOutput, iterate_task_env, iterate_file_task_outputs, \
+    resolve_upstream_and_constant_vars
 from dry_pipe.task_state import NON_TERMINAL_STATES
 
 logger = logging.getLogger(__name__)
@@ -683,17 +684,11 @@ def call(ctx, mod_func, task_env):
 
     python_task = _func_from_mod_func(mod_func)
 
-    env = os.environ
-
-    #if task_env is not None:
-    #    # or if pipeline provided --task=key
-    #    env = env_from_sourcing(task_env)
-
-    control_dir = env["__control_dir"]
+    control_dir = os.environ["__control_dir"]
 
     task_logger = create_task_logger(control_dir)
 
-    pythonpath_in_env = env.get("PYTHONPATH")
+    pythonpath_in_env = os.environ.get("PYTHONPATH")
 
     if pythonpath_in_env is not None:
         for p in pythonpath_in_env.split(":"):
@@ -702,29 +697,37 @@ def call(ctx, mod_func, task_env):
                 print(msg, file=sys.stderr)
                 task_logger.warning(msg)
 
-    var_type_dict = {}
-
-    task_inputs = []
+    inputs_by_name = {}
+    file_outputs_by_name = {}
+    # python_calls can access outputs of previous ones with input args
+    var_outputs_by_name = {}
 
     with open(os.path.join(control_dir, "task-conf.json")) as tc:
+
         tc_json = json.loads(tc.read())
-        for i in tc_json["inputs"]:
-            i = TaskInput.from_json(i)
-            #if i.type != 'file':
-            task_inputs.append(i)
-            task_logger.debug(f"input var: {i.name}:{i.type}")
-            var_type_dict[i.name] = i.type
 
-        for i in tc_json["outputs"]:
-            i = TaskOutput.from_json(i)
-            task_logger.info(f"{i.name} {i.type}")
-            var_type_dict[i.name] = i.type
+        for task_input, k, v in resolve_upstream_and_constant_vars(os.environ["__pipeline_instance_dir"], tc_json, control_dir):
+            inputs_by_name[k] = task_input.parse(v)
 
+        for k, f in iterate_file_task_outputs(tc_json, os.environ["__task_output_dir"]):
+            file_outputs_by_name[k] = f
 
-    def get_and_parse_arg(k, allow_none):
-        v = env.get(k)
-        if allow_none and v is None:
-            return None
+        for o in tc_json["outputs"]:
+            o = TaskOutput.from_json(o)
+            if not o.is_file():
+                v = os.environ.get(o.name)
+                if v is not None:
+                    var_outputs_by_name[o.name] = o.parse(v)
+
+    all_function_input_candidates = {
+        ** os.environ,
+        ** inputs_by_name,
+        ** file_outputs_by_name,
+        ** var_outputs_by_name
+    }
+
+    def get_arg(k):
+        v = all_function_input_candidates.get(k)
         if v is None and k != "test":
             tk = os.environ['__task_key']
             raise Exception(
@@ -732,57 +735,28 @@ def call(ctx, mod_func, task_env):
                 f"make sure task has var {k} declared in it's consumes clause. Ex:\n" +
                 f"  dsl.task(key={tk}).consumes({k}=...)"
             )
-        typez = var_type_dict.get(k)
-        if typez == "int":
-            return int(v)
-        elif typez == "str":
-            return v
-        elif typez == "float":
-            return float(v)
-        elif typez == "glob_expression":
-
-            class GlobExpression:
-                def __call__(self, *args, **kwargs):
-                    return glob.glob(os.path.expandvars(v))
-
-                def __str__(self):
-                    return os.path.expandvars(v)
-
-            return GlobExpression()
-
         return v
 
     args_tuples = [
-        (k, get_and_parse_arg(k, allow_none=False))
+        (k, get_arg(k))
         for k, v in python_task.signature.parameters.items()
         if not k == "kwargs"
     ]
 
     args = [v for _, v in args_tuples]
+    args_names = [k for k, _ in args_tuples]
+    task_logger.debug("args list: %s", args_names)
 
     if "kwargs" not in python_task.signature.parameters:
         kwargs = {}
     else:
-
-        args_names = [k for k, _ in args_tuples]
-
-        task_logger.debug("args list: %s", args_names)
-
         kwargs = {
-            k : get_and_parse_arg(k, allow_none=True)
-            for k, _ in var_type_dict.items()
+            k : v
+            for k, v in all_function_input_candidates.items()
             if k not in args_names
         }
 
-        for i in task_inputs:
-            if i.type == 'file' and i.name not in kwargs:
-                if i.name not in args_names:
-                    kwargs[i.name] = env.get(i.name)
-
-
     task_logger.info("will invoke PythonCall: %s(%s,%s)", mod_func, args, kwargs)
-
-    out_vars = None
 
     try:
         out_vars = python_task.func(* args, ** kwargs)

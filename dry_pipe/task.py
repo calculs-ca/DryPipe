@@ -207,7 +207,7 @@ class Task:
                     input_file.var_name_in_consuming_task,
                     'file',
                     produced_file.producing_task.key,
-                    name_in_upstream_task=None,
+                    name_in_upstream_task=produced_file.var_name,
                     file_name=produced_file.file_path
                 )
 

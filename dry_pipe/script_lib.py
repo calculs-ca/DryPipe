@@ -196,11 +196,6 @@ def load_task_conf_dict():
         if command_before_task is not None:
             exec_cmd_before_launch(command_before_task)
 
-        extra_env = task_conf_as_json["extra_env"]
-        if extra_env is not None:
-            for k, v in extra_env.items():
-                os.environ[k] = os.path.expandvars(v)
-
         def override_deps(dep_file, bucket):
             dep_file = os.path.join(os.path.join(os.environ["__control_dir"], dep_file))
             if not os.path.exists(dep_file):
@@ -262,6 +257,13 @@ def iterate_task_env(task_conf_as_json=None, control_dir=None):
     else:
         yield "__is_remote", "False"
 
+    logger.debug("extra_env vars from task-conf.json")
+
+    extra_env = task_conf_as_json["extra_env"]
+    if extra_env is not None:
+        for k, v in extra_env.items():
+            yield k, os.path.expandvars(v)
+
     logger.debug("pipeline instance level vars")
 
     with open(os.path.join(pipeline_instance_dir, ".drypipe", "pipeline-env.sh")) as f:
@@ -272,14 +274,18 @@ def iterate_task_env(task_conf_as_json=None, control_dir=None):
                 yield k, v
 
     logger.debug("resolved and constant input vars")
-    yield from resolve_upstream_and_constant_vars(pipeline_instance_dir, task_conf_as_json)
+    for _, k, v in resolve_upstream_and_constant_vars(pipeline_instance_dir, task_conf_as_json):
+        yield k, v
 
     logger.debug("file output vars")
+    yield from iterate_file_task_outputs(task_conf_as_json, task_output_dir)
+
+
+def iterate_file_task_outputs(task_conf_as_json, task_output_dir):
     for o in task_conf_as_json["outputs"]:
         o = TaskOutput.from_json(o)
         if o.is_file():
             yield o.name, os.path.join(task_output_dir, o.produced_file_name)
-
 
 class UpstreamTasksNotCompleted(Exception):
     def __init__(self, upstream_task_key, msg):
@@ -287,38 +293,39 @@ class UpstreamTasksNotCompleted(Exception):
         self.msg = msg
 
 def resolve_upstream_and_constant_vars(
-        pipeline_instance_dir, task_conf_as_json, log_error_if_upstream_task_not_completed=True):
+    pipeline_instance_dir, task_conf_as_json, log_error_if_upstream_task_not_completed=True
+):
 
-    inputs = task_conf_as_json["inputs"]
-
-    for i in inputs:
+    for i in task_conf_as_json["inputs"]:
         i = TaskInput.from_json(i)
+        logger.debug("%s", i)
         if i.is_upstream_output():
-            out_vars = dict(iterate_out_vars_from(
-                os.path.join(pipeline_instance_dir, ".drypipe", i.upstream_task_key, "output_vars")
-            ))
+            if i.is_file():
+                yield i, i.name, os.path.join(pipeline_instance_dir, "output", i.upstream_task_key, i.file_name)
+            else:
+                out_vars = dict(iterate_out_vars_from(
+                    os.path.join(pipeline_instance_dir, ".drypipe", i.upstream_task_key, "output_vars")
+                ))
 
-            for state_file in glob.glob(os.path.join(pipeline_instance_dir, ".drypipe", i.upstream_task_key,"state.*")):
-                if not "completed" in state_file:
-                    msg = f"upstream task {i.upstream_task_key} " + \
-                        f"not completed (state={state_file}), this task " + \
-                        f"dependency on {i.name_in_upstream_task} not satisfied"
-
-                    if not log_error_if_upstream_task_not_completed:
-                        logger.error(msg)
-                    raise UpstreamTasksNotCompleted(i.upstream_task_key, msg)
-
-
-            v = out_vars.get(i.name_in_upstream_task)
-            yield i.name, v
+                for state_file in glob.glob(os.path.join(pipeline_instance_dir, ".drypipe", i.upstream_task_key,"state.*")):
+                    if not "completed" in state_file:
+                        msg = f"upstream task {i.upstream_task_key} " + \
+                            f"not completed (state={state_file}), this task " + \
+                            f"dependency on {i.name_in_upstream_task} not satisfied"
+                        if not log_error_if_upstream_task_not_completed:
+                            logger.error(msg)
+                        else:
+                            raise UpstreamTasksNotCompleted(i.upstream_task_key, msg)
+                v = out_vars.get(i.name_in_upstream_task)
+                yield i, i.name, v
         elif i.is_constant():
-            yield i.name, i.value
+            yield i, i.name, i.value
         elif i.is_file():
             # not is_upstream_output means they have either absolute path, or in pipeline_instance_dir
             if os.path.isabs(i.file_name):
-                yield i.name, i.file_name
+                yield i, i.name, i.file_name
             else:
-                yield i.name, os.path.join(pipeline_instance_dir, i.file_name)
+                yield i, i.name, os.path.join(pipeline_instance_dir, i.file_name)
 
 
 def run_python(task_conf_dict, mod_func, container=None):
@@ -689,7 +696,7 @@ def resolve_container_path(container):
         resolved_path = os.path.join(containers_dir, container)
 
     if not os.path.exists(resolved_path):
-        raise Exception(f"container file not found: {container}")
+        raise Exception(f"container file not found: {resolved_path}, __containers_dir={containers_dir}")
 
     logger.debug("container: %s resolves to: %s", container, resolved_path)
 
@@ -1023,63 +1030,8 @@ def resolve_input_vars(pipeline_instance_dir, task_key):
 
     task_conf = os.path.join(pipeline_instance_dir, ".drypipe", task_key, "task-conf.json")
     with open(task_conf) as _task_conf:
-        yield from resolve_upstream_and_constant_vars(pipeline_instance_dir, json.loads(_task_conf.read()))
-
-def _deprecate_gen_input_var_exports(out=sys.stdout, env=os.environ):
-
-    pipeline_instance_dir = env.get("__pipeline_instance_dir")
-
-    task_key = env.get('__task_key')
-
-    os.environ["__control_dir"] = os.path.join(pipeline_instance_dir, ".drypipe", task_key)
-
-    if pipeline_instance_dir is None:
-        raise Exception("env variable __pipeline_instance_dir not set")
-
-    if task_key is None:
-        raise Exception("env variable __task_key not set")
-
-    for k, v in resolve_input_vars(pipeline_instance_dir, task_key):
-        logger.info(f"var {k} = {v}")
-        print(f"export {k}={v}", file=out)
-
-def _gen_input_var_exports(out=sys.stdout, env=os.environ):
-
-    pipeline_instance_dir = env.get("__pipeline_instance_dir")
-
-    task_key = env.get('__task_key')
-
-    if pipeline_instance_dir is None:
-        raise Exception("env variable __pipeline_instance_dir not set")
-
-    if task_key is None:
-        raise Exception("env variable __task_key not set")
-
-    for producing_task_key, var_metas, _ in parse_in_out_meta({
-        k: v
-        for k, v in env.items()
-        if k.startswith("__meta_")
-    }):
-
-        if producing_task_key == "":
-            continue
-
-        # control_dir = os.path.join(pipeline_instance_dir, ".drypipe", producing_task_key)
-
-        # step_number, control_dir, state_file, state_name = read_task_state(control_dir, no_state_file_ok=True)
-
-        # if not state_name == "completed":
-        #    print(f"export __non_completed_dependent_task={producing_task_key}", file=out)
-        #    return
-
-        out_vars = dict(iterate_out_vars_from(
-            os.path.join(pipeline_instance_dir, ".drypipe", producing_task_key, "output_vars")
-        ))
-
-        for name_in_producing_task, var_name, typez in var_metas:
-            v = out_vars.get(name_in_producing_task)
-            if v is not None:
-                print(f"export {var_name}={v}", file=out)
+        for _, k, v in resolve_upstream_and_constant_vars(pipeline_instance_dir, json.loads(_task_conf.read())):
+            yield k, v
 
 
 def _root_dir(d):
@@ -1351,23 +1303,35 @@ class TaskInput:
 
     @staticmethod
     def from_json(json_string):
-
         j = json_string
-
-        ref = j.get("ref")
-        if ref is not None:
-            upstream_task_key, name_in_upstream_task = ref.split(":")
-        else:
-            upstream_task_key, name_in_upstream_task = None, None
-
         return TaskInput(
             j["name"],
             j["type"],
-            upstream_task_key=upstream_task_key,
-            name_in_upstream_task=name_in_upstream_task,
+            upstream_task_key=j.get("upstream_task_key"),
+            name_in_upstream_task=j.get("name_in_upstream_task"),
             file_name=j.get("file_name"),
             value=j.get("value")
         )
+
+    def _dict(self):
+        return {
+            "upstream_task_key": self.upstream_task_key,
+            "name_in_upstream_task": self.name_in_upstream_task,
+            "file_name": self.file_name,
+            "value": self.value
+        }
+
+    def __str__(self):
+
+        def f(p):
+            return f"TaskInput({self.name},{self.type},{p})"
+
+        return f(
+            ",".join([
+                f"{k}={v}" for k, v in self._dict().items()
+            ])
+        )
+
 
     def __init__(self, name, type, upstream_task_key=None, name_in_upstream_task=None, file_name=None, value=None):
 
@@ -1389,6 +1353,22 @@ class TaskInput:
 
         self.file_name = file_name
 
+    def parse(self, v):
+        if self.type == "int":
+            return int(v)
+        elif self.type == "float":
+            return float(v)
+        elif self.type == "glob_expression":
+            class GlobExpression:
+                def __call__(self, *args, **kwargs):
+                    return glob.glob(os.path.expandvars(v))
+
+                def __str__(self):
+                    return os.path.expandvars(v)
+            return GlobExpression()
+        else:
+            return v
+
     def is_file(self):
         return self.file_name is not None
 
@@ -1398,22 +1378,15 @@ class TaskInput:
     def is_constant(self):
         return self.value is not None
 
+    def _ref(self):
+        return f"{self.upstream_task_key}/{self.name_in_upstream_task}"
+
     def as_json(self):
-        r = {
+        return {
             "name": self.name,
-            "type":self.type
+            "type":self.type,
+            ** self._dict()
         }
-
-        if self.value is not None:
-            r["value"] = self.value
-        elif self.is_upstream_output():
-            r["ref"] = f"{self.upstream_task_key}:{self.name_in_upstream_task}"
-        elif self.file_name is not None:
-            r["file_name"] = self.file_name
-        else:
-            raise Exception(f"invalid state {self.__dict__}")
-
-        return r
 
 
 class TaskOutput:
@@ -1423,6 +1396,10 @@ class TaskOutput:
         j = json_dict
         return TaskOutput(j["name"], j["type"], j.get("produced_file_name"))
 
+
+    def __str__(self):
+        p = "" if self.produced_file_name is None else f",{self.produced_file_name}"
+        return f"TaskOutput({self.name},{self.type}{p})"
 
     def __init__(self, name, type, produced_file_name=None):
         if type not in ['file', 'str', 'int', 'float']:
@@ -1448,3 +1425,11 @@ class TaskOutput:
             r["produced_file_name"] = self.produced_file_name
 
         return r
+
+    def parse(self, v):
+        if self.type == "int":
+            return int(v)
+        elif self.type == "float":
+            return float(v)
+
+        return v
