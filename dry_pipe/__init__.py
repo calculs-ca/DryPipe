@@ -610,6 +610,8 @@ class TaskConf:
             extra_env=None,
             label=None
     ):
+        if init_bash_command is not None:
+            raise Exception(f"init_bash_command is deprecated")
 
         if executer_type is None:
             executer_type = "process"

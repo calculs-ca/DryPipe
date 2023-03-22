@@ -245,141 +245,20 @@ class Task:
                     raise Exception(f"{name} != {produced_item.name}")
                 yield TaskOutput(name, produced_item.type_str())
 
-    def _obsolete_input_meta_data(self):
-        # export __meta_<var-name>="(int|str|float):<producing-task-key>:<name_in_producing_task>"
-        # input file : export __meta_<file-name>="file:<producing-task-key>:<name_in_producing_task>"
-        # output file: export __meta_<file-name>="file:'':<name_in_producing_task>"
-        for _, upstream_input_files, upstream_input_vars in self.upstream_deps_iterator():
-            for input_file in upstream_input_files:
-                produced_file = input_file.produced_file
-                yield (
-                    f"__meta_{input_file.var_name_in_consuming_task}",
-                    ":".join([
-                        "file",
-                        produced_file.producing_task.key,
-                        produced_file.file_path
-                    ])
-                )
-
-            for input_var in upstream_input_vars:
-                output_var = input_var.output_var
-                yield (
-                    f"__meta_{input_var.var_name_in_consuming_task}",
-                    ":".join([
-                        output_var.type_str(),
-                        output_var.producing_task.key,
-                        output_var.name
-                    ])
-                )
-
-        for name, produced_item in self.produces.items():
-            if isinstance(produced_item, ProducedFile):
-                rel_path = produced_item.absolute_path(self)
-                yield (
-                    f"__meta_{produced_item.var_name}",
-                    ":".join([
-                        "file",
-                        "",
-                        rel_path
-                    ])
-                )
-            elif isinstance(produced_item, OutputVar):
-                yield (
-                    f"__meta_{name}",
-                    ":".join([
-                        produced_item.type_str(),
-                        "",
-                        produced_item.name
-                    ])
-                )
-
-        for name, val in self.vals.items():
-            yield (
-                f"__meta_{name}",
-                ":".join([
-                    "glob_expression" if val.is_glob_expression else val.type_str(),
-                    "",
-                    name
-                ])
-            )
-
-        for name, file in self.pre_existing_files.items():
-            yield (
-                f"__meta_{name}",
-                ":".join([
-                    "file",
-                    "",
-                    ""
-                ])
-            )
-
-        yield "END_META", "END_META"
-
-    def get_env_vars(self, writer, collect_deps_and_outputs_func=None):
-
-        yield "__task_key", self.key
-
-        #for k, v in self._input_meta_data():
-        #    yield k, v
-
-        gen_input_var_call = f'$__pipeline_instance_dir/.drypipe/script_lib gen-input-var-exports'
-        writer.write(f'eval "$({gen_input_var_call})"\n')
-
-        def abs_from_pipeline_instance_dir(p):
-            return f"$__pipeline_instance_dir/{p}"
-
-        yield "__is_remote", str(self.is_remote())
-
-        yield "__control_dir", abs_from_pipeline_instance_dir(f"{self.control_dir()}")
-        yield "__task_output_dir", abs_from_pipeline_instance_dir(f"{self.work_dir()}")
-        yield "__pipeline_instance_name", os.path.basename(self.pipeline_instance.pipeline_instance_dir)
-
-        #if isinstance(self.executer, Slurm):
-        #    yield "__is_slurm", "True"
-
-        if self.task_conf.uses_singularity():
-            yield "__is_singularity", "True"
-            #yield "__container_image", self.container.image_path
-
-            #if self.container.binds:
-            #    binds = ",".join([
-            #        f"{in_dir}={out_dir}"
-            #        for in_dir, out_dir in self.container.binds.items()
-            #    ])
-            #    yield "SINGULARITY_BIND", binds
-
-        yield "__scratch_dir", self.v_exp_scratch_dir()
-        yield "__output_var_file", self.v_exp_output_var_file()
-        yield "__sig_dir", "out_sigs",
-        yield "__out_log", self.v_exp_out_log()
-        yield "__err_log", self.v_exp_err_log()
-
-        out_files = []
+    def _visit_input_and_output_files(self, collect_deps_and_outputs_func):
 
         for k, v in self.out.produces.items():
             if isinstance(v, ProducedFile):
-                yield k, abs_from_pipeline_instance_dir(v.absolute_path(self))
-                out_files.append(abs_from_pipeline_instance_dir(v.absolute_path(self)))
                 if collect_deps_and_outputs_func is not None:
                     collect_deps_and_outputs_func(None, v.absolute_path(self))
             elif isinstance(v, OutFileSet):
                 if collect_deps_and_outputs_func is not None:
                     collect_deps_and_outputs_func(None, os.path.join(self.work_dir(), v.file_set.glob_pattern))
-                yield "__fileset_to_sign", f"$__task_output_dir/{v.file_set.glob_pattern}"
-
-        yield "__file_list_to_sign", ",".join(out_files)
-
-        for k, v in self.vals.items():
-            yield k, v.serialized_value()
 
         for k, v in self.pre_existing_files.items():
             ap = v.absolute_path(self)
             if collect_deps_and_outputs_func is not None:
                 collect_deps_and_outputs_func(ap, None, v.remote_cache_bucket)
-            if os.path.isabs(ap):
-                yield k, ap
-            else:
-                yield k, abs_from_pipeline_instance_dir(ap)
 
         for upstream_task, upstream_input_files, upstream_input_vars in self.upstream_deps_iterator():
             for input_file in upstream_input_files:
@@ -387,11 +266,6 @@ class Task:
                 if collect_deps_and_outputs_func is not None:
                     collect_deps_and_outputs_func(input_file.produced_file.absolute_path(upstream_task), None)
 
-                yield input_file.var_name_in_consuming_task, \
-                      abs_from_pipeline_instance_dir(input_file.produced_file.absolute_path(upstream_task))
-
-            #for k, v in upstream_task.resolve_output_vars_for_consuming_task(self):
-            #    yield k, v
 
     def read_out_signatures_file_into_dict(self):
         def d():
@@ -665,8 +539,6 @@ class Task:
             else:
                 raise Exception("collect_deps_and_outputs(None, None)")
 
-        #self.write_input_signature()
-
         task_conf_file = self.v_abs_task_conf_file()
 
         with open(task_conf_file, "w") as f:
@@ -693,22 +565,18 @@ class Task:
 
             f.write(". $__pipeline_instance_dir/.drypipe/pipeline-env.sh\n")
 
-            if self.task_conf.init_bash_command is not None:
-                f.write(self.task_conf.init_bash_command)
-                f.write("\n")
-
-            for k, v in self.get_env_vars(f, collect_deps_and_outputs if is_remote else None):
-                f.write(f'export {k}={v}\n')
+            f.write(f'eval "$($__script_location/task env --with-exports)"\n')
 
         os.chmod(setenv_file, FileCreationDefaultModes.pipeline_instance_scripts)
+
+        if is_remote:
+            self._visit_input_and_output_files(collect_deps_and_outputs)
 
         shell_script_file = self.v_abs_script_file()
 
         with open(shell_script_file, "w") as f:
             f.write(task_script_header())
-            #f.write("env = script_lib.source_task_env(os.path.join(__script_location, 'task-env.sh'))\n")
             f.write("task_conf_dict = script_lib.load_task_conf_dict()\n")
-            #f.write("script_lib.ensure_upstream_tasks_completed(env)\n\n")
 
             f.write("\n\ndef go():\n")
             f.write("\n    step_number, control_dir, state_file, state_name = script_lib.read_task_state()\n")

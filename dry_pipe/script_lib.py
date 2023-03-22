@@ -257,6 +257,12 @@ def iterate_task_env(task_conf_as_json=None, control_dir=None):
     else:
         yield "__is_remote", "False"
 
+    container = task_conf_as_json.get("container")
+    if container is not None and container != "":
+        yield "__is_singularity", "True"
+    else:
+        yield "__is_singularity", "False"
+
     logger.debug("extra_env vars from task-conf.json")
 
     extra_env = task_conf_as_json["extra_env"]
@@ -855,10 +861,10 @@ def handle_main(task_func):
     is_tail_command = "tail" in sys.argv
     wait_for_completion = "--wait" in sys.argv
     is_ps_command = "ps" in sys.argv
-    is_resolve_input_vars = "resolve-input-vars" in sys.argv
     is_env = "env" in sys.argv
+    is_with_exports = "--with-exports" in sys.argv
 
-    is_run_command = not (is_tail_command or is_ps_command or is_kill_command or is_resolve_input_vars or is_env)
+    is_run_command = not (is_tail_command or is_ps_command or is_kill_command or is_env)
 
     if is_run_command:
         _launch_task(task_func, wait_for_completion)
@@ -876,14 +882,10 @@ def handle_main(task_func):
             _ps_command()
         elif is_kill_command:
             _kill_command()
-        #elif is_resolve_input_vars:
-        #    pipeline_instance_dir = os.environ["__pipeline_instance_dir"]
-        #    task_key = os.environ['__task_key']
-        #    for k, v in resolve_input_vars(pipeline_instance_dir, task_key):
-        #        print(f"{k}={v}")
         elif is_env:
+            prefix = "export " if is_with_exports else ""
             for k, v in iterate_task_env():
-                print(f"{k}={v}")
+                print(f"{prefix}{k}={v}")
         else:
             raise Exception(f"bad args: {sys.argv}")
 

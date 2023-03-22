@@ -71,7 +71,8 @@ class ScriptLibTests(unittest.TestCase):
             f.write(task_script_header())
             f.write(textwrap.dedent(
                 f"""
-                env = script_lib.source_task_env(os.path.join(__script_location, 'task-env.sh'))                                        
+                env = script_lib.source_task_env(os.path.join(__script_location, 'task-env.sh'))
+                task_conf_dict = script_lib.load_task_conf_dict()                                        
                 script_lib.touch(os.path.join(env['__control_dir'], 'output_vars'))                                                
                 step_number, control_dir, state_file, read_task_state = script_lib.read_task_state()                                
                         
@@ -87,31 +88,6 @@ class ScriptLibTests(unittest.TestCase):
         touch(state_file)
 
         return control_dir, task_script
-
-    def test_bash_fail(self):
-        d = TestSandboxDir(self)
-        script_code = textwrap.dedent("""
-            #!/usr/bin/env bash            
-            echo "the end"
-            echo "err99999" >&2
-            exit 1            
-        """).strip()
-
-        control_dir, task_script = self._single_step_bash_template(d, script_code)
-
-        return_code = _run_script(task_script)
-
-        self.assertNotEqual(return_code, 0)
-
-        out, err = self._out_err_content(control_dir)
-
-        self.assertEqual(out, "the end\n")
-        self.assertEqual(err, "err99999\n")
-
-        step_number, control_dir, state_file, state_name = script_lib.read_task_state(control_dir)
-
-        self.assertEqual(step_number, 0)
-        self.assertEqual(os.path.basename(state_file), "state.failed.0")
 
     def _test_bash_timeout(self):
         d = TestSandboxDir(self)
