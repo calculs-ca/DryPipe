@@ -198,6 +198,11 @@ class MinimalistPipelinesTests(unittest.TestCase):
             self.assertEqual(task_t2.inputs.x, 12)
             self.assertEqual(task_t2.inputs.z, 34)
 
+            self.assertEqual(
+                task_t2.inputs.f_magic,
+                os.path.join(d.sandbox_dir, "output", "t1", "magic-file.txt")
+            )
+
         # validate "original" instance
         validate(pipeline_instance_1.tasks["t2"])
 

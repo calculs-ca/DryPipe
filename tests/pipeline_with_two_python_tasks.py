@@ -3,7 +3,11 @@ from dry_pipe import DryPipe
 
 
 @DryPipe.python_call()
-def multiply_by_x(x, y):
+def multiply_by_x(x, y, f):
+
+    with open(f) as _f:
+        _f.write("magic")
+
     return {
         "result": x * y
     }
@@ -15,11 +19,13 @@ def pipeline(dsl):
         key="t1"
     ).produces(
         x=dsl.var(int),
-        y=dsl.var(int)
+        y=dsl.var(int),
+        f=dsl.file("magic-file.txt")
     ).calls("""
         #!/usr/bin/env bash
         export x=12
         export y=34
+        echo "magic" > $f
     """)()
 
     yield t1
@@ -29,6 +35,7 @@ def pipeline(dsl):
     ).consumes(
         t1.out.x, #equivalent to: x=t1.out.x:
         z=t1.out.y,
+        f_magic=t1.out.f
     ).produces(
         r=dsl.var(int)
     ).calls("""
