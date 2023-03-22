@@ -4,6 +4,9 @@ from dry_pipe import DryPipe
 
 @DryPipe.python_call()
 def f3(x1, x2):
+
+    print("f3")
+
     return {
         "x3": x1 + x2
     }

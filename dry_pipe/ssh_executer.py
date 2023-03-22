@@ -241,7 +241,7 @@ class RemoteSSH(Executor):
 
             invoke_rsync(cmd)
 
-    def rsync_remote_code_dir_if_applies(self, pipeline, task_conf):
+    def rsync_remote_code_dir_if_applies(self, pipeline, task_conf, tmp_file=None):
 
         remote_pipeline_code_dir = task_conf.remote_pipeline_code_dir
 
@@ -254,7 +254,7 @@ class RemoteSSH(Executor):
                 if os.path.exists(os.path.join(pipeline.pipeline_code_dir, ".git")):
                     pipeline_code_dir_ls_command = f"cd {pipeline.pipeline_code_dir} && git ls-files"
                 else:
-                    raise Exception(f"not implemented !")
+                    pipeline_code_dir_ls_command = f"cd {pipeline.pipeline_code_dir} && find -type f"
             else:
                 pipeline_code_dir_ls_command = \
                     f"cd {pipeline.pipeline_code_dir} && {pipeline.pipeline_code_dir_ls_command}"

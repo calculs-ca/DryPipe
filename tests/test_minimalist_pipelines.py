@@ -1,3 +1,4 @@
+import json
 import os
 import unittest
 
@@ -9,8 +10,8 @@ import pipeline_with_variable_passing
 import pipeline_with_two_python_tasks
 import pipeline_with_multistep_tasks_with_shared_vars
 
-from dry_pipe import TaskConf, DryPipe
-from dry_pipe.script_lib import env_from_sourcing
+from dry_pipe import TaskConf
+from dry_pipe.script_lib import iterate_task_env
 from pipeline_with_dependency_on_other_pipeline import pipeline_with_external_deps_dag_gen
 from test_utils import TestSandboxDir
 
@@ -82,23 +83,24 @@ class MinimalistPipelinesTests(unittest.TestCase):
 
         consume_and_produce_a_var = pipeline_instance.tasks["consume_and_produce_a_var"]
 
-        task_env_script = os.path.join(
+        control_dir = os.path.join(
             pipeline_instance.work_dir,
             "consume_and_produce_a_var",
-            "task-env.sh"
         )
 
-        env = env_from_sourcing(task_env_script)
+        with open(os.path.join(control_dir, "task-conf.json")) as tc:
+            task_conf = json.loads(tc.read())
+            env = dict(iterate_task_env(task_conf, control_dir))
 
-        v = env.get("v")
-        if v is None:
-            raise Exception(f"script {task_env_script} did not resolve variable 'v'")
-        v = int(v)
-        self.assertEqual(v, 1234)
+            v = env.get("v")
+            if v is None:
+                raise Exception(f"variable 'v' was not produced by task 'consume_and_produce_a_var'")
+            v = int(v)
+            self.assertEqual(v, 1234)
 
-        self.assertEqual(consume_and_produce_a_var.out.result.fetch(), 2468)
+            self.assertEqual(consume_and_produce_a_var.out.result.fetch(), 2468)
 
-    def test_consume_var_local_is_upstream_name(self):
+    def test_consume_var_local_in_upstream_name(self):
         d = TestSandboxDir(self)
 
         pipeline_instance = d.pipeline_instance_from_generator(
@@ -129,7 +131,7 @@ class MinimalistPipelinesTests(unittest.TestCase):
 
     def test_inter_pipeline_dependencies(self):
 
-        d_dep1 = TestSandboxDir(self, "EXT_test_consume_var_local_is_upstream_name")
+        d_dep1 = TestSandboxDir(self, "EXT_test_consume_var_local_in_upstream_name")
         d_dep1.delete_and_recreate_sandbox()
         d_dep1.pipeline_instance_from_generator(
             pipeline_with_two_python_tasks.pipeline,

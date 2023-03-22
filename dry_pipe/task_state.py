@@ -314,7 +314,7 @@ class TaskState:
     def is_all_deps_ready(self):
         try:
             list(resolve_input_vars(self.pipeline_instance_dir(), self.task_key))
-            return TaskState
+            return True
         except UpstreamTasksNotCompleted:
             return False
 

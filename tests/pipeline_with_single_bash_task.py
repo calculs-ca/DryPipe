@@ -11,8 +11,9 @@ def pipeline(dsl, task_conf=None):
     ).calls(
         """
         #!/usr/bin/bash        
-        echo "Z1"
-        echo "result=$((x * y))" > $__output_var_file
+        echo "Z1"        
+        export result=$((x * y))
+        echo "--->$result"
         echo "Z2"
         """
     )()

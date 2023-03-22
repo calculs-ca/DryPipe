@@ -265,13 +265,16 @@ def iterate_task_env(task_conf_as_json=None, control_dir=None):
             yield k, os.path.expandvars(v)
 
     logger.debug("pipeline instance level vars")
+    pipeline_overrides = os.path.join(pipeline_instance_dir, ".drypipe", "pipeline-env.sh")
 
-    with open(os.path.join(pipeline_instance_dir, ".drypipe", "pipeline-env.sh")) as f:
-        for line in f:
-            if line.startswith("export "):
-                line = line[7:].strip()
-                k, v = line.split("=")
-                yield k, v
+    if os.path.exists(pipeline_overrides):
+        env = _env_from_sourcing(pipeline_overrides)
+        with open(pipeline_overrides) as f:
+            for line in f:
+                if line.startswith("export "):
+                    line = line[7:].strip()
+                    k, v = line.split("=")
+                    yield k, env.get(k)
 
     logger.debug("resolved and constant input vars")
     for _, k, v in resolve_upstream_and_constant_vars(pipeline_instance_dir, task_conf_as_json):
@@ -300,13 +303,8 @@ def resolve_upstream_and_constant_vars(
         i = TaskInput.from_json(i)
         logger.debug("%s", i)
         if i.is_upstream_output():
-            if i.is_file():
-                yield i, i.name, os.path.join(pipeline_instance_dir, "output", i.upstream_task_key, i.file_name)
-            else:
-                out_vars = dict(iterate_out_vars_from(
-                    os.path.join(pipeline_instance_dir, ".drypipe", i.upstream_task_key, "output_vars")
-                ))
 
+            def ensure_upstream_task_is_completed():
                 for state_file in glob.glob(os.path.join(pipeline_instance_dir, ".drypipe", i.upstream_task_key,"state.*")):
                     if not "completed" in state_file:
                         msg = f"upstream task {i.upstream_task_key} " + \
@@ -316,6 +314,15 @@ def resolve_upstream_and_constant_vars(
                             logger.error(msg)
                         else:
                             raise UpstreamTasksNotCompleted(i.upstream_task_key, msg)
+
+            ensure_upstream_task_is_completed()
+
+            if i.is_file():
+                yield i, i.name, os.path.join(pipeline_instance_dir, "output", i.upstream_task_key, i.file_name)
+            else:
+                out_vars = dict(iterate_out_vars_from(
+                    os.path.join(pipeline_instance_dir, ".drypipe", i.upstream_task_key, "output_vars")
+                ))
                 v = out_vars.get(i.name_in_upstream_task)
                 yield i, i.name, v
         elif i.is_constant():
@@ -430,7 +437,7 @@ def _delete_pid_and_slurm_job_id(sloc=None):
         logger.exception(ex)
 
 
-def _obsolete_env_from_sourcing(env_file):
+def _env_from_sourcing(env_file):
 
     p = os.path.abspath(sys.executable)
 

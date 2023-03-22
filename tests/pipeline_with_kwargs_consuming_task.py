@@ -36,7 +36,7 @@ def f1(r, **kwargs):
 
     r1 = kwargs.get("r1")
     if r1 is None:
-        raise Exception(f"expected 'r' in **kwargs")
+        raise Exception(f"expected 'r1' in **kwargs")
 
     if not os.path.exists(r1):
         raise Exception(f"file {r1} should exist")
