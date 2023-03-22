@@ -11,7 +11,7 @@ from itertools import groupby
 import textwrap
 
 from dry_pipe.script_lib import parse_in_out_meta, PortablePopen, FileCreationDefaultModes, \
-    TaskInput, TaskOutput, resolve_upstream_and_constant_vars
+    TaskInput, TaskOutput, resolve_upstream_and_constant_vars, iterate_file_task_outputs
 from dry_pipe import bash_shebang
 from dry_pipe.internals import \
     IndeterminateFile, ProducedFile, IncompleteVar, Val, \
@@ -53,9 +53,7 @@ class Task:
 
                 self.task_conf = TaskConf.from_json(task_conf_json)
                 self.executer = self.task_conf.create_executer()
-                self.out = TaskOutRehydrated(
-                    self, self.pipeline_instance.pipeline_instance_dir, task_conf_json
-                )
+                self.outputs = TaskOuputs(self, task_conf_json)
                 self.inputs = TaskInputs(self, task_conf_json)
             return
 
@@ -1256,61 +1254,53 @@ class TaskInputs:
 
         return p
 
-class TaskOutRehydrated:
 
-    def __init__(self, task, pipeline_instance_dir, task_conf_json):
+class TaskOuputs:
+
+    def __init__(self, task, task_conf_json=None):
         self.task = task
-        self.pipeline_instance_dir = pipeline_instance_dir
-        self.produces = None
         self.task_conf_json = task_conf_json
+        self._task_outputs = None
 
-    def is_rehydrated(self):
-        return True
+    def _resolve(self):
 
-    def _rehydrate(self):
+        task_state = self.task.get_state()
 
-        def gen_f():
-            for o in self.task_conf_json["outputs"]:
-                o = TaskOutput.from_json(o)
-                if o.type == "file":
-                    yield o.name, ProducedFile(
-                        os.path.join(self.pipeline_instance_dir, "output", self.task.key, o.produced_file_name),
-                        o.name,
-                        False,
-                        self.task
-                    )
+        if not task_state.is_completed():
+            # TODO: relax the task completion constraint, only restrict access to non completed upstream vars
+            raise Exception(
+                f"called _resolve() on a non completed task, ensure task completed before accessing task inputs"
+            )
 
+        if self.task_conf_json is None:
+            task_conf_file = self.task.v_abs_task_conf_file()
+            with open(task_conf_file) as f:
+                task_conf_json = json.loads(f.read())
+        else:
+            task_conf_json = self.task_conf_json
 
-        def unserialize_type(type_str):
-            if type_str == 'int':
-                return int
-            elif type_str == 'str':
-                return str
-            elif type_str == 'float':
-                return float
+        self._task_outputs = {}
+        unparsed_out_vars = dict(iterate_out_vars_from(self.task.v_abs_output_var_file()))
 
-        def gen_v():
-            for o in self.task_conf_json["outputs"]:
-                o = TaskOutput.from_json(o)
-                if o.type != "file":
-                    yield o.name, \
-                        OutputVar(unserialize_type(o.type), True, o.name, self.task)
+        for o in task_conf_json["outputs"]:
+            o = TaskOutput.from_json(o)
+            o._set_resolved_value(unparsed_out_vars.get(o.name))
+            self._task_outputs[o.name] = o
 
-        self.produces = {
-            ** dict(gen_v()),
-            ** dict(gen_f())
-        }
+        for o, k, f in iterate_file_task_outputs(task_conf_json, self.task.v_abs_work_dir()):
+            o._set_resolved_value(f)
+            self._task_outputs[k] = o
 
     def __getattr__(self, name):
 
-        if self.produces is None:
-            self._rehydrate()
+        if self._task_outputs is None:
+            self._resolve()
 
-        p = self.produces.get(name)
+        p = self._task_outputs.get(name)
 
         if p is None:
             raise ValidationError(
-                f"task {self.task} does not declare a variable '{name}' in it's produces() clause.\n" +
+                f"task {self.task} does not declare output '{name}' in it's produced() clause.\n" +
                 f"Use task({self.task.key}).produces({name}=...) to specify output"
             )
 

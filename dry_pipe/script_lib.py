@@ -287,14 +287,15 @@ def iterate_task_env(task_conf_as_json=None, control_dir=None):
         yield k, v
 
     logger.debug("file output vars")
-    yield from iterate_file_task_outputs(task_conf_as_json, task_output_dir)
+    for _, k, f in iterate_file_task_outputs(task_conf_as_json, task_output_dir):
+        yield k, f
 
 
 def iterate_file_task_outputs(task_conf_as_json, task_output_dir):
     for o in task_conf_as_json["outputs"]:
         o = TaskOutput.from_json(o)
         if o.is_file():
-            yield o.name, os.path.join(task_output_dir, o.produced_file_name)
+            yield o, o.name, os.path.join(task_output_dir, o.produced_file_name)
 
 class UpstreamTasksNotCompleted(Exception):
     def __init__(self, upstream_task_key, msg):
@@ -307,7 +308,8 @@ def resolve_upstream_and_constant_vars(
 
     for i in task_conf_as_json["inputs"]:
         i = TaskInput.from_json(i)
-        logger.debug("%s", i)
+        if logger.level == logging.DEBUG:
+            logger.debug("%s", i.as_string())
         if i.is_upstream_output():
 
             def ensure_upstream_task_is_completed():
@@ -1330,7 +1332,7 @@ class TaskInput:
             "value": self.value
         }
 
-    def __str__(self):
+    def as_string(self):
 
         def f(p):
             return f"TaskInput({self.name},{self.type},{p})"
@@ -1406,7 +1408,7 @@ class TaskOutput:
         return TaskOutput(j["name"], j["type"], j.get("produced_file_name"))
 
 
-    def __str__(self):
+    def as_string(self):
         p = "" if self.produced_file_name is None else f",{self.produced_file_name}"
         return f"TaskOutput({self.name},{self.type}{p})"
 
@@ -1420,6 +1422,10 @@ class TaskOutput:
         self.name = name
         self.type = type
         self.produced_file_name = produced_file_name
+        self._resolved_value = None
+
+    def _set_resolved_value(self, v):
+        self._resolved_value = self.parse(v)
 
     def is_file(self):
         return self.produced_file_name is not None
@@ -1442,3 +1448,33 @@ class TaskOutput:
             return float(v)
 
         return v
+
+    def __int__(self):
+
+        if self.type == "float":
+            return int(self._resolved_value)
+
+        if self.type != "int":
+            raise Exception(f"Task output {self.name} is not of type int, actual type is: {self.type} ")
+
+        return self._resolved_value
+
+    def __float__(self):
+
+        if self.type == "int":
+            return float(self._resolved_value)
+
+        if self.type != "float":
+            raise Exception(f"Task output {self.name} is not of type float, actual type is: {self.type} ")
+
+        return self._resolved_value
+
+    def __str__(self):
+        return str(self._resolved_value)
+
+    def __fspath__(self):
+
+        if self.type != "file":
+            raise Exception(f"Task output {self.name} is not of type file, actual type is: {self.type} ")
+
+        return self._resolved_value

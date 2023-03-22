@@ -275,15 +275,15 @@ class NonTrivialPipelineLocalContainerlessTests(WithManyConfigCombinationsTests)
 
         def check_out_file(task, outfile, f):
 
-            v = outfile.value()
+            v = outfile
             if not os.path.exists(v):
                 raise Exception(f"file should exist {v}")
 
-            self.assertEqual(v, f"{pid}/output/{task.key}/{f}")
+            self.assertEqual(os.path.abspath(v), f"{pid}/output/{task.key}/{f}")
 
         python_much_fancier_report_1 = query_single("python_much_fancier_report.1")
         check_out_file(
-            python_much_fancier_report_1, python_much_fancier_report_1.out.much_fancier_report, "fancier_report1.txt"
+            python_much_fancier_report_1, python_much_fancier_report_1.outputs.much_fancier_report, "fancier_report1.txt"
         )
 
         self.assertEqual(python_much_fancier_report_1.inputs.fancy_int, 1)
@@ -293,14 +293,14 @@ class NonTrivialPipelineLocalContainerlessTests(WithManyConfigCombinationsTests)
 
         self.assertEqual(f"{pid}/human.fasta", blast_1.inputs.subject)
 
-        check_out_file(blast_1, blast_1.out.blast_out, "human_chimp_blast.tsv")
-        self.assertEqual(blast_1.out.v1.fetch(), 1111)
-        self.assertEqual(blast_1.out.v2.fetch(), 3.14)
+        check_out_file(blast_1, blast_1.outputs.blast_out, "human_chimp_blast.tsv")
+        self.assertEqual(int(blast_1.outputs.v1), 1111)
+        self.assertEqual(float(blast_1.outputs.v2), 3.14)
 
         report = query_single("report")
 
-        self.assertEqual(report.out.x.fetch(), 9876)
-        self.assertEqual(report.out.s1.fetch(), 'abc')
+        self.assertEqual(int(report.outputs.x), 9876)
+        self.assertEqual(str(report.outputs.s1), 'abc')
 
         os.environ["test_non_trivial_local_containerless"] = pid
 
@@ -308,7 +308,7 @@ class NonTrivialPipelineLocalContainerlessTests(WithManyConfigCombinationsTests)
 
         blast_1 = [t for t in pipeline_instance.query("blast.1").tasks][0]
 
-        self.assertEqual(blast_1.out.v1.fetch(), 1111)
+        self.assertEqual(int(blast_1.outputs.v1), 1111)
 
 
 class NonTrivialPipelineLocalWithSingularityContainerTests(WithManyConfigCombinationsTests):

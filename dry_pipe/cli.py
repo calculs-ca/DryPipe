@@ -709,7 +709,7 @@ def call(ctx, mod_func, task_env):
         for task_input, k, v in resolve_upstream_and_constant_vars(os.environ["__pipeline_instance_dir"], tc_json, control_dir):
             inputs_by_name[k] = task_input.parse(v)
 
-        for k, f in iterate_file_task_outputs(tc_json, os.environ["__task_output_dir"]):
+        for o, k, f in iterate_file_task_outputs(tc_json, os.environ["__task_output_dir"]):
             file_outputs_by_name[k] = f
 
         for o in tc_json["outputs"]:

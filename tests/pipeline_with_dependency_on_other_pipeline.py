@@ -18,16 +18,16 @@ def pipeline_with_external_deps_dag_gen(
 
     if len(external_tasks2) != 1:
         raise Exception(f"expected 1 task, got {len(external_tasks2)}")
-    a = external_tasks2[0].out.a
-    f = external_tasks2[0].out.f
+    a = external_tasks2[0].outputs.a
+    f = external_tasks2[0].outputs.f
 
     for t in external_tasks1:
         yield dsl.task(
             key="t2"
         ).consumes(
-            r_upstream=t.out.r,
-            a_upstream=a,
-            f_upstream=f
+            r_upstream=dsl.val(int(t.outputs.r)),
+            a_upstream=dsl.val(str(a)),
+            f_upstream=dsl.val(str(f))
         ).produces(
             r=dsl.var(int),
             f=dsl.file("f.txt")
