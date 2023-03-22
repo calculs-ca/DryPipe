@@ -53,11 +53,12 @@ class Task:
 
                 self.task_conf = TaskConf.from_json(task_conf_json)
                 self.executer = self.task_conf.create_executer()
-                self.outputs = TaskOuputs(self, task_conf_json)
+                self.outputs = TaskOutputs(self, task_conf_json)
                 self.inputs = TaskInputs(self, task_conf_json)
             return
 
         self.inputs = TaskInputs(self)
+        self.outputs = TaskOutputs(self)
         self.python_bin = None
         self.conda_env = None
         self.key = task_builder.key
@@ -1255,7 +1256,7 @@ class TaskInputs:
         return p
 
 
-class TaskOuputs:
+class TaskOutputs:
 
     def __init__(self, task, task_conf_json=None):
         self.task = task
