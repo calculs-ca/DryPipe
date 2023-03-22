@@ -11,7 +11,7 @@ from itertools import groupby
 import textwrap
 
 from dry_pipe.script_lib import parse_in_out_meta, PortablePopen, FileCreationDefaultModes, \
-    TaskInput, TaskOutput
+    TaskInput, TaskOutput, resolve_upstream_and_constant_vars
 from dry_pipe import bash_shebang
 from dry_pipe.internals import \
     IndeterminateFile, ProducedFile, IncompleteVar, Val, \
@@ -56,8 +56,10 @@ class Task:
                 self.out = TaskOutRehydrated(
                     self, self.pipeline_instance.pipeline_instance_dir, task_conf_json
                 )
+                self.inputs = TaskInputs(self, task_conf_json)
             return
 
+        self.inputs = TaskInputs(self)
         self.python_bin = None
         self.conda_env = None
         self.key = task_builder.key
@@ -1206,6 +1208,53 @@ class TaskOut:
             raise ValidationError(
                 f"please refer to task produced vars with task.out.{name}, not task.{name}."
             )
+
+class TaskInputs:
+
+    def __init__(self, task, task_conf_json=None):
+        self.task = task
+        self.task_conf_json = task_conf_json
+        self._task_inputs = None
+
+    def _resolve(self):
+
+        task_state = self.task.get_state()
+
+        if not task_state.is_completed():
+            # TODO: relax the task completion constraint, only restrict access to non completed upstream vars
+            raise Exception(
+                f"called _resolve() on a non completed task, ensure task completed before accessing task inputs"
+            )
+
+        if self.task_conf_json is None:
+            task_conf_file = self.task.v_abs_task_conf_file()
+            with open(task_conf_file) as f:
+                task_conf_json = json.loads(f.read())
+        else:
+            task_conf_json = self.task_conf_json
+
+        self._task_inputs = {}
+
+        for task_input, k, v in resolve_upstream_and_constant_vars(
+            self.task.pipeline_instance.pipeline_instance_dir,
+            task_conf_json
+        ):
+            self._task_inputs[k] = task_input.parse(v)
+
+    def __getattr__(self, name):
+
+        if self._task_inputs is None:
+            self._resolve()
+
+        p = self._task_inputs.get(name)
+
+        if p is None:
+            raise ValidationError(
+                f"task {self.task} does not declare input '{name}' in it's consumes() clause.\n" +
+                f"Use task({self.task.key}).consumes({name}=...) to specify input"
+            )
+
+        return p
 
 class TaskOutRehydrated:
 

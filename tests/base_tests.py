@@ -5,6 +5,7 @@ import shutil
 import time
 import unittest
 
+import pipeline_with_single_bash_task
 import test_helpers
 from dry_pipe.internals import ValidationError, ProducedFile
 from dry_pipe import DryPipe, TaskConf, DryPipeDsl
@@ -238,11 +239,14 @@ class NonTrivialPipelineLocalContainerlessTests(WithManyConfigCombinationsTests)
 
     def test_task_query_language(self):
 
-        pid = os.path.join(
-            test_suite_base_dir(),
-            "sandboxes",
-            "NonTrivialPipelineLocalContainerlessTests.test_non_trivial_local_containerless"
+        d_dep1 = TestSandboxDir(self, "EXT_NonTrivialPipelineLocalContainerlessTests.test_non_trivial_local_containerless")
+        d_dep1.delete_and_recreate_sandbox()
+        d_dep1.pipeline_instance_from_generator(
+            simple_static_pipeline,
+            completed=True
         )
+
+        pid = d_dep1.sandbox_dir
 
         pipeline_instance = DryPipe.load_pipeline(pid)
 
@@ -277,7 +281,17 @@ class NonTrivialPipelineLocalContainerlessTests(WithManyConfigCombinationsTests)
 
             self.assertEqual(v, f"{pid}/output/{task.key}/{f}")
 
+        python_much_fancier_report_1 = query_single("python_much_fancier_report.1")
+        check_out_file(
+            python_much_fancier_report_1, python_much_fancier_report_1.out.much_fancier_report, "fancier_report1.txt"
+        )
+
+        self.assertEqual(python_much_fancier_report_1.inputs.fancy_int, 1)
+
+
         blast_1 = query_single("blast.1")
+
+        self.assertEqual(f"{pid}/human.fasta", blast_1.inputs.subject)
 
         check_out_file(blast_1, blast_1.out.blast_out, "human_chimp_blast.tsv")
         self.assertEqual(blast_1.out.v1.fetch(), 1111)
@@ -287,11 +301,6 @@ class NonTrivialPipelineLocalContainerlessTests(WithManyConfigCombinationsTests)
 
         self.assertEqual(report.out.x.fetch(), 9876)
         self.assertEqual(report.out.s1.fetch(), 'abc')
-
-        python_much_fancier_report_1 = query_single("python_much_fancier_report.1")
-        check_out_file(
-            python_much_fancier_report_1, python_much_fancier_report_1.out.much_fancier_report, "fancier_report1.txt"
-        )
 
         os.environ["test_non_trivial_local_containerless"] = pid
 

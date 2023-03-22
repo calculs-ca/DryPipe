@@ -10,7 +10,7 @@ import pipeline_with_variable_passing
 import pipeline_with_two_python_tasks
 import pipeline_with_multistep_tasks_with_shared_vars
 
-from dry_pipe import TaskConf
+from dry_pipe import TaskConf, DryPipe
 from dry_pipe.script_lib import iterate_task_env
 from pipeline_with_dependency_on_other_pipeline import pipeline_with_external_deps_dag_gen
 from test_utils import TestSandboxDir
@@ -169,3 +169,40 @@ class MinimalistPipelinesTests(unittest.TestCase):
         )
 
         pipeline_with_kwargs_consuming_task.validate(self, pipeline_instance)
+
+
+    def test_refer_to_task_constant_inputs(self):
+
+        d = TestSandboxDir(self)
+
+        d.pipeline_instance_from_generator(
+            pipeline_with_single_bash_task.pipeline,
+            completed=True
+        )
+
+        pipeline_instance = DryPipe.load_pipeline(d.sandbox_dir)
+
+        multiply_x_by_y = pipeline_instance.query("multiply_x_by_y").single()
+
+        self.assertEqual(3, multiply_x_by_y.inputs.x)
+
+    def test_refer_to_task_upstream_inputs(self):
+        d = TestSandboxDir(self)
+
+        pipeline_instance_1 = d.pipeline_instance_from_generator(
+            pipeline_with_two_python_tasks.pipeline,
+            completed=True
+        )
+
+        def validate(task_t2):
+            self.assertEqual(task_t2.inputs.x, 12)
+            self.assertEqual(task_t2.inputs.z, 34)
+
+        # validate "original" instance
+        validate(pipeline_instance_1.tasks["t2"])
+
+        # validate loaded instance
+        validate(DryPipe.load_pipeline(d.sandbox_dir).query("t2").single())
+
+
+
