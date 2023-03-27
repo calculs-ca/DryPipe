@@ -331,17 +331,7 @@ def run(
             janitor.request_shutdown()
         cli_screen.request_quit()
 
-    if web_mon:
-        from dry_pipe.websocket_server import WebsocketServer
-        from dry_pipe.server import PipelineUIServer
-        server = PipelineUIServer.init_single_pipeline_instance(pipeline_instance.get_state())
-        server.start()
-
-        WebsocketServer.start(bind, port, instances_dir_if_has_local_janitor=pipeline_instance.pipeline_instance_dir)
-        # Stopping threads break CTRL+C, let the threads die with the process exit
-        #server.stop()
-        #janitor.do_shutdown()
-    elif headless:
+    if headless:
         signal.signal(signal.SIGINT, _sigint)
         signal.pause()
         logging.shutdown()
@@ -619,41 +609,6 @@ def _validate_task_generator_callable_with_single_dsl_arg_and_get_module_file(ta
                         f" was given {len(a.parameters)} args")
 
     return f
-
-
-@click.command()
-@click.pass_context
-@click.option(
-    '--instances-dir-to-pipelines',
-    type=click.STRING,
-    required=True,
-    help="""
-    dir1=module1:func1,...,dirN=moduleN:funcN    
-      + moduleX:funcX is a function that returns a dry_pipe.Pipeline    
-      + dirX is the parent directory where all pipeline_instance_dirs of PipelineX will reside  
-    """
-)
-@click.option('--bind', default="0.0.0.0", help="bind address for --web-mon")
-@click.option('--port', default=5000)
-def serve_ui(ctx, instances_dir_to_pipelines, bind, port):
-    from dry_pipe.websocket_server import WebsocketServer
-
-    _configure_logging(None)
-
-    def g():
-        for t in instances_dir_to_pipelines.split(","):
-
-            instances_dir, mod_func = t.split("=")
-
-            if not os.path.exists(instances_dir):
-                pathlib.Path(instances_dir).mkdir(parents=True, mode=FileCreationDefaultModes.pipeline_instance_directories)
-
-            pipeline = Pipeline.load_from_module_func(mod_func)
-            yield instances_dir, pipeline
-
-    WebsocketServer.start(bind, port, dict(g()))
-
-    os._exit(0)
 
 
 def _func_from_mod_func(mod_func):
@@ -950,7 +905,6 @@ def _register_commands():
     cli_group.add_command(test)
     cli_group.add_command(status)
     cli_group.add_command(watch)
-    cli_group.add_command(serve_ui)
     cli_group.add_command(clean)
     cli_group.add_command(stats)
     cli_group.add_command(reset)
