@@ -717,7 +717,7 @@ def resolve_container_path(container):
 
     return resolved_path
 
-def run_script(script, container=None):
+def run_script(task_conf_dict, script, container=None):
 
     env = {**os.environ}
 
@@ -858,7 +858,7 @@ def launch_task_from_remote(task_key, is_slurm, wait_for_completion, drypipe_tas
                 print(str(p.popen.returncode))
 
 
-def handle_main(task_func):
+def handle_main():
     is_kill_command = "kill" in sys.argv
     is_tail_command = "tail" in sys.argv
     wait_for_completion = "--wait" in sys.argv
@@ -869,7 +869,7 @@ def handle_main(task_func):
     is_run_command = not (is_tail_command or is_ps_command or is_kill_command or is_env)
 
     if is_run_command:
-        _launch_task(task_func, wait_for_completion)
+        _launch_task(wait_for_completion)
     else:
 
         def quit_command(p1, p2):
@@ -1002,13 +1002,35 @@ def _tail_command():
     with PortablePopen(tail_cmd, stdout=sys.stdout, stderr=sys.stderr, stdin=sys.stdin) as p:
         p.wait()
 
+def _run_steps(task_conf_dict):
 
-def _launch_task(task_func, wait_for_completion):
+    step_number, control_dir, state_file, state_name = read_task_state()
+    step_invocations = task_conf_dict["step_invocations"]
 
+    for i in range(step_number, len(step_invocations)):
+
+        step_invocation = step_invocations[i]
+        state_file, step_number = transition_to_step_started(state_file, step_number)
+
+        call = step_invocation["call"]
+
+        if call == "python":
+            run_python(task_conf_dict, step_invocation["module_function"], step_invocation.get("container"))
+        elif call == "bash":
+            run_script(task_conf_dict, os.path.expandvars(step_invocation["script"]), step_invocation.get("container"))
+        else:
+            raise Exception(f"unknown step invocation type: {call}")
+
+        state_file, step_number = transition_to_step_completed(state_file, step_number)
+
+    transition_to_completed(state_file)
+
+def _launch_task(wait_for_completion):
+    task_conf_dict = load_task_conf_dict()
     def task_func_wrapper():
         try:
             logger.debug("task func started")
-            task_func()
+            _run_steps(task_conf_dict)
             logger.info("task completed")
         except Exception as ex:
             logger.exception(ex)
@@ -1277,9 +1299,7 @@ def detect_process_crashes():
 
 def handle_script_lib_main():
 
-    if "gen-input-var-exports" in sys.argv:
-        _deprecate_gen_input_var_exports()
-    elif "launch-task-from-remote" in sys.argv:
+    if "launch-task-from-remote" in sys.argv:
         task_key = sys.argv[2]
         is_slurm = "--is-slurm" in sys.argv
         wait_for_completion = "--wait-for-completion" in sys.argv

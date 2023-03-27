@@ -540,6 +540,11 @@ class Task:
             else:
                 raise Exception("collect_deps_and_outputs(None, None)")
 
+        step_invocations = [
+            self.task_steps[step_number].get_invocation(self, step_number)
+            for step_number in range(0, len(self.task_steps))
+        ]
+
         task_conf_file = self.v_abs_task_conf_file()
 
         with open(task_conf_file, "w") as f:
@@ -552,6 +557,8 @@ class Task:
             task_conf_json["outputs"] = [
                 o.as_json() for o in self._output_meta_data()
             ]
+
+            task_conf_json["step_invocations"] = step_invocations
 
             f.write(json.dumps(task_conf_json, indent=2))
 
@@ -577,19 +584,7 @@ class Task:
 
         with open(shell_script_file, "w") as f:
             f.write(task_script_header())
-            f.write("task_conf_dict = script_lib.load_task_conf_dict()\n")
-
-            f.write("\n\ndef go():\n")
-            f.write("\n    step_number, control_dir, state_file, state_name = script_lib.read_task_state()\n")
-
-            step_number = 0
-            for task_step in self.task_steps:
-                task_step.write_invocation(f, self, step_number)
-                step_number += 1
-
-            f.write('    script_lib.transition_to_completed(state_file)\n\n\n')
-
-            f.write('script_lib.handle_main(go)\n')
+            f.write('script_lib.handle_main()\n')
             f.write('logging.shutdown()\n')
 
         os.chmod(shell_script_file, FileCreationDefaultModes.pipeline_instance_scripts)
@@ -1129,56 +1124,38 @@ class TaskStep:
         self.python_call = python_call
         self.shell_snippet = shell_snippet
 
-    def write_invocation(self, file_writer, task, step_number):
+    def get_invocation(self, task, step_number):
 
         container = self.task_conf.container
-        python_bin = self.task_conf.python_bin
-
-        file_writer.write(f"\n    if step_number <= {step_number}:\n")
-
-        def indented_line(line):
-            file_writer.write("        ")
-            file_writer.write(line)
-            file_writer.write("\n")
-
-        indented_line(
-            'state_file, step_number = script_lib.transition_to_step_started(state_file, step_number)'
-        )
-
-        if container is None:
-            container_arg = ""
-        else:
-            container_arg = f",'{container}'"
 
         if self.python_call is not None:
-            indented_line(
-                f"script_lib.run_python(task_conf_dict, '{self.python_call.mod_func()}'{container_arg})"
-            )
+            call = {
+                "call": "python",
+                "module_function": self.python_call.mod_func()
+            }
         else:
             if self.shell_snippet is not None:
                 script_or_snippet_file = \
-                    f"os.path.join(os.environ['__pipeline_instance_dir'], '{task.step_script_file(step_number)}')"
+                    f"$__pipeline_instance_dir/{task.step_script_file(step_number)}"
                 step_script = task.v_abs_step_script_file(step_number)
                 with open(step_script, "w") as _step_script:
                     _step_script.write(self.shell_snippet)
                 os.chmod(step_script, 0o764)
             elif self.shell_script is not None:
-                script_or_snippet_file = f"os.path.join(os.environ['__pipeline_code_dir'], '{self.shell_script}')"
+                script_or_snippet_file = f"$__pipeline_code_dir/{self.shell_script}"
             else:
                 raise Exception("shouldn't have got here")
 
-            indented_line(f"script_lib.run_script({script_or_snippet_file}{container_arg})")
+            call = {
+                "call": "bash",
+                "script": script_or_snippet_file
+            }
 
-        indented_line(
-            'state_file, step_number = script_lib.transition_to_step_completed(state_file, step_number)'
-        )
 
-        is_last_step = step_number == (len(task.task_steps) - 1)
+        if container is not None:
+            call["container"] = container
 
-        if is_last_step:
-            indented_line("script_lib.sign_files()")
-
-        file_writer.write("\n")
+        return call
 
 
 class TaskOut:
