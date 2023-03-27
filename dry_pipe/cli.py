@@ -859,7 +859,7 @@ def stats(ctx, instance_dir, no_header, units):
 
 @click.command()
 @click.pass_context
-@click.option('-p', '--pipeline', help="a_module:a_func, a function that returns a pipeline.")
+@click.option('-p', '--pipeline', help="a_module:a_func, a function that returns a pipeline.", envvar="DRYPIPE_PIPELINE")
 def prepare_remote_sites(ctx, pipeline):
 
     pipeline_spec = pipeline
