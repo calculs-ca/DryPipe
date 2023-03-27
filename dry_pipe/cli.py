@@ -14,7 +14,7 @@ import time
 import traceback
 
 import click
-from dry_pipe import DryPipe
+from dry_pipe import DryPipe, Task
 from dry_pipe.internals import PythonCall
 from dry_pipe.janitors import Janitor
 from dry_pipe.monitoring import fetch_task_groups_stats
@@ -23,7 +23,7 @@ from dry_pipe.pipeline_state import PipelineState
 from dry_pipe.script_lib import create_task_logger, iterate_out_vars_from, \
     write_out_vars, FileCreationDefaultModes, TaskInput, TaskOutput, iterate_task_env, iterate_file_task_outputs, \
     resolve_upstream_and_constant_vars
-from dry_pipe.task_state import NON_TERMINAL_STATES
+from dry_pipe.task_state import NON_TERMINAL_STATES, TaskState
 
 logger = logging.getLogger(__name__)
 
@@ -234,6 +234,18 @@ def mon(pipeline, instance_dir, group_by):
 @click.option('--reset-failed', is_flag=True)
 @click.option('--no-confirm', is_flag=True)
 @click.option('--logging-conf', type=click.Path(), default=None, help="log configuration file (json)")
+@click.option(
+    '--queue-only', type=click.STRING, default=None,
+    help="""
+        will queue (instead of launching) tasks.
+        A list comma separated list of matchers can be given to restrict launching only of the matching tasks, ex:
+        --queue-only=my_serious_tasks*,other_tasks*
+    """
+)
+@click.option('--queued-tasks-only', type=click.INT, is_flag=False, flag_value=-1, help="""
+    --queued-tasks-only=N 
+    will launch up to N queues tasks
+""")
 @click.option('--env', type=click.STRING, default=None)
 @click.option(
     '--group-by', type=click.STRING, default="by_task_type",
@@ -248,10 +260,11 @@ def mon(pipeline, instance_dir, group_by):
     example: --regex-grouper=.*\_(\w)\.(\d),group-{0}-{1}
     """
 )
+@click.option('--headless', is_flag=True, default=False)
 def run(
     pipeline, instance_dir, web_mon, port, bind,
     clean, single, restart, restart_failed, restart_killed, reset_failed,
-    no_confirm, logging_conf, env, regex_grouper, group_by
+    no_confirm, logging_conf, queue_only, queued_tasks_only, env, regex_grouper, group_by, headless
 ):
 
     _configure_logging(logging_conf)
@@ -281,30 +294,42 @@ def run(
         launch_single(pipeline_instance, single)
         return
 
+    if queued_tasks_only is not None:
+        _launched_queued_tasks(instance_dir, n=None if queued_tasks_only == -1 else queued_tasks_only)
+        return
+
     pipeline_instance.regen_tasks_if_stale(force=True)
 
-    for task in pipeline_instance.tasks:
-        task_state = task.get_state()
-        if task_state is not None:
+    if restart or restart_failed or restart_killed:
+        for task in pipeline_instance.tasks:
+            task_state = task.get_state()
+            if task_state is not None:
+                if (task_state.is_failed() or task_state.is_killed()) and not task.has_unsatisfied_deps():
+                    task.prepare()
 
-            if (task_state.is_failed() or task_state.is_killed()) and not task.has_unsatisfied_deps():
-                task.prepare()
-
-                if restart:
-                    task.re_queue()
-                elif restart_failed and task_state.is_failed():
-                    task.re_queue()
-                elif restart_killed and task_state.is_killed():
-                    task.re_queue()
+                    if restart:
+                        task.re_queue()
+                    elif restart_failed and task_state.is_failed():
+                        task.re_queue()
+                    elif restart_killed and task_state.is_killed():
+                        task.re_queue()
 
     janitor = Janitor(
         pipeline_instance=pipeline_instance,
         min_sleep=0,
-        max_sleep=5
+        max_sleep=5,
+        queue_only=queue_only
     )
 
     janitor.start()
     janitor.start_remote_janitors()
+
+    def _sigint(p1, p2):
+        logger.info("received SIGINT")
+
+        if janitor is not None:
+            janitor.request_shutdown()
+        cli_screen.request_quit()
 
     if web_mon:
         from dry_pipe.websocket_server import WebsocketServer
@@ -316,6 +341,11 @@ def run(
         # Stopping threads break CTRL+C, let the threads die with the process exit
         #server.stop()
         #janitor.do_shutdown()
+    elif headless:
+        signal.signal(signal.SIGINT, _sigint)
+        signal.pause()
+        logging.shutdown()
+        exit(0)
     else:
         from dry_pipe.cli_screen import CliScreen
 
@@ -334,16 +364,9 @@ def run(
         )
 
         cli_screen.start()
-        def _sigint(p1, p2):
-            logger.info("received SIGINT")
-
-            if janitor is not None:
-                janitor.request_shutdown()
-            cli_screen.request_quit()
 
         signal.signal(signal.SIGINT, _sigint)
         signal.pause()
-
         logging.shutdown()
         exit(0)
 
@@ -384,9 +407,9 @@ def _display_grouper_func_from_spec(display_grouper):
     return  _regex_display_grouper
 
 
-def launch_single(pipeline, single):
+def launch_single(pipeline_instance, single):
 
-    task = pipeline.tasks.get(single)
+    task = pipeline_instance.tasks.get(single)
 
     if task is None:
         raise Exception(f"pipeline has no task with key '{single}'")
@@ -399,6 +422,35 @@ def launch_single(pipeline, single):
     task_state.transition_to_completed(task)
 
     print(f"Task {single} completed.")
+
+
+def _launched_queued_tasks(pipeline_instance_dir, n=None):
+
+    class ShallowPipelineInstance:
+        def __init__(self):
+            self.pipeline_instance_dir = pipeline_instance_dir
+
+    task_states = sorted([
+        s for s in TaskState.queued_task_states(ShallowPipelineInstance())
+    ], key=lambda s: s.task_key)
+
+    if n is None:
+        task_states_to_launch = task_states
+    else:
+        task_states_to_launch = task_states[:n]
+
+    c = 0
+    for task_state in task_states_to_launch:
+        task = Task.load_from_task_state(task_state)
+        task_state.transition_to_launched(task.task_conf.create_executer(), task)
+        print(f"task {task.key} launched")
+        c += 1
+
+    if c == 0:
+        print("there were no queued tasks to launch")
+    else:
+        print(f"{c} tasks were launched")
+
 
 
 @click.command()

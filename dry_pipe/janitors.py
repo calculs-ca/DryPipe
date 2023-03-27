@@ -1,3 +1,4 @@
+import fnmatch
 import logging
 import time
 from datetime import datetime
@@ -145,7 +146,7 @@ class DaemonThreadHelper:
 class Janitor:
 
     def __init__(
-        self, pipeline_instance=None, pipeline_instances_iterator=None, min_sleep=0, max_sleep=5
+        self, pipeline_instance=None, pipeline_instances_iterator=None, min_sleep=0, max_sleep=5, queue_only=None
     ):
 
         if pipeline_instance is not None and pipeline_instances_iterator is not None:
@@ -162,6 +163,7 @@ class Janitor:
         self.min_sleep = min_sleep
         self.max_sleep = max_sleep
         self._shutdown = False
+        self.queue_only = queue_only
 
     def request_shutdown(self):
         self._shutdown = True
@@ -176,6 +178,18 @@ class Janitor:
         daemon_thread_helper = DaemonThreadHelper(
             main_d_logger, self.min_sleep, self.max_sleep, self.pipelines, sync_mode
         )
+
+        def queue_only_func(task_key):
+            if self.queue_only is None:
+                return False
+            if self.queue_only == "*":
+                return True
+
+            r = fnmatch.fnmatch(task_key, self.queue_only)
+
+            daemon_thread_helper.logger.debug("%s --> %s", task_key, r)
+
+            return r
 
         while True:
 
@@ -197,7 +211,8 @@ class Janitor:
                         pipeline_instance,
                         wait_for_completion=sync_mode,
                         fail_silently=fail_silently,
-                        daemon_thread_helper=daemon_thread_helper
+                        daemon_thread_helper=daemon_thread_helper,
+                        queue_only_func=queue_only_func
                     )
 
                     if sync_mode:
@@ -302,7 +317,7 @@ class Janitor:
         return dtread, utread
 
 
-def _janitor_ng(pipeline_instance, wait_for_completion=False, fail_silently=False, daemon_thread_helper=None):
+def _janitor_ng(pipeline_instance, wait_for_completion=False, fail_silently=False, daemon_thread_helper=None, queue_only_func=None):
 
     pipeline_instance.regen_tasks_if_stale()
 
@@ -365,8 +380,9 @@ def _janitor_ng(pipeline_instance, wait_for_completion=False, fail_silently=Fals
 
                     currently_running += 1
 
-                executer = daemon_thread_helper.get_executer(task.task_conf)
-                task_state.transition_to_launched(executer, task, wait_for_completion, fail_silently=fail_silently)
+                if not queue_only_func(task.key):
+                    executer = daemon_thread_helper.get_executer(task.task_conf)
+                    task_state.transition_to_launched(executer, task, wait_for_completion, fail_silently=fail_silently)
 
     if total_tasks == tasks_completed:
         pipeline_state = pipeline_instance.get_state()
