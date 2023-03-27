@@ -220,8 +220,8 @@ def mon(pipeline, instance_dir, group_by):
 
 
 @click.command()
-@click.option('-p', '--pipeline', help="a_module:a_func, a function that returns a pipeline.")
-@click.option('--instance-dir', type=click.Path(), default=None)
+@click.option('-p', '--pipeline', help="a_module:a_func, a function that returns a pipeline.", envvar="DRYPIPE_PIPELINE")
+@click.option('--instance-dir', type=click.Path(), default=None, envvar="DRYPIPE_INSTANCE_DIR")
 @click.option('--web-mon', is_flag=True)
 @click.option('--port', default=5000, help="port for --web-mon")
 @click.option('--bind', default="0.0.0.0", help="bind address for --web-mon")
@@ -855,49 +855,34 @@ def call(ctx, mod_func, task_env):
 
 @click.command()
 @click.pass_context
-@click.option('--downstream-of', type=click.STRING)
-@click.option('--not-matching', type=click.STRING)
-@click.option('--matching', type=click.STRING)
-@click.option('--instance-dir', type=click.Path(), default=None)
-def reset(ctx, downstream_of, not_matching, matching, instance_dir):
+@click.argument('glob_pattern')
+@click.option('--instance-dir', type=click.Path(), default=None, envvar="DRYPIPE_INSTANCE_DIR")
+@click.option('--force', is_flag=False)
+def reset(ctx, glob_pattern, instance_dir, force):
 
-    pipeline_func = ctx.obj["pipeline_func"]
+    def delete_task(task_key):
+        shutil.rmtree(os.path.join(instance_dir, ".drypipe", task_key), ignore_errors=False)
+        shutil.rmtree(os.path.join(instance_dir, "output", task_key), ignore_errors=False)
+        print(f"{task_key} deleted")
 
-    pipeline = _pipeline_from_pipeline_func(pipeline_func, instance_dir)
+    all = force
+    c = 0
+    for t in glob.glob(os.path.join(instance_dir, ".drypipe", glob_pattern)):
+        c += 1
+        task_key = os.path.basename(t)
+        if all:
+            delete_task(task_key)
+        else:
+            response = click.prompt(f"delete task {task_key} ?", type=click.Choice(['y', 'n', 'all']))
+            if response == "all":
+                all = True
+                delete_task(task_key)
+            elif response == "y":
+                delete_task(task_key)
 
-    if matching is not None or not_matching is not None:
+    if c == 0:
+        print(f"no tasks matched {glob_pattern}")
 
-        if matching is not None and not_matching is not None:
-            raise Exception("--matching and --not-matching can't be both specified")
-
-        def do_reset(key):
-            if matching is not None:
-                return re.match(matching, key)
-            return not re.match(not_matching, key)
-
-        for task in pipeline.tasks:
-            if do_reset(task.key):
-                if click.confirm(f"reset {task.key} ?"):
-                    task.clean()
-                    print(f"{task.key} reset")
-
-    elif downstream_of is not None:
-
-        after_task_including = pipeline.tasks.get(downstream_of)
-
-        if after_task_including is None:
-            raise Exception(f"pipeline has no task with key '{downstream_of}'")
-
-        def all_upstream_deps(task):
-            yield task
-            for upstream_task, _1, _2 in task.upstream_deps_iterator():
-                for t in all_upstream_deps(upstream_task):
-                    yield t
-
-        raise Exception("not implemented")
-    else:
-        if click.confirm("reset all tasks ?"):
-            print("boom")
 
 @click.command()
 @click.pass_context
