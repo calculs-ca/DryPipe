@@ -1263,6 +1263,12 @@ class TaskOutputs:
         self.task_conf_json = task_conf_json
         self._task_outputs = None
 
+    def __iter__(self):
+        if self._task_outputs is None:
+            self._resolve()
+
+        yield from self._task_outputs
+
     def _resolve(self):
 
         task_state = self.task.get_state()

@@ -1,13 +1,15 @@
 import collections
+import glob
 import inspect
 import json
 import os
 import re
 import sys
+import tempfile
 import textwrap
 from fnmatch import fnmatch
 
-from dry_pipe.script_lib import PortablePopen, parse_ssh_specs
+from dry_pipe.script_lib import PortablePopen, parse_ssh_specs, invoke_rsync
 from dry_pipe.utils import bash_shebang
 from dry_pipe.internals import \
     Executor, Local, PreExistingFile, IndeterminateFile, ProducedFile, \
@@ -143,11 +145,12 @@ class TaskMatchAll:
 
 
 class TaskMatch:
-    def __init__(self, pattern, tasks):
+    def __init__(self, pattern, tasks, pipeline_instance=None):
         self.pattern = pattern
         self.tasks = tasks
         self.tasks_by_key = {t.key: t for t in tasks}
         self.all = TaskMatchAll(self)
+        self.pipeline_instance = pipeline_instance
 
     def __iter__(self):
         if len(self.tasks) == 0:
@@ -168,6 +171,34 @@ class TaskMatch:
         if len(self.tasks) == 1:
             return self.tasks[0]
         return None
+
+    def rsync_tasks(self, dst_pipeline_instance_dir, tmp_file_list=None):
+
+        def go(file_list):
+            with open(file_list, "w") as _file_list:
+                for task in self.tasks:
+                    def write_file(f):
+                        _file_list.write(f"{f}\n")
+
+                    for f in glob.glob(os.path.join(task.control_dir(), "*")):
+                        write_file(f)
+
+                    for o in task.outputs:
+                        if o.type == "file":
+                            write_file(os.path.join(task.work_dir(), o.produced_file_name))
+
+            src = self.pipeline_instance.pipeline_instance_dir
+
+            cmd = f"rsync -caRz --partial --recursive --files-from={file_list} " + \
+                f"{src}/ {dst_pipeline_instance_dir}"
+
+            invoke_rsync(cmd)
+
+        if tmp_file_list is None:
+            with tempfile.NamedTemporaryFile() as file_list:
+                go(file_list)
+        else:
+            go(tmp_file_list)
 
 
 class DryPipeDsl:

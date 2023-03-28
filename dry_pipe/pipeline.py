@@ -696,7 +696,7 @@ class RehydratedPipelineInstance:
         return TaskMatch(task_key_pattern, [
             Task.load_from_task_state(TaskState(state_file))
             for state_file in glob.glob(p)
-        ])
+        ], self)
 
 
 SLURM_SQUEUE_FORMAT_SPEC = "%A %L %j %l %T"
