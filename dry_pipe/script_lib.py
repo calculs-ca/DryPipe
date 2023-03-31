@@ -1,9 +1,12 @@
+import fnmatch
 import glob
 import json
 import os
+import shutil
 import signal
 import subprocess
 import sys
+import tarfile
 import textwrap
 import logging
 import logging.config
@@ -798,6 +801,44 @@ def run_script(script, container=None):
             step_number, control_dir, state_file, state_name = read_task_state()
             _transition_state_file(state_file, "failed", step_number)
             _exit_process()
+
+
+def archive_produced_files(task_output_dir, exclusion_glob_patterns):
+
+    archive_tar_name = "drypipe-archive.tar.gz"
+    archive_tar = os.path.join(task_output_dir, archive_tar_name)
+
+    if os.path.exists(archive_tar):
+        return False
+
+    def matches_one_pattern(f_name):
+        for p in exclusion_glob_patterns:
+            if fnmatch.fnmatch(f_name, p):
+                return True
+
+    def gen_to_archive():
+        with os.scandir(task_output_dir) as files_in_output_dir:
+            for f in files_in_output_dir:
+                if not (f.name == archive_tar_name or matches_one_pattern(f.name)):
+                    yield f.name
+
+    files_to_archive = list(gen_to_archive())
+
+    to_delete = []
+
+    with tarfile.open(archive_tar, "w:gz") as tar:
+        for f in files_to_archive:
+            f0 = os.path.join(task_output_dir, f)
+            tar.add(f0, arcname=f)
+            to_delete.append(f0)
+
+    for f in to_delete:
+        if os.path.isdir(f):
+            shutil.rmtree(f)
+        else:
+            os.remove(f)
+
+    return True
 
 
 def launch_task_from_remote(task_key, is_slurm, wait_for_completion, drypipe_task_debug):
