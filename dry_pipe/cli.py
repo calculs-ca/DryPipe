@@ -324,20 +324,25 @@ def run(
     janitor.start()
     janitor.start_remote_janitors()
 
-    def _sigint(p1, p2):
-        logger.info("received SIGINT")
-
-        if janitor is not None:
-            janitor.request_shutdown()
-        cli_screen.request_quit()
-
     if headless:
+        def _sigint(p1, p2):
+            logger.info("received SIGINT")
+
+            if janitor is not None:
+                janitor.request_shutdown()
+
         signal.signal(signal.SIGINT, _sigint)
         signal.pause()
         logging.shutdown()
         exit(0)
     else:
         from dry_pipe.cli_screen import CliScreen
+        def _sigint(p1, p2):
+            logger.info("received SIGINT")
+
+            if janitor is not None:
+                janitor.request_shutdown()
+            cli_screen.request_quit()
 
         def _quit_listener(cli_screen):
             logger.debug("quit listener")
