@@ -302,6 +302,9 @@ class NonTrivialPipelineLocalContainerlessTests(WithManyConfigCombinationsTests)
         self.assertEqual(int(report.outputs.x), 9876)
         self.assertEqual(str(report.outputs.s1), 'abc')
 
+        self.assertEqual(f"s-{report.outputs.x}", f"s-9876")
+        self.assertEqual(f"s-{report.outputs.s1}", f"s-abc")
+
         os.environ["test_non_trivial_local_containerless"] = pid
 
         pipeline_instance = DryPipe.load_pipeline("$test_non_trivial_local_containerless")
