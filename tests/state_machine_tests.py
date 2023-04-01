@@ -11,7 +11,7 @@ class TaskMockup:
     def __init__(self, key, upstream_dep_keys=[]):
         self.key = key
         self.upstream_dep_keys = upstream_dep_keys
-        self.inputs = [1,5,4]
+        self.inputs = [1, 5, 4]
 
     def cause_change_of_hash_code(self, data):
         self.inputs.append(data)
@@ -22,9 +22,16 @@ class TaskMockup:
     def save(self, pipeline_instance_dir, hash_code):
         task_control_dir = Path(pipeline_instance_dir, ".drypipe", self.key)
         task_control_dir.mkdir(exist_ok=True, parents=True)
+        inputs = [
+            {
+                "upstream_task_key": k
+            }
+            for k in self.upstream_dep_keys
+        ]
         with open(os.path.join(task_control_dir, "task-conf.json"), "w") as tc:
             tc.write(json.dumps({
-                "hash_code": hash_code
+                "hash_code": hash_code,
+                "inputs": inputs
             }))
 
 
@@ -78,7 +85,7 @@ class StateMachineTester:
             self.state_file_tracker = state_file_tracker
         else:
             self.state_file_tracker = StateFileTrackerMockup()
-        self.janitor = StateMachine(self.state_file_tracker)
+        self.state_machine = StateMachine(self.state_file_tracker, dag_gen)
         self.dag_gen = dag_gen
         self.list_of_ready_state_files = []
 
@@ -86,10 +93,10 @@ class StateMachineTester:
         self.state_file_tracker.set_completed_on_disk(task_key)
 
     def new_iterator(self):
-        return iter(self.janitor.iterate_tasks_to_launch(self.dag_gen))
+        return iter(self.state_machine.iterate_tasks_to_launch())
 
     def iterate_once_and_mutate_set_of_next_state_files_ready(self):
-        self.list_of_ready_state_files = list(self.janitor.iterate_tasks_to_launch(self.dag_gen))
+        self.list_of_ready_state_files = list(self.state_machine.iterate_tasks_to_launch())
 
     def assert_set_of_next_tasks_ready(self, *expected_task_keys):
         expected_task_keys = set(expected_task_keys)
@@ -118,7 +125,7 @@ class StateMachineTester:
         for waiting_task_key, upstream_task_keys in waiting_task_keys_to_upstream_task_keys.items():
             upstream_task_keys = set(upstream_task_keys)
             computed_waiting_task_keys = \
-                self.janitor.keys_of_waiting_tasks_to_set_of_incomplete_upstream_task_keys.get(waiting_task_key)
+                self.state_machine.keys_of_waiting_tasks_to_set_of_incomplete_upstream_task_keys.get(waiting_task_key)
 
             if computed_waiting_task_keys is None:
                 computed_waiting_task_keys = set()
@@ -130,17 +137,29 @@ class StateMachineTester:
                 )
 
     def assert_completed_task_keys(self, *task_keys):
-        self.test_case.assertEqual(self.janitor.set_of_completed_task_keys(), set(task_keys))
+        self.test_case.assertEqual(self.state_machine.set_of_completed_task_keys(), set(task_keys))
 
 
     @staticmethod
-    def create_scenario(test_case, dependency_graph, state_file_tracker=None):
+    def create_scenario(test_case, dependency_graph, state_file_tracker=None, save_dag_and_restart=False):
 
         def dag_gen():
             for task_key, upstream_task_keys in dependency_graph.items():
                 yield TaskMockup(task_key, upstream_task_keys)
 
-        return [StateMachineTester(test_case, dag_gen, state_file_tracker)] + list(dag_gen())
+        if not save_dag_and_restart:
+            return [StateMachineTester(test_case, dag_gen, state_file_tracker)] + list(dag_gen())
+        else:
+            if isinstance(state_file_tracker, StateFileTrackerMockup):
+                raise Exception(f"can't have save_dag_and_restart with mockup tracker")
+
+            tester = StateMachineTester(test_case, dag_gen, state_file_tracker)
+            tester.iterate_once_and_mutate_set_of_next_state_files_ready()
+
+            tester = StateMachineTester(test_case, None, state_file_tracker)
+            tester.state_machine.load_from_instance_dir()
+            return [tester] + list(dag_gen())
+
 
 class StateFileTrackerTester:
 
@@ -221,12 +240,12 @@ class StateFileTrackerTests(unittest.TestCase):
 
 class StateMachineTests(unittest.TestCase):
 
-    def _test_state_machine_00(self, state_file_tracker):
+    def _test_state_machine_00(self, state_file_tracker, save_dag_and_restart=False):
         tester = StateMachineTester.create_scenario(self, {
             "t1": [],
             "t2": ["t1"],
             "t3": ["t2"]
-        }, state_file_tracker)[0]
+        }, state_file_tracker, save_dag_and_restart)[0]
 
         # mutate
         tester.iterate_once_and_mutate_set_of_next_state_files_ready()
@@ -268,13 +287,13 @@ class StateMachineTests(unittest.TestCase):
         tester.assert_set_of_next_tasks_ready(*[])
 
 
-    def _test_state_machine_01(self, state_file_tracker):
+    def _test_state_machine_01(self, state_file_tracker, save_dag_and_restart=False):
 
         tester = StateMachineTester.create_scenario(self, {
             "t1": [],
             "t2": ["t1"],
             "t3": ["t2"]
-        }, state_file_tracker)[0]
+        }, state_file_tracker, save_dag_and_restart)[0]
 
         # mutate
         tester.iterate_once_and_mutate_set_of_next_state_files_ready()
@@ -318,7 +337,7 @@ class StateMachineTests(unittest.TestCase):
             "t3": []
         })
 
-    def _test_state_machine_02(self, state_file_tracker):
+    def _test_state_machine_02(self, state_file_tracker, save_dag_and_restart=False):
 
         tester = StateMachineTester.create_scenario(self, {
             "t1": [],
@@ -326,7 +345,7 @@ class StateMachineTests(unittest.TestCase):
             "t3": ["t1", "t2"],
             "t4": ["t3"],
             "t5": []
-        }, state_file_tracker)[0]
+        }, state_file_tracker, save_dag_and_restart)[0]
 
         tester.iterate_once_and_mutate_set_of_next_state_files_ready()
 
@@ -343,12 +362,20 @@ class StateMachineTests(unittest.TestCase):
 
         tester.set_completed_on_disk("t1")
 
+    # state machine 00
+
     def test_state_machine_00_with_mockup_tracker(self):
         self._test_state_machine_00(StateFileTrackerMockup())
 
     def test_state_machine_00_with_real_tracker(self):
         d = TestSandboxDir(self)
         self._test_state_machine_00(StateFileTracker(d.sandbox_dir))
+
+    def test_state_machine_00_with_real_tracker_and_restart(self):
+        d = TestSandboxDir(self)
+        self._test_state_machine_00(StateFileTracker(d.sandbox_dir), save_dag_and_restart=True)
+
+    # state machine 01
 
     def test_state_machine_01_with_mockup_tracker(self):
         self._test_state_machine_01(StateFileTrackerMockup())
@@ -357,9 +384,19 @@ class StateMachineTests(unittest.TestCase):
         d = TestSandboxDir(self)
         self._test_state_machine_01(StateFileTracker(d.sandbox_dir))
 
+    def test_state_machine_01_with_real_tracker_with_restart(self):
+        d = TestSandboxDir(self)
+        self._test_state_machine_01(StateFileTracker(d.sandbox_dir), save_dag_and_restart=True)
+
+    # state machine 02
+
     def test_state_machine_02_with_mockup_tracker(self):
         self._test_state_machine_02(StateFileTrackerMockup())
 
     def test_state_machine_02_with_real_tracker(self):
         d = TestSandboxDir(self)
         self._test_state_machine_02(StateFileTracker(d.sandbox_dir))
+
+    def test_state_machine_02_with_real_tracker_with_restart(self):
+        d = TestSandboxDir(self)
+        self._test_state_machine_02(StateFileTracker(d.sandbox_dir), save_dag_and_restart=True)

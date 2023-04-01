@@ -1,11 +1,6 @@
 import json
 import os.path
-import time
-from concurrent.futures import ThreadPoolExecutor
-from itertools import islice
-from multiprocessing import SimpleQueue
 from pathlib import Path
-from threading import Thread
 
 
 class StateFile:
@@ -78,26 +73,52 @@ class StateFileTracker:
             cached_state_file.update_in_memory(file.path)
             return cached_state_file
 
+    def _load_task_conf(self, task_control_dir):
+        with open(os.path.join(task_control_dir, "task-conf.json")) as tc:
+            return json.loads(tc.read())
+
     def load_from_existing_file_on_disc_and_resave_if_required(self, task, state_file_path):
 
         task_control_dir = os.path.dirname(state_file_path)
         task_key = os.path.basename(task_control_dir)
         pipeline_work_dir = os.path.dirname(task_control_dir)
         assert task.key == task_key
-        with open(os.path.join(task_control_dir, "task-conf.json")) as tc:
-            current_hash_code = task.compute_hash_code()
-            state_file = StateFile(pipeline_work_dir, task_key, current_hash_code, self, path=state_file_path)
-            task_conf = json.loads(tc.read())
-            if state_file.is_completed():
-                pass
-                #load inputs and outputs
-            else:
-                if task_conf["hash_code"] != state_file.hash_code:
-                    task.save(os.path.dirname(pipeline_work_dir), current_hash_code)
-                    state_file.hash_code = current_hash_code
-                    self.resave_count += 1
-            self.load_from_disk_count += 1
-            return state_file
+        task_conf = self._load_task_conf(task_control_dir)
+        current_hash_code = task.compute_hash_code()
+        state_file = StateFile(pipeline_work_dir, task_key, current_hash_code, self, path=state_file_path)
+        if state_file.is_completed():
+            pass
+            #load inputs and outputs
+        else:
+            if task_conf["hash_code"] != state_file.hash_code:
+                task.save(os.path.dirname(pipeline_work_dir), current_hash_code)
+                state_file.hash_code = current_hash_code
+                self.resave_count += 1
+        self.load_from_disk_count += 1
+        return state_file
+
+    def load_all_state_files(self):
+        with os.scandir(self.pipeline_work_dir) as pwd_i:
+            for task_control_dir_entry in pwd_i:
+                task_control_dir = task_control_dir_entry.path
+                task_key = os.path.basename(task_control_dir)
+                disk_state_path = self._find_state_file_in_task_control_dir(task_key)
+                if disk_state_path is None:
+                    raise Exception(f"no state file exists in {task_control_dir_entry.path}")
+                state_file = StateFile(
+                    self.pipeline_work_dir, task_key, None, self, path=disk_state_path.path
+                )
+                self.state_files_in_memory[task_key] = state_file
+                task_conf = self._load_task_conf(task_control_dir)
+                if state_file.is_completed():
+                    yield state_file, set(), TaskInputsOutputs()
+                else:
+                    upstream_task_keys = set()
+                    for i in task_conf["inputs"]:
+                        k = i.get("upstream_task_key")
+                        if k is not None:
+                            upstream_task_keys.add(k)
+                    yield state_file, upstream_task_keys, None
 
     def create_true_state_if_new_else_fetch_from_memory(self, task):
         """
@@ -131,7 +152,7 @@ class TaskInputsOutputs:
 
 class StateMachine:
 
-    def __init__(self, state_file_tracker: StateFileTracker, observer=None, queue_only_func=None):
+    def __init__(self, state_file_tracker: StateFileTracker, task_generator=None, observer=None, queue_only_func=None):
 
         if state_file_tracker is None:
             raise Exception(f"state_file_tracker can't be None")
@@ -142,26 +163,37 @@ class StateMachine:
         else:
             self.queue_only_func = queue_only_func
 
-        self._shutdown_requested = False
+        self.task_generator = task_generator
         self.observer = observer
 
         self.completed_task_keys: dict[str, TaskInputsOutputs] = {}
         self.keys_of_waiting_tasks_to_set_of_incomplete_upstream_task_keys: dict[str, set[str]] = {}
         self.keys_of_tasks_waiting_for_external_events: set[str] = set()
+        self._ready_state_files_loaded_from_disk = None
 
-    def _register_upstream_task_dependencies_if_any_and_return_ready_status(self, task) -> bool:
+    def load_from_instance_dir(self):
+        self._ready_state_files_loaded_from_disk = []
+        incomplete_task_files_with_upstream_task_keys = []
+        for state_file, upstream_task_keys, inputs_outputs in self.state_file_tracker.load_all_state_files():
+            if state_file.is_completed():
+                self.completed_task_keys[state_file.task_key] = inputs_outputs
+            else:
+                incomplete_task_files_with_upstream_task_keys.append((state_file, upstream_task_keys))
 
-        task_key = task.key
+        for state_file, upstream_task_keys in incomplete_task_files_with_upstream_task_keys:
+            if self._register_upstream_task_dependencies_if_any_and_return_ready_status(
+                    state_file.task_key, upstream_task_keys
+            ):
+                self._ready_state_files_loaded_from_disk.append(state_file)
 
-        if len(task.upstream_dep_keys) == 0:
+    def _register_upstream_task_dependencies_if_any_and_return_ready_status(self, task_key, upstream_dep_keys) -> bool:
+        if len(upstream_dep_keys) == 0:
             return True
         else:
             # copy the set, because it will be mutated
             self.keys_of_waiting_tasks_to_set_of_incomplete_upstream_task_keys[task_key] = {
-                k
-                for k in task.upstream_dep_keys
+                k for k in upstream_dep_keys
             }
-
             return False
 
     def _register_completion_of_upstream_tasks(self, task_key, set_of_newly_completed_task_keys):
@@ -176,28 +208,35 @@ class StateMachine:
         else:
             return False
 
-    def incomplete_upstream_tasks_for(self, task_key) -> set[str]:
-        upstream_task_keys = self.keys_of_waiting_tasks_to_set_of_incomplete_upstream_task_keys.get(task_key)
-        if upstream_task_keys is None:
-            return set()
-        return set(upstream_task_keys)
-
-    def all_incomplete_upstream_tasks(self) -> set[str]:
-        return set().union(*self.keys_of_waiting_tasks_to_set_of_incomplete_upstream_task_keys.values())
-
     def set_of_completed_task_keys(self) ->  set[str]:
         return set(self.completed_task_keys.keys())
 
-    def iterate_tasks_to_launch(self, task_generator):
-
-        for task in task_generator():
+    def _ready_state_files_from_generator(self):
+        for task in self.task_generator():
             is_new, state_file = self.state_file_tracker.create_true_state_if_new_else_fetch_from_memory(task)
             if is_new:
-                if self._register_upstream_task_dependencies_if_any_and_return_ready_status(task):
+                if self._register_upstream_task_dependencies_if_any_and_return_ready_status(
+                    task.key, task.upstream_dep_keys
+                ):
                     self.keys_of_tasks_waiting_for_external_events.add(state_file.task_key)
                     yield state_file
 
-        def newly_completed_state_files():
+    def iterate_tasks_to_launch(self):
+
+        if self.task_generator is not None:
+            yield from self._ready_state_files_from_generator()
+        elif self._ready_state_files_loaded_from_disk is not None:
+            for state_file in self._ready_state_files_loaded_from_disk:
+                self.keys_of_tasks_waiting_for_external_events.add(state_file.task_key)
+                yield state_file
+            self._ready_state_files_loaded_from_disk = []
+        else:
+            raise Exception(
+                f"{type(StateMachine)} must be constructed with either a dag_generator, or " +
+                "load_from_instance_dir() must be invoked before calling this method"
+            )
+
+        def gen_newly_completed_task_keys():
             for task_key in self.keys_of_tasks_waiting_for_external_events:
                 true_state_file = self.state_file_tracker.fetch_true_state_and_update_memory_if_changed(task_key)
                 if true_state_file is not None:
@@ -205,59 +244,13 @@ class StateMachine:
                         self.completed_task_keys[true_state_file.task_key] = TaskInputsOutputs()
                         yield task_key
 
-        completed_task_keys = list(newly_completed_state_files())
+        newly_completed_task_keys = list(gen_newly_completed_task_keys())
 
-        self.keys_of_tasks_waiting_for_external_events.difference_update(completed_task_keys)
+        self.keys_of_tasks_waiting_for_external_events.difference_update(newly_completed_task_keys)
 
         # track state_file changes, update dependency map, and yield newly ready tasks
         for key_of_waiting_task in list(self.keys_of_waiting_tasks_to_set_of_incomplete_upstream_task_keys.keys()):
-            if self._register_completion_of_upstream_tasks(key_of_waiting_task, completed_task_keys):
+            if self._register_completion_of_upstream_tasks(key_of_waiting_task, newly_completed_task_keys):
                 state_file_of_ready_task = self.state_file_tracker.state_file_in_memory(key_of_waiting_task)
                 self.keys_of_tasks_waiting_for_external_events.add(state_file_of_ready_task.task_key)
                 yield state_file_of_ready_task
-
-    def run_sync(self):
-
-        for state_file in self.iterate_tasks_to_launch():
-            if state_file is None:
-                time.sleep(1)
-            else:
-                self.launch(state_file)
-
-    def start(self):
-        launch_queue = SimpleQueue()
-
-        def launch_daemon():
-
-            def process_task(state_file):
-                state_file
-
-            with ThreadPoolExecutor(max_workers=5) as executor:
-                while not self._shutdown_requested:
-                    batch = self.launch_queue.get()
-                    executor.map(process_task, batch)
-
-        def main_daemon():
-            last_inactive_round_count = 0
-            sleep_prescriptions = [0, 1, 2, 2, 4, 4, 5, 8, 9, 10]
-            while not self._shutdown_requested:
-                work_done = 0
-                while batch := list(islice(self.iterate_tasks_to_launch(), 50)):
-                    work_done += len(batch)
-                    self.launch_queue.put(batch)
-                if work_done > 0:
-                    last_inactive_round_count = 0
-                    continue
-                elif last_inactive_round_count < len(sleep_prescriptions):
-                    last_inactive_round_count += 1
-
-                if last_inactive_round_count > 0:
-                    time.sleep(sleep_prescriptions[last_inactive_round_count])
-
-        main_thread = Thread(target=main_daemon)
-        main_thread.start()
-        launch_thread = Thread(target=launch_daemon)
-        launch_thread.start()
-
-        self.threads.append(main_thread)
-        self.threads.append(launch_thread)
