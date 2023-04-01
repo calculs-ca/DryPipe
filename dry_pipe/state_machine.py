@@ -1,3 +1,4 @@
+import json
 import os.path
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -8,11 +9,16 @@ from threading import Thread
 
 
 class StateFile:
-    def __init__(self, pipeline_work_dir, task_key, current_hash_code, tracker):
+
+    def __init__(self, pipeline_work_dir, task_key, current_hash_code, tracker, path=None):
         self.tracker = tracker
         self.task_key = task_key
-        self.path = os.path.join(pipeline_work_dir, task_key, "state.waiting")
-        self.last_loaded_hash_code = current_hash_code
+        if path is not None:
+            self.path = path
+        else:
+            self.path = os.path.join(pipeline_work_dir, task_key, "state.waiting")
+        self.hash_code = current_hash_code
+        self.inputs_outputs = None
 
     def __str__(self):
         return f"/{self.task_key}/{os.path.basename(self.path)}"
@@ -26,57 +32,99 @@ class StateFile:
     def is_completed(self):
         return self.path.endswith("state.completed")
 
+    def load_inputs_outputs(self):
+        if self.is_completed():
+            self.inputs_outputs = 123
+        else:
+            self.hash_code = "123"
+
 class StateFileTracker:
 
     def __init__(self, pipeline_instance_dir):
         self.pipeline_instance_dir = pipeline_instance_dir
         self.pipeline_work_dir = os.path.join(pipeline_instance_dir, ".drypipe")
-        self.state_files: dict[str, StateFile] = {}
+        self.state_files_in_memory: dict[str, StateFile] = {}
+        self.load_from_disk_count = 0
+        self.resave_count = 0
+        self.new_save_count = 0
+
+    def set_completed_on_disk(self, task_key):
+        os.rename(
+            self.state_files_in_memory[task_key].path,
+            os.path.join(self.pipeline_work_dir, task_key, "state.completed")
+        )
 
     def state_file_in_memory(self, task_key):
-        return self.state_files[task_key]
+        return self.state_files_in_memory[task_key]
 
     def _find_state_file_in_task_control_dir(self, task_key):
-        with os.scandir(os.path.join(self.pipeline_work_dir, task_key)) as i:
-            for f in i:
-                if f.name.startswith("state."):
-                    return f
-        raise None
+        try:
+            with os.scandir(os.path.join(self.pipeline_work_dir, task_key)) as i:
+                for f in i:
+                    if f.name.startswith("state."):
+                        return f
+        except FileNotFoundError:
+            pass
+        return None
 
-    def next_state_file_if_changed(self, task_key, last_state_file):
-        if os.path.exists(last_state_file.path):
+    def fetch_true_state_and_update_memory_if_changed(self, task_key):
+        cached_state_file = self.state_file_in_memory(task_key)
+        if os.path.exists(cached_state_file.path):
             return None
         else:
             file = self._find_state_file_in_task_control_dir(task_key)
             if file is None:
                 raise Exception(f"no state file exists in {os.path.join(self.pipeline_work_dir, task_key)}")
-            state_file = self.state_files[task_key]
-            state_file.update_in_memory(file.path)
+            cached_state_file.update_in_memory(file.path)
+            return cached_state_file
+
+    def load_from_existing_file_on_disc_and_resave_if_required(self, task, state_file_path):
+
+        task_control_dir = os.path.dirname(state_file_path)
+        task_key = os.path.basename(task_control_dir)
+        pipeline_work_dir = os.path.dirname(task_control_dir)
+        assert task.key == task_key
+        with open(os.path.join(task_control_dir, "task-conf.json")) as tc:
+            current_hash_code = task.compute_hash_code()
+            state_file = StateFile(pipeline_work_dir, task_key, current_hash_code, self, path=state_file_path)
+            task_conf = json.loads(tc.read())
+            if state_file.is_completed():
+                pass
+                #load inputs and outputs
+            else:
+                if task_conf["hash_code"] != state_file.hash_code:
+                    task.save(os.path.dirname(pipeline_work_dir), current_hash_code)
+                    state_file.hash_code = current_hash_code
+                    self.resave_count += 1
+            self.load_from_disk_count += 1
             return state_file
 
-    def get_state_file_and_save_if_required(self, task):
+    def create_true_state_if_new_else_fetch_from_memory(self, task):
         """
         :return: (task_is_new, state_file)
         """
-        state_file_in_memory = self.state_files.get(task.key)
+        state_file_in_memory = self.state_files_in_memory.get(task.key)
         if state_file_in_memory is not None:
+            # state_file_in_memory is assumed up to date, since task declarations don't change between runs
+            # by design, DAG generators that violate this assumption are considered at fault
             return False, state_file_in_memory
         else:
-            current_hash_code = task.hash_code()
-            state_file_in_memory = StateFile(self.pipeline_work_dir, task.key, current_hash_code, self)
-            self.state_files[task.key] = state_file_in_memory
+            # we have a new task OR process was restarted
             state_file_on_disc = self._find_state_file_in_task_control_dir(task.key)
-            assert state_file_in_memory.path == state_file_on_disc.path
-            if state_file_on_disc is None:
-                task.save()
-                Path(state_file_on_disc.path).touch(exist_ok=False)
-                return True, state_file_in_memory
-            else:
-                last_saved_hash_code = self.load_last_saved_hash_code(state_file_in_memory)
-                if last_saved_hash_code != current_hash_code:
-                    task.save()
-                    state_file_in_memory.last_loaded_hash_code = current_hash_code
+            if state_file_on_disc is not None:
+                # process was restarted, task is NOT new
+                state_file_in_memory = self.load_from_existing_file_on_disc_and_resave_if_required(task, state_file_on_disc)
+                self.state_files_in_memory[task.key] = state_file_in_memory
                 return False, state_file_in_memory
+            else:
+                # task is new
+                hash_code = task.compute_hash_code()
+                task.save(self.pipeline_instance_dir, hash_code)
+                state_file_in_memory = StateFile(self.pipeline_work_dir, task.key, hash_code, self)
+                self.state_files_in_memory[task.key] = state_file_in_memory
+                Path(state_file_in_memory.path).touch(exist_ok=False)
+                self.new_save_count += 1
+                return True, state_file_in_memory
 
 class TaskInputsOutputs:
     pass

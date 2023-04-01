@@ -2,11 +2,12 @@ import sys
 
 from unittest import TextTestRunner, TestSuite, defaultTestLoader
 
+from state_machine_tests import StateMachineTests, StateFileTrackerTests
 from base_tests import BaseTests, NonTrivialPipelineTests, NonTrivialPipelineLocalContainerlessTests, \
     NonTrivialPipelineLocalWithSingularityContainerTests, NonTrivialPipelineSlurmContainerlessTests, \
     NonTrivialPipelineSlurmWithSingularityContainerTests
 from ground_level_tests import GroundLevelTests, TaskSignatureTests
-from test_corner_case_failure_handling import CornerCasesFailureTests
+from test_corner_case_failure_handling import CornerCasesFailureTests, CornerCasesRemoteZombiTests
 from test_daemon_mode import DaemonModeTests
 from test_dynamic_dags import DynamicDagTests
 from test_monitoring import MonitoringTests
@@ -18,9 +19,13 @@ from test_script_lib import ScriptLibTests
 from test_minimalist_pipelines import SingleTaskPipelinesTests, MinimalistPipelinesTests
 
 
+def state_machine_tests():
+    return [StateMachineTests, StateFileTrackerTests]
 
 def low_level_tests():
     return [
+        StateFileTrackerTests,
+        StateMachineTests,
         ScriptLibTests,
         MinimalistPipelinesTests,
         SingleTaskPipelinesTests,
@@ -49,7 +54,8 @@ def remote_tests():
     return [
         RemoteTaskTests1,
         RemoteTaskTests2,
-        RemoteTaskTestsWithSlurm
+        CornerCasesRemoteZombiTests,
+        RemoteTaskTestsWithSlurm,
     ]
 
 
@@ -89,6 +95,7 @@ if __name__ == '__main__':
         suite_to_test = sys.argv[1]
 
     suite_funcs = {
+        "state_machine_tests": state_machine_tests,
         "low_level_tests": low_level_tests,
         "quick_sanity_tests": quick_sanity_tests,
         "remote_tests": remote_tests,
