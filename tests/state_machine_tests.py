@@ -19,159 +19,271 @@ class TaskMockup:
 class StateFileTrackerMockup:
 
     def __init__(self):
-        self.state_files: dict[str, StateFile] = {}
-        self.pending_changes: dict[str, str] = {}
+        self.state_files_in_memory: dict[str, StateFile] = {}
+        self.task_keys_to_task_states_on_mockup_disk: dict[str, str] = {}
 
-    def set_completed(self, task_key):
-        self.pending_changes[task_key] = "state.completed"
+    def set_completed_on_disk(self, task_key):
+        self.task_keys_to_task_states_on_mockup_disk[task_key] = "state.completed"
 
     def state_file_in_memory(self, task_key):
-        return self.state_files[task_key]
+        return self.state_files_in_memory[task_key]
 
-    def next_state_file_if_changed(self, task_key, last_state_file):
-        next_state = self.pending_changes.pop(task_key, None)
-        if next_state is not None:
-            s = self.state_files[task_key]
-            s.update_in_memory(f"/{task_key}/{next_state}")
-            return s
-        else:
+    def fetch_true_state_and_update_memory_if_changed(self, task_key):
+
+        true_task_state = self.task_keys_to_task_states_on_mockup_disk.get(task_key)
+        state_file_in_memory = self.state_files_in_memory.get(task_key)
+
+        if state_file_in_memory is None:
+            raise Exception(f"{task_key} should be in memory by now")
+
+        if str(state_file_in_memory) == f"/{task_key}/{true_task_state}":
             return None
+        else:
+            state_file_in_memory.update_in_memory(f"/{task_key}/{true_task_state}")
+            return state_file_in_memory
 
-    def get_state_file_and_save_if_required(self, task):
+    def create_true_state_if_new_else_fetch_from_memory(self, task):
         """
         :param task:
         :return: (task_is_new, state_file)
         """
-        s = self.state_files.get(task.key)
-        if s is None:
+        true_task_state = self.task_keys_to_task_states_on_mockup_disk.get(task.key)
+
+        if true_task_state is None:
             s = StateFile("/", task.key, task.hash_code(), self)
-            self.state_files[task.key] = s
+            self.task_keys_to_task_states_on_mockup_disk[task.key] = s.state_as_string()
+            self.state_files_in_memory[task.key] = s
             return True, s
         else:
-            return False, s
+            return False, self.state_files_in_memory[task.key]
 
 
-class JanitorTester:
+class StateMachineTester:
 
     def __init__(self, test_case, dag_gen):
         self.test_case = test_case
         self.state_file_tracker = StateFileTrackerMockup()
         self.janitor = StateMachine(self.state_file_tracker)
         self.dag_gen = dag_gen
+        self.list_of_ready_state_files = []
 
-    def set_completed(self, task_key):
-        self.state_file_tracker.set_completed(task_key)
+    def set_completed_on_disk(self, task_key):
+        self.state_file_tracker.set_completed_on_disk(task_key)
 
     def new_iterator(self):
         return iter(self.janitor.iterate_tasks_to_launch(self.dag_gen))
+
+    def iterate_once_and_mutate_set_of_next_state_files_ready(self):
+        self.list_of_ready_state_files = list(self.janitor.iterate_tasks_to_launch(self.dag_gen))
+
+    def assert_set_of_next_tasks_ready(self, *expected_task_keys):
+        expected_task_keys = set(expected_task_keys)
+        computed_ready_task_keys = {sf.task_key for sf in self.list_of_ready_state_files}
+        if expected_task_keys != computed_ready_task_keys:
+            raise Exception(
+                f"expected ready tasks {expected_task_keys}, computed {computed_ready_task_keys or '{}'}"
+            )
 
     def asser_end_of_iterator(self, i):
         self.test_case.assertRaises(StopIteration, lambda: next(i))
 
     def assert_no_new_task_to_launch(self):
-        i = iter(self.janitor.iterate_tasks_to_launch(self.dag_gen))
-        self.test_case.assertRaises(StopIteration, lambda: next(i))
+        c = len(self.list_of_ready_state_files)
+        if c > 0:
+            raise Exception(f"expected no new tasks to launch, got {c}")
 
-    def assert_no_new_task_to_launch(self, *task_keys):
+    def assert_tasks_to_launch(self, *task_keys):
         keys_to_launch = {
             state_file.task_key
-            for state_file in self.janitor.iterate_tasks_to_launch(self.dag_gen)
+            for state_file in self.list_of_ready_state_files
         }
         self.test_case.assertEqual(keys_to_launch, set(task_keys))
 
-    def assert_wait_relationships(self, task_key, set_of_wait_relationships):
-        self.test_case.assertEqual(
-            self.janitor.set_of_wait_relationships_of(task_key),
-            set_of_wait_relationships
-        )
+    def assert_wait_graph(self, waiting_task_keys_to_upstream_task_keys):
+        for waiting_task_key, upstream_task_keys in waiting_task_keys_to_upstream_task_keys.items():
+            upstream_task_keys = set(upstream_task_keys)
+            computed_waiting_task_keys = \
+                self.janitor.keys_of_waiting_tasks_to_set_of_incomplete_upstream_task_keys.get(waiting_task_key)
 
-    def assert_next_tasks_to_launch_are(self, *task_keys):
-        tasks_to_launch = list(self.janitor.iterate_tasks_to_launch(self.dag_gen))
-        for t in tasks_to_launch:
-            t.path.endswith("state.waiting")
-        self.test_case.assertEqual(
-            {task_state.task_key for task_state in tasks_to_launch},
-            set(task_keys)
-        )
+            if computed_waiting_task_keys is None:
+                computed_waiting_task_keys = set()
+
+            if upstream_task_keys != computed_waiting_task_keys:
+                raise Exception(
+                    f"expected {waiting_task_key} to wait for {upstream_task_keys}, "+
+                    f"instead computed {computed_waiting_task_keys}"
+                )
 
     def assert_completed_task_keys(self, *task_keys):
         self.test_case.assertEqual(self.janitor.set_of_completed_task_keys(), set(task_keys))
 
 
+    @staticmethod
+    def create_scenario(test_case, dependency_graph):
+
+        def dag_gen():
+            for task_key, upstream_task_keys in dependency_graph.items():
+                yield TaskMockup(task_key, upstream_task_keys)
+
+        return [StateMachineTester(test_case, dag_gen)] + list(dag_gen())
+
+class StateFileTrackerTester:
+
+    def __init__(self, test_case: unittest.TestCase, state_file_tracker):
+        self.test_case = test_case
+        self.state_file_tracker = state_file_tracker
+
+    def test_01(self):
+        t1, t2, t3 = [
+            TaskMockup(f"t{i}")
+            for i in [1, 2, 3]
+        ]
+
+        is_sf1_new, sf1_a = self.state_file_tracker.create_true_state_if_new_else_fetch_from_memory(t1)
+        self.test_case.assertTrue(is_sf1_new)
+
+        is_sf1_new, sf1_b = self.state_file_tracker.create_true_state_if_new_else_fetch_from_memory(t1)
+        self.test_case.assertFalse(is_sf1_new)
+
+        self.test_case.assertEqual(sf1_a, sf1_b)
+
+        self.state_file_tracker.set_completed_on_disk("t1")
+
+        next_state_file = self.state_file_tracker.fetch_true_state_and_update_memory_if_changed("t1")
+
+        self.test_case.assertEqual("/t1/state.completed", str(next_state_file))
+
+        self.test_case.assertIsNone(self.state_file_tracker.fetch_true_state_and_update_memory_if_changed("t1"))
+
+
 class StateMachineTests(unittest.TestCase):
+
+    def test_state_mockup_file_tracker(self):
+        tester = StateFileTrackerTester(self, StateFileTrackerMockup())
+        tester.test_01()
+
+
+    def test_state_machine_00(self):
+
+        tester = StateMachineTester.create_scenario(self, {
+            "t1": [],
+            "t2": ["t1"],
+            "t3": ["t2"]
+        })[0]
+
+        # mutate
+        tester.iterate_once_and_mutate_set_of_next_state_files_ready()
+        # verify
+        tester.assert_set_of_next_tasks_ready("t1")
+
+        # mutate
+        tester.set_completed_on_disk("t1")
+        tester.iterate_once_and_mutate_set_of_next_state_files_ready()
+
+        # verify
+        tester.assert_set_of_next_tasks_ready("t2")
+
+        # mutate
+        tester.iterate_once_and_mutate_set_of_next_state_files_ready()
+        # verify
+        tester.assert_set_of_next_tasks_ready(*[])
+
+        # mutate
+        tester.set_completed_on_disk("t2")
+        tester.iterate_once_and_mutate_set_of_next_state_files_ready()
+        # verify
+        tester.assert_set_of_next_tasks_ready("t3")
+
+        # mutate
+        tester.iterate_once_and_mutate_set_of_next_state_files_ready()
+        # verify
+        tester.assert_set_of_next_tasks_ready(*[])
+
+        # mutate
+        tester.iterate_once_and_mutate_set_of_next_state_files_ready()
+        # verify
+        tester.assert_set_of_next_tasks_ready(*[])
+
+        # mutate
+        tester.set_completed_on_disk("t3")
+        tester.iterate_once_and_mutate_set_of_next_state_files_ready()
+        # verify
+        tester.assert_set_of_next_tasks_ready(*[])
 
 
     def test_state_machine_01(self):
 
-        t1 = TaskMockup("t1")
-        t2 = TaskMockup("t2", ["t1"])
-        t3 = TaskMockup("t3", ["t2"])
+        tester = StateMachineTester.create_scenario(self, {
+            "t1": [],
+            "t2": ["t1"],
+            "t3": ["t2"]
+        })[0]
 
-        def dag_gen():
-            yield from [t1, t2, t3]
+        # mutate
+        tester.iterate_once_and_mutate_set_of_next_state_files_ready()
 
-        tester = JanitorTester(self, dag_gen)
-
-        i = tester.new_iterator()
-        ts1 = next(i)
-        self.assertEqual(ts1.task_key, "t1")
-        tester.asser_end_of_iterator(i)
-        tester.assert_wait_relationships(t2.key, {"t1->waiting"})
-        tester.assert_wait_relationships(t3.key, {"t2->waiting"})
-        tester.assert_no_new_task_to_launch()
+        # verify
+        tester.assert_wait_graph({
+            "t2": ["t1"],
+            "t3": ["t2"]
+        })
         tester.assert_completed_task_keys(*[])
 
-        tester.set_completed(t1.key)
+        # mutate
+        tester.set_completed_on_disk("t1")
+        tester.iterate_once_and_mutate_set_of_next_state_files_ready()
 
-        i = tester.new_iterator()
-        ts2 = next(i)
-        self.assertEqual(ts2.task_key, "t2")
-        tester.asser_end_of_iterator(i)
+        # verify
         tester.assert_completed_task_keys("t1")
-        tester.assert_wait_relationships(t2.key, set())
-        tester.assert_wait_relationships(t3.key, {"t2->waiting"})
-        tester.assert_no_new_task_to_launch()
-        tester.assert_no_new_task_to_launch()
+        tester.assert_wait_graph({
+            "t2": [],
+            "t3": ["t2"]
+        })
 
-        tester.set_completed(t2.key)
+        # mutate
+        tester.set_completed_on_disk("t2")
+        tester.iterate_once_and_mutate_set_of_next_state_files_ready()
 
-        tester.assert_next_tasks_to_launch_are("t3")
+        # verify
+        tester.assert_tasks_to_launch("t3")
         tester.assert_completed_task_keys("t1", "t2")
 
-        tester.set_completed(t3.key)
+        # mutate
+        tester.set_completed_on_disk("t3")
+        tester.iterate_once_and_mutate_set_of_next_state_files_ready()
 
+        # verify
         tester.assert_no_new_task_to_launch()
-        tester.asser_end_of_iterator(i)
         tester.assert_completed_task_keys("t1", "t2", "t3")
-        tester.assert_wait_relationships(t1.key, set())
-        tester.assert_wait_relationships(t2.key, set())
-        tester.assert_wait_relationships(t3.key, set())
+        tester.assert_wait_graph({
+            "t1": [],
+            "t2": [],
+            "t3": []
+        })
+
 
 
     def test_state_machine_02(self):
 
-        t1 = TaskMockup("t1")
-        t2 = TaskMockup("t2", ["t1"])
-        t3 = TaskMockup("t3", ["t1", "t2"])
-        t4 = TaskMockup("t4", ["t3"])
-        t5 = TaskMockup("t5")
+        tester = StateMachineTester.create_scenario(self, {
+            "t1": [],
+            "t2": ["t1"],
+            "t3": ["t1", "t2"],
+            "t4": ["t3"],
+            "t5": []
+        })[0]
 
-        def dag_gen():
-            yield from [t1, t2, t3, t4, t5]
+        tester.iterate_once_and_mutate_set_of_next_state_files_ready()
 
-        tester = JanitorTester(self, dag_gen)
+        tester.assert_wait_graph({
+            "t2": ["t1"],
+            "t3": ["t1", "t2"],
+            "t4": ["t3"]
+        })
 
-        i = tester.new_iterator()
-        ts1 = next(i)
-        self.assertEqual(ts1.task_key, "t1")
-        ts5 = next(i)
-        self.assertEqual(ts5.task_key, "t5")
-        tester.asser_end_of_iterator(i)
-        tester.assert_wait_relationships(t2.key, {"t1->waiting"})
-        tester.assert_wait_relationships(t3.key, {"t1->waiting", "t2->waiting"})
-        tester.assert_wait_relationships(t4.key, {"t3->waiting"})
+        tester.iterate_once_and_mutate_set_of_next_state_files_ready()
+
         tester.assert_no_new_task_to_launch()
         tester.assert_completed_task_keys(*[])
 
-        tester.set_completed("t1")
-        tester.assert_no_new_task_to_launch("t2")
+        tester.set_completed_on_disk("t1")

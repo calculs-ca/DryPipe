@@ -15,13 +15,13 @@ class StateFile:
         self.last_loaded_hash_code = current_hash_code
 
     def __str__(self):
-        return f"{self.task_key}/{os.path.basename(self.path)}"
+        return f"/{self.task_key}/{os.path.basename(self.path)}"
 
     def update_in_memory(self, path):
         self.path = path
 
-    def state_name(self):
-        return os.path.basename(self.path).split(".")[1]
+    def state_as_string(self):
+        return os.path.basename(self.path)
 
     def is_completed(self):
         return self.path.endswith("state.completed")
@@ -78,33 +78,6 @@ class StateFileTracker:
                     state_file_in_memory.last_loaded_hash_code = current_hash_code
                 return False, state_file_in_memory
 
-
-class UpstreamTaskDependencies:
-
-    def __init__(self, upstream_state_files):
-        self._upstream_task_key_to_last_state_file: dict[str, StateFile] = {
-            task_key: last_state_file
-            for task_key, last_state_file in upstream_state_files.items()
-        }
-
-    def set_of_wait_relationships(self):
-        return {
-            f"{k}->{state.state_name()}"
-            for k, state in self._upstream_task_key_to_last_state_file.items()
-        }
-
-    def __str__(self):
-        return ",".join(self.set_of_wait_relationships())
-
-    def register_completion_of_upstream_tasks(self, completed_task_keys):
-        for k in completed_task_keys:
-            if k in self._upstream_task_key_to_last_state_file:
-                del self._upstream_task_key_to_last_state_file[k]
-
-    def all_dependencies_satisfied(self):
-        return len(self._upstream_task_key_to_last_state_file) == 0
-
-
 class TaskInputsOutputs:
     pass
 
@@ -125,77 +98,74 @@ class StateMachine:
         self.observer = observer
 
         self.completed_task_keys: dict[str, TaskInputsOutputs] = {}
-        self.keys_of_waiting_tasks_to_upstream_task_dependencies: dict[str, UpstreamTaskDependencies] = {}
-        self.keys_of_tasks_waiting_for_external_event_to_last_state_file: dict[str, StateFile] = {}
+        self.keys_of_waiting_tasks_to_set_of_incomplete_upstream_task_keys: dict[str, set[str]] = {}
+        self.keys_of_tasks_waiting_for_external_events: set[str] = set()
 
-    def _register_upstream_task_dependencies_if_any(self, task):
+    def _register_upstream_task_dependencies_if_any_and_return_ready_status(self, task) -> bool:
 
         task_key = task.key
-        upstream_dep_keys = task.upstream_dep_keys
 
-        if len(upstream_dep_keys) == 0:
+        if len(task.upstream_dep_keys) == 0:
+            return True
+        else:
+            # copy the set, because it will be mutated
+            self.keys_of_waiting_tasks_to_set_of_incomplete_upstream_task_keys[task_key] = {
+                k
+                for k in task.upstream_dep_keys
+            }
+
             return False
 
-        upstream_task_dependencies = self.keys_of_waiting_tasks_to_upstream_task_dependencies.get(task_key)
+    def _register_completion_of_upstream_tasks(self, task_key, set_of_newly_completed_task_keys):
 
-        if upstream_task_dependencies is None:
-            utd = UpstreamTaskDependencies({
-                k: self.state_file_tracker.state_file_in_memory(k)
-                for k in upstream_dep_keys
-                if k not in self.completed_task_keys
-            })
-            self.keys_of_waiting_tasks_to_upstream_task_dependencies[task_key] = utd
+        upstream_task_keys = self.keys_of_waiting_tasks_to_set_of_incomplete_upstream_task_keys[task_key]
 
-        return True
+        upstream_task_keys.difference_update(set_of_newly_completed_task_keys)
 
-    def set_of_wait_relationships_of(self, task_key):
-        ud = self.keys_of_waiting_tasks_to_upstream_task_dependencies.get(task_key)
-        if ud is None:
+        if len(upstream_task_keys) == 0:
+            del self.keys_of_waiting_tasks_to_set_of_incomplete_upstream_task_keys[task_key]
+            return True
+        else:
+            return False
+
+    def incomplete_upstream_tasks_for(self, task_key) -> set[str]:
+        upstream_task_keys = self.keys_of_waiting_tasks_to_set_of_incomplete_upstream_task_keys.get(task_key)
+        if upstream_task_keys is None:
             return set()
-        return ud.set_of_wait_relationships()
+        return set(upstream_task_keys)
 
-    def set_of_all_wait_relationships(self):
-        def gen():
-            for task_key, ud in self.keys_of_waiting_tasks_to_upstream_task_dependencies:
-                yield None
+    def all_incomplete_upstream_tasks(self) -> set[str]:
+        return set().union(*self.keys_of_waiting_tasks_to_set_of_incomplete_upstream_task_keys.values())
 
-
-
-    def set_of_completed_task_keys(self):
-        return self.completed_task_keys.keys()
+    def set_of_completed_task_keys(self) ->  set[str]:
+        return set(self.completed_task_keys.keys())
 
     def iterate_tasks_to_launch(self, task_generator):
 
-        def newly_completed_state_files():
-            for task_key in list(self.keys_of_tasks_waiting_for_external_event_to_last_state_file.keys()):
-                last_state_file = self.keys_of_tasks_waiting_for_external_event_to_last_state_file[task_key]
-                next_state_file = self.state_file_tracker.next_state_file_if_changed(task_key, last_state_file)
-                if next_state_file is not None:
-                    if next_state_file.is_completed():
-                        del self.keys_of_tasks_waiting_for_external_event_to_last_state_file[task_key]
-                        self.completed_task_keys[next_state_file.task_key] = TaskInputsOutputs()
-                        yield task_key
-                    else:
-                        self.keys_of_tasks_waiting_for_external_event_to_last_state_file[task_key] = next_state_file
-
         for task in task_generator():
-            is_new, state_file = self.state_file_tracker.get_state_file_and_save_if_required(task)
+            is_new, state_file = self.state_file_tracker.create_true_state_if_new_else_fetch_from_memory(task)
             if is_new:
-                if not self._register_upstream_task_dependencies_if_any(task):
-                    self.keys_of_tasks_waiting_for_external_event_to_last_state_file[task.key] = state_file
+                if self._register_upstream_task_dependencies_if_any_and_return_ready_status(task):
+                    self.keys_of_tasks_waiting_for_external_events.add(state_file.task_key)
                     yield state_file
+
+        def newly_completed_state_files():
+            for task_key in self.keys_of_tasks_waiting_for_external_events:
+                true_state_file = self.state_file_tracker.fetch_true_state_and_update_memory_if_changed(task_key)
+                if true_state_file is not None:
+                    if true_state_file.is_completed():
+                        self.completed_task_keys[true_state_file.task_key] = TaskInputsOutputs()
+                        yield task_key
 
         completed_task_keys = list(newly_completed_state_files())
 
+        self.keys_of_tasks_waiting_for_external_events.difference_update(completed_task_keys)
+
         # track state_file changes, update dependency map, and yield newly ready tasks
-        for key_of_waiting_task in list(self.keys_of_waiting_tasks_to_upstream_task_dependencies.keys()):
-            upstream_deps_task_keys = self.keys_of_waiting_tasks_to_upstream_task_dependencies.get(key_of_waiting_task)
-            upstream_deps_task_keys.register_completion_of_upstream_tasks(completed_task_keys)
-            if upstream_deps_task_keys.all_dependencies_satisfied():
-                del self.keys_of_waiting_tasks_to_upstream_task_dependencies[key_of_waiting_task]
+        for key_of_waiting_task in list(self.keys_of_waiting_tasks_to_set_of_incomplete_upstream_task_keys.keys()):
+            if self._register_completion_of_upstream_tasks(key_of_waiting_task, completed_task_keys):
                 state_file_of_ready_task = self.state_file_tracker.state_file_in_memory(key_of_waiting_task)
-                self.keys_of_tasks_waiting_for_external_event_to_last_state_file[state_file_of_ready_task.task_key] = \
-                    state_file_of_ready_task
+                self.keys_of_tasks_waiting_for_external_events.add(state_file_of_ready_task.task_key)
                 yield state_file_of_ready_task
 
     def run_sync(self):
