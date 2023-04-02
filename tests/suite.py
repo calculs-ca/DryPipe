@@ -2,7 +2,6 @@ import sys
 
 from unittest import TextTestRunner, TestSuite, defaultTestLoader
 
-from state_machine_tests import StateMachineTests, StateFileTrackerTests
 from base_tests import BaseTests, NonTrivialPipelineTests, NonTrivialPipelineLocalContainerlessTests, \
     NonTrivialPipelineLocalWithSingularityContainerTests, NonTrivialPipelineSlurmContainerlessTests, \
     NonTrivialPipelineSlurmWithSingularityContainerTests
@@ -17,6 +16,7 @@ from test_regressions import RegressionTests
 from test_remote_tasks import RemoteTaskTests1, RemoteTaskTests2, RemoteTaskTestsWithSlurm
 from test_script_lib import ScriptLibTests
 from test_minimalist_pipelines import SingleTaskPipelinesTests, MinimalistPipelinesTests
+from test_state_machine import StateFileTrackerTests, StateMachineTests
 
 
 def state_machine_tests():
