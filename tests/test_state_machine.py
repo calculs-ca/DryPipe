@@ -157,7 +157,7 @@ class StateMachineTester:
             tester.iterate_once_and_mutate_set_of_next_state_files_ready()
 
             tester = StateMachineTester(test_case, None, state_file_tracker)
-            tester.state_machine.load_from_instance_dir()
+            tester.state_machine.prepare_for_run_without_generator()
             return [tester] + list(dag_gen())
 
 

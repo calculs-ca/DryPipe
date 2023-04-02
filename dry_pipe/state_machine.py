@@ -1,3 +1,4 @@
+import fnmatch
 import json
 import os.path
 from pathlib import Path
@@ -97,28 +98,43 @@ class StateFileTracker:
         self.load_from_disk_count += 1
         return state_file
 
-    def load_all_state_files(self):
+    def _iterate_all_tasks(self, glob_filter):
         with os.scandir(self.pipeline_work_dir) as pwd_i:
             for task_control_dir_entry in pwd_i:
                 task_control_dir = task_control_dir_entry.path
                 task_key = os.path.basename(task_control_dir)
-                disk_state_path = self._find_state_file_in_task_control_dir(task_key)
-                if disk_state_path is None:
+
+                if glob_filter is not None:
+                    if not fnmatch.fnmatch(task_key, glob_filter):
+                        continue
+
+                state_file_dir_entry = self._find_state_file_in_task_control_dir(task_key)
+                if state_file_dir_entry is None:
                     raise Exception(f"no state file exists in {task_control_dir_entry.path}")
-                state_file = StateFile(
-                    self.pipeline_work_dir, task_key, None, self, path=disk_state_path.path
-                )
-                self.state_files_in_memory[task_key] = state_file
-                task_conf = self._load_task_conf(task_control_dir)
-                if state_file.is_completed():
-                    yield state_file, set(), TaskInputsOutputs()
-                else:
-                    upstream_task_keys = set()
-                    for i in task_conf["inputs"]:
-                        k = i.get("upstream_task_key")
-                        if k is not None:
-                            upstream_task_keys.add(k)
-                    yield state_file, upstream_task_keys, None
+
+                yield task_key, task_control_dir, state_file_dir_entry
+
+    def load_completed_tasks_for_query(self, glob_filter=None):
+        for task_key, task_control_dir, state_file_dir_entry in self._iterate_all_tasks(glob_filter):
+            if state_file_dir_entry.name == "state.completed":
+                yield task_key, TaskInputsOutputs()
+
+    def load_state_files_for_run(self, glob_filter=None):
+        for task_key, task_control_dir, state_file_dir_entry in self._iterate_all_tasks(glob_filter):
+            state_file = StateFile(
+                self.pipeline_work_dir, task_key, None, self, path=state_file_dir_entry.path
+            )
+            self.state_files_in_memory[task_key] = state_file
+            task_conf = self._load_task_conf(task_control_dir)
+            if state_file.is_completed():
+                yield True, state_file, None, TaskInputsOutputs()
+            else:
+                upstream_task_keys = set()
+                for i in task_conf["inputs"]:
+                    k = i.get("upstream_task_key")
+                    if k is not None:
+                        upstream_task_keys.add(k)
+                yield False, state_file, upstream_task_keys, None
 
     def create_true_state_if_new_else_fetch_from_memory(self, task):
         """
@@ -171,11 +187,12 @@ class StateMachine:
         self.keys_of_tasks_waiting_for_external_events: set[str] = set()
         self._ready_state_files_loaded_from_disk = None
 
-    def load_from_instance_dir(self):
+    def prepare_for_run_without_generator(self):
         self._ready_state_files_loaded_from_disk = []
         incomplete_task_files_with_upstream_task_keys = []
-        for state_file, upstream_task_keys, inputs_outputs in self.state_file_tracker.load_all_state_files():
-            if state_file.is_completed():
+        for is_completed, state_file, upstream_task_keys, inputs_outputs in \
+                self.state_file_tracker.load_state_files_for_run():
+            if is_completed:
                 self.completed_task_keys[state_file.task_key] = inputs_outputs
             else:
                 incomplete_task_files_with_upstream_task_keys.append((state_file, upstream_task_keys))
