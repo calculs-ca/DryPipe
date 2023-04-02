@@ -4,17 +4,19 @@ import os.path
 from pathlib import Path
 
 
+# TODO: rename to TaskState
 class StateFile:
 
-    def __init__(self, pipeline_work_dir, task_key, current_hash_code, tracker, path=None):
+    def __init__(self, task_key, current_hash_code, tracker, path=None):
         self.tracker = tracker
         self.task_key = task_key
         if path is not None:
             self.path = path
         else:
-            self.path = os.path.join(pipeline_work_dir, task_key, "state.waiting")
+            self.path = os.path.join(tracker.pipeline_work_dir, task_key, "state.waiting")
         self.hash_code = current_hash_code
-        self.inputs_outputs = None
+        self.inputs = None
+        self.outputs = None
 
     def __str__(self):
         return f"/{self.task_key}/{os.path.basename(self.path)}"
@@ -28,11 +30,11 @@ class StateFile:
     def is_completed(self):
         return self.path.endswith("state.completed")
 
-    def load_inputs_outputs(self):
-        if self.is_completed():
-            self.inputs_outputs = 123
-        else:
-            self.hash_code = "123"
+    def set_completed(self, task_outputs, resolved_task_inputs):
+        self.path = os.path.join(self.tracker.pipeline_work_dir, self.task_key, "state.completed")
+        self.outputs = task_outputs
+        self.inputs = resolved_task_inputs
+
 
 class StateFileTracker:
 
@@ -86,7 +88,7 @@ class StateFileTracker:
         assert task.key == task_key
         task_conf = self._load_task_conf(task_control_dir)
         current_hash_code = task.compute_hash_code()
-        state_file = StateFile(pipeline_work_dir, task_key, current_hash_code, self, path=state_file_path)
+        state_file = StateFile(task_key, current_hash_code, self, path=state_file_path)
         if state_file.is_completed():
             pass
             #load inputs and outputs
@@ -122,7 +124,7 @@ class StateFileTracker:
     def load_state_files_for_run(self, glob_filter=None):
         for task_key, task_control_dir, state_file_dir_entry in self._iterate_all_tasks(glob_filter):
             state_file = StateFile(
-                self.pipeline_work_dir, task_key, None, self, path=state_file_dir_entry.path
+                task_key, None, self, path=state_file_dir_entry.path
             )
             self.state_files_in_memory[task_key] = state_file
             task_conf = self._load_task_conf(task_control_dir)
@@ -157,7 +159,7 @@ class StateFileTracker:
                 # task is new
                 hash_code = task.compute_hash_code()
                 task.save(self.pipeline_instance_dir, hash_code)
-                state_file_in_memory = StateFile(self.pipeline_work_dir, task.key, hash_code, self)
+                state_file_in_memory = StateFile(task.key, hash_code, self)
                 self.state_files_in_memory[task.key] = state_file_in_memory
                 Path(state_file_in_memory.path).touch(exist_ok=False)
                 self.new_save_count += 1

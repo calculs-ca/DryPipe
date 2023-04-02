@@ -40,6 +40,7 @@ class StateFileTrackerMockup:
     def __init__(self):
         self.state_files_in_memory: dict[str, StateFile] = {}
         self.task_keys_to_task_states_on_mockup_disk: dict[str, str] = {}
+        self.pipeline_work_dir = "/"
 
     def set_completed_on_disk(self, task_key):
         self.task_keys_to_task_states_on_mockup_disk[task_key] = "state.completed"
@@ -69,7 +70,7 @@ class StateFileTrackerMockup:
         true_task_state = self.task_keys_to_task_states_on_mockup_disk.get(task.key)
 
         if true_task_state is None:
-            s = StateFile("/", task.key, task.compute_hash_code(), self)
+            s = StateFile(task.key, task.compute_hash_code(), self)
             self.task_keys_to_task_states_on_mockup_disk[task.key] = s.state_as_string()
             self.state_files_in_memory[task.key] = s
             return True, s
