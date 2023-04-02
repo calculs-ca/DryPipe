@@ -48,6 +48,11 @@ class StateFileTrackerMockup:
     def state_file_in_memory(self, task_key):
         return self.state_files_in_memory[task_key]
 
+    def completed_task_keys(self):
+        for k, state_file in self.state_files_in_memory.items():
+            if state_file.is_completed():
+                yield k
+
     def fetch_true_state_and_update_memory_if_changed(self, task_key):
 
         true_task_state = self.task_keys_to_task_states_on_mockup_disk.get(task_key)
@@ -59,7 +64,7 @@ class StateFileTrackerMockup:
         if str(state_file_in_memory) == f"/{task_key}/{true_task_state}":
             return None
         else:
-            state_file_in_memory.update_in_memory(f"/{task_key}/{true_task_state}")
+            state_file_in_memory.refresh(f"/{task_key}/{true_task_state}")
             return state_file_in_memory
 
     def create_true_state_if_new_else_fetch_from_memory(self, task):

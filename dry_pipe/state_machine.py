@@ -21,8 +21,14 @@ class StateFile:
     def __str__(self):
         return f"/{self.task_key}/{os.path.basename(self.path)}"
 
-    def update_in_memory(self, path):
+    def refresh(self, path):
+        previous_state = self.path
         self.path = path
+        assert self.path != previous_state
+        if path.endswith("state.completed"):
+            # load from file:
+            self.outputs = None
+            self.inputs = None
 
     def state_as_string(self):
         return os.path.basename(self.path)
@@ -30,10 +36,6 @@ class StateFile:
     def is_completed(self):
         return self.path.endswith("state.completed")
 
-    def set_completed(self, task_outputs, resolved_task_inputs):
-        self.path = os.path.join(self.tracker.pipeline_work_dir, self.task_key, "state.completed")
-        self.outputs = task_outputs
-        self.inputs = resolved_task_inputs
 
 
 class StateFileTracker:
@@ -52,6 +54,11 @@ class StateFileTracker:
             os.path.join(self.pipeline_work_dir, task_key, "state.completed")
         )
 
+    def completed_task_keys(self):
+        for k, state_file in self.state_files_in_memory.items():
+            if state_file.is_completed():
+                yield k
+
     def state_file_in_memory(self, task_key):
         return self.state_files_in_memory[task_key]
 
@@ -66,15 +73,15 @@ class StateFileTracker:
         return None
 
     def fetch_true_state_and_update_memory_if_changed(self, task_key):
-        cached_state_file = self.state_file_in_memory(task_key)
-        if os.path.exists(cached_state_file.path):
+        state_file = self.state_file_in_memory(task_key)
+        if os.path.exists(state_file.path):
             return None
         else:
             file = self._find_state_file_in_task_control_dir(task_key)
             if file is None:
                 raise Exception(f"no state file exists in {os.path.join(self.pipeline_work_dir, task_key)}")
-            cached_state_file.update_in_memory(file.path)
-            return cached_state_file
+            state_file.refresh(file.path)
+            return state_file
 
     def _load_task_conf(self, task_control_dir):
         with open(os.path.join(task_control_dir, "task-conf.json")) as tc:
@@ -100,7 +107,7 @@ class StateFileTracker:
         self.load_from_disk_count += 1
         return state_file
 
-    def _iterate_all_tasks(self, glob_filter):
+    def _iterate_all_tasks_from_disk(self, glob_filter):
         with os.scandir(self.pipeline_work_dir) as pwd_i:
             for task_control_dir_entry in pwd_i:
                 task_control_dir = task_control_dir_entry.path
@@ -117,26 +124,26 @@ class StateFileTracker:
                 yield task_key, task_control_dir, state_file_dir_entry
 
     def load_completed_tasks_for_query(self, glob_filter=None):
-        for task_key, task_control_dir, state_file_dir_entry in self._iterate_all_tasks(glob_filter):
+        for task_key, task_control_dir, state_file_dir_entry in self._iterate_all_tasks_from_disk(glob_filter):
             if state_file_dir_entry.name == "state.completed":
                 yield task_key, TaskInputsOutputs()
 
     def load_state_files_for_run(self, glob_filter=None):
-        for task_key, task_control_dir, state_file_dir_entry in self._iterate_all_tasks(glob_filter):
+        for task_key, task_control_dir, state_file_dir_entry in self._iterate_all_tasks_from_disk(glob_filter):
             state_file = StateFile(
                 task_key, None, self, path=state_file_dir_entry.path
             )
             self.state_files_in_memory[task_key] = state_file
             task_conf = self._load_task_conf(task_control_dir)
             if state_file.is_completed():
-                yield True, state_file, None, TaskInputsOutputs()
+                yield True, state_file, None
             else:
                 upstream_task_keys = set()
                 for i in task_conf["inputs"]:
                     k = i.get("upstream_task_key")
                     if k is not None:
                         upstream_task_keys.add(k)
-                yield False, state_file, upstream_task_keys, None
+                yield False, state_file, upstream_task_keys
 
     def create_true_state_if_new_else_fetch_from_memory(self, task):
         """
@@ -184,7 +191,6 @@ class StateMachine:
         self.task_generator = task_generator
         self.observer = observer
 
-        self.completed_task_keys: dict[str, TaskInputsOutputs] = {}
         self.keys_of_waiting_tasks_to_set_of_incomplete_upstream_task_keys: dict[str, set[str]] = {}
         self.keys_of_tasks_waiting_for_external_events: set[str] = set()
         self._ready_state_files_loaded_from_disk = None
@@ -192,11 +198,8 @@ class StateMachine:
     def prepare_for_run_without_generator(self):
         self._ready_state_files_loaded_from_disk = []
         incomplete_task_files_with_upstream_task_keys = []
-        for is_completed, state_file, upstream_task_keys, inputs_outputs in \
-                self.state_file_tracker.load_state_files_for_run():
-            if is_completed:
-                self.completed_task_keys[state_file.task_key] = inputs_outputs
-            else:
+        for is_completed, state_file, upstream_task_keys in self.state_file_tracker.load_state_files_for_run():
+            if not is_completed:
                 incomplete_task_files_with_upstream_task_keys.append((state_file, upstream_task_keys))
 
         for state_file, upstream_task_keys in incomplete_task_files_with_upstream_task_keys:
@@ -228,7 +231,7 @@ class StateMachine:
             return False
 
     def set_of_completed_task_keys(self) ->  set[str]:
-        return set(self.completed_task_keys.keys())
+        return set(self.state_file_tracker.completed_task_keys())
 
     def _ready_state_files_from_generator(self):
         for task in self.task_generator():
@@ -260,7 +263,6 @@ class StateMachine:
                 true_state_file = self.state_file_tracker.fetch_true_state_and_update_memory_if_changed(task_key)
                 if true_state_file is not None:
                     if true_state_file.is_completed():
-                        self.completed_task_keys[true_state_file.task_key] = TaskInputsOutputs()
                         yield task_key
 
         newly_completed_task_keys = list(gen_newly_completed_task_keys())
