@@ -12,11 +12,10 @@ def multiply_by_x(x, y):
 def pipeline(dsl):
     yield dsl.task(
         key="multiply_x_by_y"
-    ).consumes(
-        x=dsl.val(3),
-        y=dsl.val(5)
-    ).produces(
-        result=dsl.var(int)
+    ).inputs(
+        x=3, y=4
+    ).outputs(
+        result=int
     ).calls(
         multiply_by_x
     )()

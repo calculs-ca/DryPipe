@@ -6,16 +6,13 @@ import json
 import os
 import pathlib
 import shutil
-from itertools import groupby
 
 import textwrap
 
-from dry_pipe.script_lib import parse_in_out_meta, PortablePopen, FileCreationDefaultModes, \
+from dry_pipe.script_lib import FileCreationDefaultModes, \
     TaskInput, TaskOutput, resolve_upstream_and_constant_vars, iterate_file_task_outputs
 from dry_pipe import bash_shebang
-from dry_pipe.internals import \
-    IndeterminateFile, ProducedFile, IncompleteVar, Val, \
-    OutputVar, InputFile, InputVar, FileSet, OutFileSet, ValidationError, flatten, TaskProps
+from dry_pipe.internals import ProducedFile, OutFileSet, ValidationError
 
 from dry_pipe.script_lib import task_script_header, iterate_out_vars_from
 from dry_pipe.task_state import TaskState
@@ -33,40 +30,15 @@ class Task:
     def load_from_task_state(task_state):
         return Task(None, task_state)
 
-    def __init__(self, task_builder, task_state=None):
+    def __init__(self, task_builder):
 
-        if task_state is not None:
-            self.key = task_state.task_key
-
-            class ShallowPipelineInstance:
-                def __init__(self):
-                    self.pipeline_instance_dir = task_state.pipeline_instance_dir()
-
-            self.pipeline_instance = ShallowPipelineInstance()
-
-            from dry_pipe import TaskConf
-
-            with open(os.path.join(
-                task_state.control_dir(), "task-conf.json"
-            )) as f:
-                task_conf_json = json.loads(f.read())
-
-                self.task_conf = TaskConf.from_json(task_conf_json)
-                self.executer = self.task_conf.create_executer()
-                self.outputs = TaskOutputs(self, task_conf_json)
-                self.inputs = TaskInputs(self, task_conf_json)
-            return
-
-        self.inputs = TaskInputs(self)
-        self.outputs = TaskOutputs(self)
+        self.inputs = TaskInputs(self, task_inputs=task_builder._consumes.values())
+        self.outputs = TaskOutputs(self, task_outputs=task_builder._produces.values())
         self.python_bin = None
         self.conda_env = None
         self.key = task_builder.key
         self.pipeline_instance = task_builder.pipeline_instance
         self.task_steps = task_builder.task_steps
-        self.props = TaskProps(self, task_builder._props)
-        self.upstream_task_completion_dependencies = task_builder._upstream_task_completion_dependencies
-        self.produces = task_builder._produces
         self.task_conf = task_builder.task_conf
 
         self.has_python_step = False
@@ -76,54 +48,12 @@ class Task:
                 self.has_python_step = True
                 break
 
-        def gen_produced_items_dict():
-            fileset_count = 0
-            for k, v in task_builder._produces.items():
-                if isinstance(v, IncompleteVar):
-                    yield k, OutputVar(v.type, v.may_be_none, k, self)
-                elif isinstance(v, IndeterminateFile):
-                    yield k, v.produced_file(k, self)
-                elif isinstance(v, FileSet):
-                    yield k, v.out_file_set(self, k)
-                else:
-                    raise Exception(f"produced type {v}")
-
-        self.produces = dict(gen_produced_items_dict())
-
-        vals = {}
-        pre_existing_files = {}
-        input_vars = {}
-        task_matchers = {}
-
-        def gen_dependent_items_dict():
-            for k, v in task_builder._consumes.items():
-                if isinstance(v, IndeterminateFile):
-                    pre_existing_files[k] = v.pre_existing_file()
-                elif isinstance(v, OutputVar):
-                    iv = v.input_var(k)
-                    input_vars[k] = iv
-                    yield k, iv
-                elif isinstance(v, ProducedFile):
-                    yield k, v.input_file(k)
-                elif isinstance(v, Val):
-                    vals[k] = v
-                else:
-                    raise Exception(f"unknown dep type {v}")
-
-        self.upstream_deps_iterator = Task._create_upstream_deps_iterator(dict(gen_dependent_items_dict()))
-
-        def sort_dict(d):
-            return collections.OrderedDict(sorted([(k, v) for k, v in d.items()]))
-
-        self.vals = sort_dict(vals)
-
-        self.pre_existing_files = sort_dict(pre_existing_files)
-
-        self.input_vars = sort_dict(input_vars)
-
-        self.task_matchers = sort_dict(task_matchers)
-
-        self.out = TaskOut(self, self.produces)
+    def upstream_dep_keys(self):
+        return [
+            i.upstream_task_key
+            for i in self.inputs
+            if i.upstream_task_key is not None
+        ]
 
     def is_rehydrated(self):
         return self.out.is_rehydrated()
@@ -145,335 +75,8 @@ class Task:
             if isinstance(item, ProducedFile):
                 yield item
 
-    @staticmethod
-    def _create_upstream_deps_iterator(consumes_items):
-
-        def gen_input_vars():
-            for _can_ignore_var_name_in_consuming_task, input_var in consumes_items.items():
-                if isinstance(input_var, InputVar):
-                    yield input_var
-
-        def group_func(dv):
-            return dv.output_var.producing_task.key
-
-        def upstream_tasks_from_input_var_deps():
-            for _task_key, input_vars in groupby(sorted(gen_input_vars(), key=group_func), group_func):
-                input_vars = list(input_vars)
-                upstream_task = input_vars[0].output_var.producing_task
-                yield upstream_task, 0, input_vars
-
-        def gen_input_files():
-            for _can_ignore_var_name_in_consuming_task, input_file in consumes_items.items():
-                if isinstance(input_file, InputFile):
-                    yield input_file
-
-        def group_func_2(input_file):
-            return input_file.produced_file.producing_task.key
-
-        def upstream_tasks_from_input_file_deps():
-            for _task_key, input_files in groupby(sorted(gen_input_files(), key=group_func_2), group_func_2):
-                input_files = list(input_files)
-                upstream_task = input_files[0].produced_file.producing_task
-                yield upstream_task, 1, input_files
-
-        merged_tasks = list(upstream_tasks_from_input_file_deps()) + list(upstream_tasks_from_input_var_deps())
-
-        def merge_grouper(t):
-            return t[0].key
-
-        def sort_deps(deps):
-            return list(sorted(flatten(deps), key=lambda d: d.var_name_in_consuming_task))
-
-        def gen_it():
-            for _k, tu3 in groupby(sorted(merged_tasks, key=merge_grouper), key=merge_grouper):
-                tu3 = list(tu3)
-                upstream_input_vars = sort_deps([l for _k, i, l in tu3 if i == 0])
-                upstream_input_files = sort_deps([l for _k, i, l in tu3 if i == 1])
-                upstream_task = tu3[0][0]
-
-                yield upstream_task, upstream_input_files, upstream_input_vars
-
-        cached_it = list(sorted(
-            gen_it(),
-            key=lambda t: t[0].key
-        ))
-
-        return lambda: cached_it
-
-    def _input_meta_data(self):
-        for _, upstream_input_files, upstream_input_vars in self.upstream_deps_iterator():
-            for input_file in upstream_input_files:
-                produced_file = input_file.produced_file
-                yield TaskInput(
-                    input_file.var_name_in_consuming_task,
-                    'file',
-                    produced_file.producing_task.key,
-                    name_in_upstream_task=produced_file.var_name,
-                    file_name=produced_file.file_path
-                )
-
-            for input_var in upstream_input_vars:
-                output_var = input_var.output_var
-                yield TaskInput(
-                    input_var.var_name_in_consuming_task,
-                    output_var.type_str(),
-                    output_var.producing_task.key,
-                    output_var.name
-                )
-
-        for name, val in self.vals.items():
-            yield TaskInput(
-                name,
-                "glob_expression" if val.is_glob_expression else val.type_str(),
-                value=val.value
-            )
-
-
-        for name, file in self.pre_existing_files.items():
-            yield TaskInput(
-                name,
-                "file",
-                file_name=file.file_path
-            )
-
-    def _output_meta_data(self):
-        for name, produced_item in self.produces.items():
-            if isinstance(produced_item, ProducedFile):
-                rel_path = produced_item.absolute_path(self)
-                yield TaskOutput(produced_item.var_name, 'file', os.path.basename(rel_path))
-            elif isinstance(produced_item, OutputVar):
-                if name != produced_item.name:
-                    raise Exception(f"{name} != {produced_item.name}")
-                yield TaskOutput(name, produced_item.type_str())
-
     def _visit_input_and_output_files(self, collect_deps_and_outputs_func):
-
-        for k, v in self.out.produces.items():
-            if isinstance(v, ProducedFile):
-                if collect_deps_and_outputs_func is not None:
-                    collect_deps_and_outputs_func(None, v.absolute_path(self))
-            elif isinstance(v, OutFileSet):
-                if collect_deps_and_outputs_func is not None:
-                    collect_deps_and_outputs_func(None, os.path.join(self.work_dir(), v.file_set.glob_pattern))
-
-        for k, v in self.pre_existing_files.items():
-            ap = v.absolute_path(self)
-            if collect_deps_and_outputs_func is not None:
-                collect_deps_and_outputs_func(ap, None, v.remote_cache_bucket)
-
-        for upstream_task, upstream_input_files, upstream_input_vars in self.upstream_deps_iterator():
-            for input_file in upstream_input_files:
-
-                if collect_deps_and_outputs_func is not None:
-                    collect_deps_and_outputs_func(input_file.produced_file.absolute_path(upstream_task), None)
-
-
-    def read_out_signatures_file_into_dict(self):
-        def d():
-            with open(self._single_glob_in_control_dir("out.*.sig")) as f:
-                for line in f.readlines():
-                    file_name, sig, path = line.split("\t")
-                    if path != "":
-                        yield file_name, sig
-
-        return dict(d())
-
-    def _glob_in_control_dir(self, pattern):
-        return glob.glob(os.path.join(self.v_abs_control_dir(), pattern))
-
-    def _single_glob_in_control_dir(self, pattern):
-        file_names = list(self._glob_in_control_dir(pattern))
-        if len(file_names) != 1:
-            raise Exception(f"expected 1 file for pattern '{pattern}' in {self.v_abs_control_dir()}, got {len(file_names)}")
-        return file_names[0]
-
-    def _delete_glob_if_exists(self, pattern, expect_exactly_1=True):
-
-        if expect_exactly_1:
-            f = self._single_glob_in_control_dir(pattern)
-            os.remove(f)
-
-        for f in self._glob_in_control_dir(pattern):
-            os.remove(f)
-
-    def calc_input_signature(self):
-
-        sha1sum = hashlib.sha1()
-
-        def add_sig(s):
-            if s is not None:
-                sha1sum.update(s.encode('utf-8'))
-
-        hash_els = list(
-            sorted(self.iterate_input_signature_elements(), key=lambda t: (t[3], t[0]))
-        )
-
-        for k, v, _i1, _i2 in hash_els:
-            add_sig(k)
-            add_sig('\t')
-            add_sig(v)
-
-        h = sha1sum.hexdigest()
-
-        def signature_file_writer(write_changed_flag=False):
-
-            changed_flat_file_name = self._input_signature_changed_file()
-
-            if write_changed_flag:
-                file_name = changed_flat_file_name
-            else:
-                if os.path.exists(changed_flat_file_name):
-                    os.remove(changed_flat_file_name)
-
-                file_name = self.input_signature_file()
-
-            with open(file_name, "w") as f:
-                f.write(h)
-                f.write("\n")
-                for k, v, path_if_file, _i3 in hash_els:
-                    p = ''
-
-                    if path_if_file is not None:
-                        p = os.path.relpath(path_if_file, self.pipeline_instance.pipeline_instance_dir)
-
-                    f.write(f"{k}\t{v}\t{p}\n")
-
-        return h, signature_file_writer
-
-    def write_input_signature(self):
-        s, write_file = self.calc_input_signature()
-        write_file()
-
-    @staticmethod
-    def _signature_from_sha1sum_file(sig_file):
-        if os.path.exists(sig_file):
-            with open(sig_file) as f:
-                sig = f.read().split(" ")[0]
-                return sig
-        else:
-            #TODO: FIXME !
-            return "da39a3ee5e6b4b0d3255bfef95601890afd80709"
-
-    def clear_input_changed_flag(self):
-        f = self._input_signature_changed_file()
-        if os.path.exists(f):
-            os.remove(f)
-
-    def signature_of_produced_file(self, produced_file_base_name, fail_func=lambda: None):
-
-        sig_file = os.path.join(
-            self.v_abs_control_dir(), "out_sigs",
-            f"{os.path.basename(produced_file_base_name)}.sig"
-        )
-
-        if os.path.exists(sig_file):
-            return Task._signature_from_sha1sum_file(sig_file)
-        else:
-            fail_func()
-
-    def iterate_input_signature_elements(self):
-
-        for k, v in self.vals.items():
-            yield k, v.serialized_value(), None, 0
-
-        for file_name, pre_existing_file in self.pre_existing_files.items():
-
-            fn = os.path.basename(pre_existing_file.file_path)
-
-            sig_file = os.path.join(
-                self.pipeline_instance.pipeline_instance_dir, ".drypipe", "in_sigs", f"{fn}.sig")
-
-            sig = Task._signature_from_sha1sum_file(sig_file)
-
-            yield file_name, sig, None, 1
-
-        for upstream_task, upstream_input_files, upstream_input_vars in self.upstream_deps_iterator():
-
-            task_state = upstream_task.get_state()
-
-            #if task_state.is_stale():
-            #    raise UpstreamDepsChanged()
-
-            for input_file in upstream_input_files:
-
-                produce_file_abs_path = self.abs_from_pipeline_instance_dir(
-                    input_file.produced_file.absolute_path(self)
-                )
-
-                sig = upstream_task.signature_of_produced_file(produce_file_abs_path)
-
-                yield input_file.var_name_in_consuming_task, sig, produce_file_abs_path, 1
-
-            for k, v in upstream_task.resolve_output_vars_for_consuming_task(self):
-                yield k, str(v), None, 2
-
-        for k, m in self.task_matchers.items():
-            for upstream_task in self.pipeline_instance.tasks:
-                task_state = upstream_task.get_state()
-                if pathlib.PurePath(upstream_task.key).match(m.task_keys_glob_pattern):
-                    if not task_state.is_completed():
-                        raise MissingUpstreamDeps(
-                            f"{self} can't calc input_hash, upstream task {upstream_task} has not completed"
-                        )
-                    #elif task_state.is_stale():
-                    #    raise UpstreamDepsChanged()
-                    else:
-                        yield f"task:{upstream_task.key}", upstream_task.output_signature(), None, 2
-
-    def _calc_output_signature(self):
-
-        def iterate_output_signature_elements():
-
-            for k, v in self.iterate_out_vars():
-                yield k, str(v or ""), "", 0
-
-            sig_files = os.path.join(
-                self.v_abs_control_dir(), "out_sigs", "*.sig"
-            )
-
-            for sig_file in glob.glob(sig_files):
-
-                def fail():
-                    raise Exception(f"expected {sig_file} to exist")
-
-                # strip .sig
-                sig_file = sig_file[:-4]
-                sig = self.signature_of_produced_file(sig_file, fail)
-                path_within_pipeline_instance = os.path.relpath(sig_file, self.pipeline_instance.pipeline_instance_dir)
-                yield os.path.basename(sig_file), sig, path_within_pipeline_instance, 1
-
-        rows = list(
-            sorted(iterate_output_signature_elements(), key=lambda t: (t[3], t[0]))
-        )
-
-        sha1sum = hashlib.sha1()
-
-        def add_to_sig(s):
-            sha1sum.update(s.encode('utf-8'))
-
-        for name, item_sig, path_or_none, _i in rows:
-            add_to_sig(name)
-            add_to_sig("\t")
-            add_to_sig(item_sig)
-
-        task_out_sig = sha1sum.hexdigest()
-
-        def rewrite_file_func():
-            with open(self.v_abs_output_signature_file(), "w") as f:
-                f.write(sha1sum.hexdigest())
-                f.write("\n")
-                for name, sig, path_or_none, _i in rows:
-                    f.write(f"{name}\t{sig}\t{'' or path_or_none}\n")
-
-            #sf = self._output_signature_stale_file()
-            #if os.path.exists(sf):
-            #    os.remove(sf)
-
-        return task_out_sig, rewrite_file_func
-
-    def write_output_signature_file(self):
-        sig, write_file_func = self._calc_output_signature()
-        write_file_func()
+        raise Exception(f"to implement")
 
     def iterate_out_vars(self):
         of = self.v_abs_output_var_file()
@@ -482,39 +85,6 @@ class Task:
 
     def out_vars_by_name(self):
         return dict(self.iterate_out_vars())
-
-    def resolve_output_vars_for_consuming_task(self, consuming_task):
-
-        consuming_vars = list([
-            input_var
-            for k, input_var in consuming_task.input_vars.items()
-            if input_var.output_var.producing_task.key == self.key
-        ])
-
-        if len(consuming_vars) == 0:
-            return
-
-        produced_vars_values_by_name = self.out_vars_by_name()
-
-        for consuming_input_var in consuming_vars:
-
-            var_name_in_this_producing_task = consuming_input_var.output_var.name
-
-            v = produced_vars_values_by_name.get(var_name_in_this_producing_task)
-
-            if v is not None:
-                name = consuming_input_var.var_name_in_consuming_task
-                yield name, consuming_input_var.output_var.unformat_for_python(v)
-                #if self.has_python_step:
-                #    yield f"{name}_python", consuming_input_var.output_var.format_for_python(v)
-
-            elif not consuming_input_var.output_var.may_be_none:
-                msg = f"unmet dependency: {consuming_task}._consumes(" + \
-                      f"{consuming_input_var.var_name_in_consuming_task}={self.key}.out." + \
-                      f"{var_name_in_this_producing_task})" + \
-                      f"\n{self} has NOT produced variable '{var_name_in_this_producing_task}' " + \
-                      f"as declared in produces() clause"
-                raise MissingOutvars(msg)
 
     def prepare(self):
 
@@ -546,11 +116,11 @@ class Task:
             task_conf_json = self.task_conf.as_json()
 
             task_conf_json["inputs"] = [
-                i.as_json() for i in self._input_meta_data()
+                i.as_json() for i in self.inputs
             ]
 
             task_conf_json["outputs"] = [
-                o.as_json() for o in self._output_meta_data()
+                o.as_json() for o in self.outputs
             ]
 
             f.write(json.dumps(task_conf_json, indent=2))
@@ -794,35 +364,8 @@ class Task:
     def slurm_job_id_file(self):
         return os.path.join(self.control_dir(), "slurm_job_id")
 
-    def input_signature_file(self):
-        return os.path.join(self.v_abs_control_dir(), "in.sig")
-
-    def _input_signature_changed_file(self):
-        return os.path.join(self.v_abs_control_dir(), "in.sig.changed")
-
     def is_input_signature_flagged_as_changed(self):
         return os.path.exists(self._input_signature_changed_file())
-
-    def output_signature_file(self):
-        return os.path.join(self.v_abs_control_dir(), "out.sig")
-
-    def _output_signature_stale_file(self):
-        return os.path.join(self.v_abs_control_dir(), "out.sig.stale")
-
-    def _read_signature_from_sig_file(self, sig_file):
-        #TODO: FIX ME:
-
-        if not os.path.exists(sig_file):
-            return "fixme"
-
-        with open(sig_file) as f:
-            return f.readline().strip()
-
-    def output_signature(self):
-        return self._read_signature_from_sig_file(self.output_signature_file())
-
-    def input_signature(self):
-        return self._read_signature_from_sig_file(self.input_signature_file())
 
     def output_var_file(self):
         return os.path.join(self.control_dir(), "output_vars")
@@ -875,8 +418,18 @@ class Task:
     def abs_path_of_produced_file(self, file_name):
         return os.path.join(self.v_abs_work_dir(), file_name)
 
-    def max_retries(self):
-        return 1
+    def compute_hash_code(self):
+        return "123"
+
+    def save(self, pipeline_instance_dir, hash_code):
+
+        class ShallowPipelineInstance:
+            def __init__(self):
+                self.pipeline_instance_dir = pipeline_instance_dir
+
+        self.pipeline_instance = ShallowPipelineInstance()
+        self._create_state_file_and_control_dir()
+        self.prepare()
 
     def __getattr__(self, name):
 
@@ -947,11 +500,10 @@ class Task:
 
         raise Exception(f"expected one task state file (state.*) in {self}, got {len(f)}")
 
-    def create_state_file_and_control_dir(self):
+    def _create_state_file_and_control_dir(self):
 
         for d in [
-            self.v_abs_control_dir(),
-            os.path.join(self.v_abs_control_dir(), "out_sigs"),
+            self.v_abs_control_dir()
         ]:
             pathlib.Path(d).mkdir(
                 parents=True, exist_ok=True, mode=FileCreationDefaultModes.pipeline_instance_directories)
@@ -966,36 +518,6 @@ class Task:
 
         return TaskState.create_non_existing(self.v_abs_control_dir())
 
-    def _is_completed_and_input_hash_changed(self):
-
-        task_state = self.get_state()
-
-        if not task_state.is_completed():
-            return False
-
-        last_input_hash = self.input_signature()
-        current_input_hash, file_writer = self.calc_input_signature()
-
-        return last_input_hash != current_input_hash
-
-    def verify_output_files_produced(self):
-
-        if False:
-            for name, produced_file in self.produces.items():
-                if isinstance(produced_file, ProducedFile):
-                    rel_path = produced_file.absolute_path(self)
-                    file = self.abs_from_pipeline_instance_dir(rel_path)
-                    if not os.path.exists(file):
-                        raise Exception(f"{self} did not produce file '{name}':'{file}' as specified.")
-
-            for producing_task_key, var_metas, file_metas in parse_in_out_meta(self.get_state().gen_meta_dict()):
-                if producing_task_key != "":
-                    continue
-
-                for name_in_producing_task, var_name, typez in file_metas:
-                    print("!")
-
-
     def reset_logs(self):
 
         if os.path.exists(self.v_abs_err_log()):
@@ -1006,62 +528,6 @@ class Task:
 
         if os.path.exists(self.v_abs_control_error_log()):
             os.remove(self.v_abs_control_error_log())
-
-    def has_unsatisfied_deps(self):
-
-        def iterator_is_empty(i):
-            try:
-                next(i)
-                return False
-            except StopIteration as e:
-                return True
-
-        return not iterator_is_empty(self.iterate_unsatisfied_deps())
-
-
-    MISSING_PRE_EXISTING_FILE = 0
-    UPSTREAM_TASK_NOT_COMPLETED = 1
-
-    def iterate_unsatisfied_deps(self):
-
-        for upstream_task in self.upstream_task_completion_dependencies:
-            task_state = upstream_task.get_state()
-            if not task_state.is_completed():
-                yield f"{self} depends on {upstream_task} to be completed, it is in state: {task_state.state_name}", \
-                    Task.UPSTREAM_TASK_NOT_COMPLETED, self, [], []
-
-        for k, pre_existing_file in self.pre_existing_files.items():
-            p = self.abs_from_pipeline_instance_dir(pre_existing_file.absolute_path(self))
-            if not os.path.exists(p):
-                yield f"pre existing file '{k}'='{p}' not found", Task.MISSING_PRE_EXISTING_FILE, self, [], []
-
-        for upstream_task, upstream_input_files, upstream_input_vars in self.upstream_deps_iterator():
-
-            task_state = upstream_task.get_state()
-
-            if task_state is None or not task_state.is_completed():
-                yield f"upstream task {upstream_task} has not completed", \
-                      Task.UPSTREAM_TASK_NOT_COMPLETED, upstream_task, upstream_input_files, upstream_input_vars
-
-        for k, m in self.task_matchers.items():
-
-            matched_tasks = [
-                upstream_task
-                for upstream_task in self.pipeline_instance.tasks
-                if pathlib.PurePath(upstream_task.key).match(m.task_keys_glob_pattern)
-            ]
-
-            if len(matched_tasks) == 0:
-                yield f"aggregate task {self} has none of it's upstream task completed", \
-                      Task.UPSTREAM_TASK_NOT_COMPLETED, None, [], []
-                break
-
-            for t in matched_tasks:
-                if not t.get_state().is_completed():
-                    yield f"at least one task required for {self} has not completed ({t.key})", \
-                          Task.UPSTREAM_TASK_NOT_COMPLETED, t, [], []
-                    break
-
 
     def out_log(self):
         return os.path.join(self.control_dir(), "out.log")
@@ -1098,27 +564,6 @@ class Task:
             pass
 
         executer.execute(self, touch_pid_file, wait_for_completion, fail_silently)
-
-    """
-        Recomputes out.sig (output signatures) of the task         
-    """
-    def recompute_output_singature(self, recalc_hash_script):
-
-        with PortablePopen(
-            f"bash -c '. {self.v_abs_task_env_file()} && {recalc_hash_script}'",
-            env={
-                "__sig_dir": "out_sigs",
-                "__pipeline_instance_dir": self.pipeline_instance.pipeline_instance_dir
-            },
-            shell=True
-        ) as p:
-            p.wait_and_raise_if_non_zero()
-            previously_computed_out_sig = self.output_signature()
-
-            up_to_date_sig, out_sig_file_writer = self._calc_output_signature()
-
-            if up_to_date_sig != previously_computed_out_sig:
-                out_sig_file_writer()
 
 
 class TaskStep:
@@ -1181,64 +626,42 @@ class TaskStep:
         file_writer.write("\n")
 
 
-class TaskOut:
-
-    def __init__(self, task, produces):
-        self.task = task
-        self.produces = produces
-
-    def is_rehydrated(self):
-        return False
-
-    def __getattr__(self, name):
-        p = self.produces.get(name)
-
-        if p is None:
-            raise ValidationError(
-                f"task {self.task} does not declare a variable '{name}' in it's produces() clause.\n" +
-                f"Use task({self.task.key}).produces({name}=...) to specify output"
-            )
-
-        return p
-
-    def check_for_mis_understanding_of_dsl(self, name):
-        produced_file = self.produces.get(name)
-        if produced_file is not None:
-            raise ValidationError(
-                f"please refer to task produced vars with task.out.{name}, not task.{name}."
-            )
-
 class TaskInputs:
 
-    def __init__(self, task, task_conf_json=None):
+    def __init__(self, task, task_conf_json=None, task_inputs=None):
         self.task = task
         self.task_conf_json = task_conf_json
-        self._task_inputs = None
+        self._task_inputs = task_inputs
+
+    def __iter__(self):
+        yield from self._task_inputs
 
     def _resolve(self):
 
-        task_state = self.task.get_state()
+        if self._task_inputs is None:
 
-        if not task_state.is_completed():
-            # TODO: relax the task completion constraint, only restrict access to non completed upstream vars
-            raise Exception(
-                f"called _resolve() on a non completed task, ensure task completed before accessing task inputs"
-            )
+            task_state = self.task.get_state()
 
-        if self.task_conf_json is None:
-            task_conf_file = self.task.v_abs_task_conf_file()
-            with open(task_conf_file) as f:
-                task_conf_json = json.loads(f.read())
-        else:
-            task_conf_json = self.task_conf_json
+            if not task_state.is_completed():
+                # TODO: relax the task completion constraint, only restrict access to non completed upstream vars
+                raise Exception(
+                    f"called _resolve() on a non completed task, ensure task completed before accessing task inputs"
+                )
 
-        self._task_inputs = {}
+            if self.task_conf_json is None:
+                task_conf_file = self.task.v_abs_task_conf_file()
+                with open(task_conf_file) as f:
+                    task_conf_json = json.loads(f.read())
+            else:
+                task_conf_json = self.task_conf_json
 
-        for task_input, k, v in resolve_upstream_and_constant_vars(
-            self.task.pipeline_instance.pipeline_instance_dir,
-            task_conf_json
-        ):
-            self._task_inputs[k] = task_input.parse(v)
+            self._task_inputs = {}
+
+            for task_input, k, v in resolve_upstream_and_constant_vars(
+                self.task.pipeline_instance.pipeline_instance_dir,
+                task_conf_json
+            ):
+                self._task_inputs[k] = task_input.parse(v)
 
     def __getattr__(self, name):
 
@@ -1258,10 +681,10 @@ class TaskInputs:
 
 class TaskOutputs:
 
-    def __init__(self, task, task_conf_json=None):
+    def __init__(self, task, task_conf_json=None, task_outputs=None):
         self.task = task
         self.task_conf_json = task_conf_json
-        self._task_outputs = None
+        self._task_outputs = task_outputs
 
     def __iter__(self):
         if self._task_outputs is None:

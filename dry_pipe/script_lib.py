@@ -1453,7 +1453,7 @@ class TaskOutput:
         p = "" if self.produced_file_name is None else f",{self.produced_file_name}"
         return f"TaskOutput({self.name},{self.type}{p})"
 
-    def __init__(self, name, type, produced_file_name=None):
+    def __init__(self, name, type, produced_file_name=None, task_key=None):
         if type not in ['file', 'str', 'int', 'float']:
             raise Exception(f"invalid type {type}")
 
@@ -1464,6 +1464,7 @@ class TaskOutput:
         self.type = type
         self.produced_file_name = produced_file_name
         self._resolved_value = None
+        self.task_key = task_key
 
     def _set_resolved_value(self, v):
         self._resolved_value = self.parse(v)

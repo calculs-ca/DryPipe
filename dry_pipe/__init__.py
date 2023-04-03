@@ -9,7 +9,7 @@ import tempfile
 import textwrap
 from fnmatch import fnmatch
 
-from dry_pipe.script_lib import PortablePopen, parse_ssh_specs, invoke_rsync
+from dry_pipe.script_lib import PortablePopen, parse_ssh_specs, invoke_rsync, TaskInput, TaskOutput
 from dry_pipe.utils import bash_shebang
 from dry_pipe.internals import \
     Executor, Local, PreExistingFile, IndeterminateFile, ProducedFile, \
@@ -399,7 +399,6 @@ class TaskBuilder:
         self.dsl = dsl
         self._props = _props or {}
         self._consumes = _consumes
-        self._upstream_task_completion_dependencies = _upstream_task_completion_dependencies or []
         self._produces = _produces
         self.task_steps = task_steps
         self.task_conf = task_conf
@@ -409,18 +408,14 @@ class TaskBuilder:
 
         def deps():
             for k, v in kwargs.items():
-                if isinstance(v, IndeterminateFile) or isinstance(v, Val):
-                    yield k, v
-                elif isinstance(v, ProducedFile):
-                    if v.is_rehydrated():
-                        yield k, IndeterminateFile(v.file_path, manage_signature=False)
-                    else:
-                        yield k, v
-                elif isinstance(v, OutputVar):
-                    if v.is_rehydrated():
-                        yield k, Val(v.fetch())
-                    else:
-                        yield k, v
+                if isinstance(v, int):
+                    yield k, TaskInput(k, 'int', value=v)
+                elif isinstance(v, str):
+                    yield k, TaskInput(k, 'str', value=v)
+                elif isinstance(v, float):
+                    yield k, TaskInput(k, 'float', value=v)
+                elif isinstance(v, TaskOutput):
+                    yield k, TaskInput(k, v.type, upstream_task_key=v.task_key, name_in_upstream_task=v.name)
                 else:
                     raise ValidationError(
                         f"_consumes can only take DryPipe.file() or _consumes(a_file=other_task.out.name_of_file()" +
@@ -432,7 +427,7 @@ class TaskBuilder:
             ** dict(deps())
         }
 
-    def consumes(self, *args, **kwargs):
+    def inputs(self, *args, **kwargs):
         """
         The consumes clause
         :param args:
@@ -442,7 +437,7 @@ class TaskBuilder:
 
         def deps_from_args():
             for o in args:
-                if isinstance(o, ProducedFile):
+                if isinstance(o, int):
                     if o.is_rehydrated():
                         yield o.var_name, IndeterminateFile(o.file_path, manage_signature=False)
                     else:
@@ -477,7 +472,7 @@ class TaskBuilder:
             ** {"_props": kwargs}
         })
 
-    def produces(self, *args, **kwargs):
+    def outputs(self, *args, **kwargs):
         """
         The produces clause
         :param args:
@@ -493,10 +488,12 @@ class TaskBuilder:
 
         def outputs():
             for k, v in kwargs.items():
-                if isinstance(v, IndeterminateFile):
-                    yield k, v
-                elif isinstance(v, IncompleteVar):
-                    yield k, v
+                if isinstance(v, type(int)):
+                    yield k, TaskOutput(k, 'int', task_key=self.key)
+                elif isinstance(v, str):
+                    yield k, TaskOutput(k, 'str', task_key=self.key)
+                elif isinstance(v, float):
+                    yield k, TaskOutput(k, 'float', task_key=self.key)
                 elif isinstance(v, FileSet):
                     yield k, v
                 else:

@@ -3,6 +3,9 @@ import json
 import os.path
 from pathlib import Path
 
+from dry_pipe import TaskBuilder, TaskConf
+from dry_pipe.script_lib import FileCreationDefaultModes
+
 
 # TODO: rename to TaskState
 class StateFile:
@@ -49,6 +52,12 @@ class StateFileTracker:
         self.load_from_disk_count = 0
         self.resave_count = 0
         self.new_save_count = 0
+
+    def prepare_instance_dir(self):
+        Path(self.pipeline_work_dir).mkdir(
+            exist_ok=True, mode=FileCreationDefaultModes.pipeline_instance_directories)
+        Path(self.pipeline_instance_dir, "output").mkdir(
+            exist_ok=True, mode=FileCreationDefaultModes.pipeline_instance_directories)
 
     def set_completed_on_disk(self, task_key):
         os.rename(
@@ -221,6 +230,18 @@ class StateMachine:
 
         self._no_runnable_tasks_left = False
 
+        self._work_dir_prepared = False
+
+        #TODO: clean up:
+        self.task_conf = TaskConf.default()
+
+    def task(self, key=None, task_conf=None):
+        if key is None:
+            raise Exception(f"key can't be none")
+
+        task_conf = TaskConf.default()
+        return TaskBuilder(key, task_conf=task_conf, dsl=self)
+
     def query_all_completed(self, glob_expression):
 
         query_all_matches_count = 0
@@ -256,6 +277,8 @@ class StateMachine:
                 return []
 
     def prepare_for_run_without_generator(self):
+        self._work_dir_prepared = True
+        # TODO: validate instance dir
         self._ready_state_files_loaded_from_disk = []
         incomplete_task_files_with_upstream_task_keys = []
         for is_completed, state_file, upstream_task_keys in self.state_file_tracker.load_state_files_for_run():
@@ -302,7 +325,7 @@ class StateMachine:
             if is_new:
                 new_generated_tasks += 1
                 if self._register_upstream_task_dependencies_if_any_and_return_ready_status(
-                    task.key, task.upstream_dep_keys
+                    task.key, task.upstream_dep_keys()
                 ):
                     yield state_file
 
@@ -310,6 +333,10 @@ class StateMachine:
             self._generator_exhausted = True
 
     def iterate_tasks_to_launch(self):
+
+        if not self._work_dir_prepared:
+            self.state_file_tracker.prepare_instance_dir()
+            self._work_dir_prepared = True
 
         if self._no_runnable_tasks_left:
             raise AllRunnableTasksCompletedOrInError()

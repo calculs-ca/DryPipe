@@ -336,7 +336,7 @@ def _janitor_ng(pipeline_instance, wait_for_completion=False, fail_silently=Fals
 
         if task_state is None:
             work_done += 1
-            task.create_state_file_and_control_dir()
+            task._create_state_file_and_control_dir()
             task.prepare()
             # assert task.get_state().is_waiting_for_deps()
 
