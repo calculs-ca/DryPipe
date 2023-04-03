@@ -3,8 +3,17 @@ import os
 import unittest
 from pathlib import Path
 
-from dry_pipe.state_machine import StateMachine, StateFile, StateFileTracker
+from dry_pipe.state_machine import StateMachine, StateFile, StateFileTracker, AllRunnableTasksCompletedOrInError, \
+    InvalidQueryInTaskGenerator
 from test_utils import TestSandboxDir
+
+class Counter:
+
+    def __init__(self):
+        self.value = 0
+
+    def inc(self):
+        self.value += 1
 
 
 class TaskMockup:
@@ -45,6 +54,9 @@ class StateFileTrackerMockup:
 
     def set_completed_on_disk(self, task_key):
         self.task_keys_to_task_states_on_mockup_disk[task_key] = "state.completed"
+
+    def all_tasks(self):
+        return self.state_files_in_memory.values()
 
     def lookup_state_file_from_memory(self, task_key):
         return self.state_files_in_memory[task_key]
@@ -136,7 +148,7 @@ class StateMachineTester:
         for waiting_task_key, upstream_task_keys in waiting_task_keys_to_upstream_task_keys.items():
             upstream_task_keys = set(upstream_task_keys)
             computed_waiting_task_keys = \
-                self.state_machine.keys_of_waiting_tasks_to_set_of_incomplete_upstream_task_keys.get(waiting_task_key)
+                self.state_machine._keys_of_waiting_tasks_to_set_of_incomplete_upstream_task_keys.get(waiting_task_key)
 
             if computed_waiting_task_keys is None:
                 computed_waiting_task_keys = set()
@@ -154,12 +166,12 @@ class StateMachineTester:
     @staticmethod
     def create_scenario(test_case, dependency_graph, state_file_tracker=None, save_dag_and_restart=False):
 
-        def dag_gen():
+        def dag_gen(dsl):
             for task_key, upstream_task_keys in dependency_graph.items():
                 yield TaskMockup(task_key, upstream_task_keys)
 
         if not save_dag_and_restart:
-            return [StateMachineTester(test_case, dag_gen, state_file_tracker)] + list(dag_gen())
+            return [StateMachineTester(test_case, dag_gen, state_file_tracker)] + list(dag_gen(None))
         else:
             if isinstance(state_file_tracker, StateFileTrackerMockup):
                 raise Exception(f"can't have save_dag_and_restart with mockup tracker")
@@ -169,7 +181,7 @@ class StateMachineTester:
 
             tester = StateMachineTester(test_case, None, state_file_tracker)
             tester.state_machine.prepare_for_run_without_generator()
-            return [tester] + list(dag_gen())
+            return [tester] + list(dag_gen(None))
 
 
 class StateFileTrackerTester:
@@ -297,6 +309,10 @@ class StateMachineTests(unittest.TestCase):
         # verify
         tester.assert_set_of_next_tasks_ready(*[])
 
+        self.assertRaises(
+            AllRunnableTasksCompletedOrInError,
+            lambda: tester.iterate_once_and_mutate_set_of_next_state_files_ready()
+        )
 
     def _test_state_machine_01(self, state_file_tracker, save_dag_and_restart=False):
 
@@ -348,6 +364,11 @@ class StateMachineTests(unittest.TestCase):
             "t3": []
         })
 
+        self.assertRaises(
+            AllRunnableTasksCompletedOrInError,
+            lambda: tester.iterate_once_and_mutate_set_of_next_state_files_ready()
+        )
+
     def _test_state_machine_02(self, state_file_tracker, save_dag_and_restart=False):
 
         tester = StateMachineTester.create_scenario(self, {
@@ -372,6 +393,88 @@ class StateMachineTests(unittest.TestCase):
         tester.assert_completed_task_keys(*[])
 
         tester.set_completed_on_disk("t1")
+
+
+    def test_query_all_completed_01(self):
+
+        def dag_gen(dsl):
+            yield TaskMockup("t1")
+            yield TaskMockup("t2")
+            for _ in dsl.query_all_completed("t*"):
+                yield TaskMockup("A1")
+
+        d = TestSandboxDir(self)
+        state_file_tracker = StateFileTracker(d.sandbox_dir)
+
+        tester = StateMachineTester(self, dag_gen, state_file_tracker)
+
+        tester.iterate_once_and_mutate_set_of_next_state_files_ready()
+
+        tester.assert_set_of_next_tasks_ready("t1", "t2")
+
+        tester.iterate_once_and_mutate_set_of_next_state_files_ready()
+        tester.assert_set_of_next_tasks_ready(*[])
+        tester.assert_wait_graph({})
+
+        state_file_tracker.set_completed_on_disk("t1")
+
+        tester.iterate_once_and_mutate_set_of_next_state_files_ready()
+        tester.assert_set_of_next_tasks_ready(*[])
+        tester.assert_wait_graph({})
+
+        state_file_tracker.set_completed_on_disk("t2")
+
+        tester.iterate_once_and_mutate_set_of_next_state_files_ready()
+        tester.iterate_once_and_mutate_set_of_next_state_files_ready()
+
+        tester.assert_set_of_next_tasks_ready("A1")
+
+        tester.iterate_once_and_mutate_set_of_next_state_files_ready()
+
+        tester.assert_set_of_next_tasks_ready(*[])
+
+        state_file_tracker.set_completed_on_disk("A1")
+
+        tester.iterate_once_and_mutate_set_of_next_state_files_ready()
+
+        self.assertTrue(tester.state_machine._no_runnable_tasks_left)
+
+        self.assertRaises(
+            AllRunnableTasksCompletedOrInError,
+            lambda: tester.iterate_once_and_mutate_set_of_next_state_files_ready()
+        )
+
+
+    def test_invalid_dag_with_query_all_completed(self):
+
+        counter = Counter()
+
+        def invalid_dag_gen(dsl):
+            yield TaskMockup("t1")
+            if counter.value > 1:
+                yield TaskMockup("t2")
+            for _ in dsl.query_all_completed("t*"):
+                yield TaskMockup("A")
+            counter.inc()
+
+
+        d = TestSandboxDir(self)
+        state_file_tracker = StateFileTracker(d.sandbox_dir)
+
+        tester = StateMachineTester(self, invalid_dag_gen, state_file_tracker)
+
+        tester.iterate_once_and_mutate_set_of_next_state_files_ready()
+
+        tester.assert_set_of_next_tasks_ready("t1")
+
+        tester.iterate_once_and_mutate_set_of_next_state_files_ready()
+
+        self.assertRaises(
+            InvalidQueryInTaskGenerator,
+            lambda: tester.iterate_once_and_mutate_set_of_next_state_files_ready()
+        )
+
+
 
     # state machine 00
 
@@ -411,3 +514,9 @@ class StateMachineTests(unittest.TestCase):
     def test_state_machine_02_with_real_tracker_with_restart(self):
         d = TestSandboxDir(self)
         self._test_state_machine_02(StateFileTracker(d.sandbox_dir), save_dag_and_restart=True)
+
+    def test_invalid_constructors(self):
+
+        self.assertRaises(Exception, lambda : StateMachine(None))
+        sm = StateMachine(StateFileTrackerMockup())
+        self.assertRaises(Exception, lambda: list(sm.iterate_tasks_to_launch()))

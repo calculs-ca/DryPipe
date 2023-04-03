@@ -66,6 +66,9 @@ class StateFileTracker:
             if state_file.is_completed():
                 yield k
 
+    def all_tasks(self):
+        return self.state_files_in_memory.values()
+
     def lookup_state_file_from_memory(self, task_key):
         return self.state_files_in_memory[task_key]
 
@@ -179,6 +182,16 @@ class StateFileTracker:
                 self.new_save_count += 1
                 return True, state_file_in_memory
 
+class AllRunnableTasksCompletedOrInError(Exception):
+    pass
+
+class InvalidQueryInTaskGenerator(Exception):
+    def __init__(self, msg):
+        self.msg = msg
+
+    def __str__(self):
+        return self.msg
+
 class StateMachine:
 
     def __init__(self, state_file_tracker: StateFileTracker, task_generator=None, observer=None, queue_only_func=None):
@@ -188,16 +201,59 @@ class StateMachine:
 
         self.state_file_tracker = state_file_tracker
         if queue_only_func is None:
-            self.queue_only_func = lambda i: i
+            self._queue_only_func = lambda i: i
         else:
-            self.queue_only_func = queue_only_func
+            self._queue_only_func = queue_only_func
 
-        self.task_generator = task_generator
-        self.observer = observer
+        self._task_generator = task_generator
+        self._observer = observer
 
-        self.keys_of_waiting_tasks_to_set_of_incomplete_upstream_task_keys: dict[str, set[str]] = {}
-        self.keys_of_tasks_waiting_for_external_events: set[str] = set()
+        self._keys_of_waiting_tasks_to_set_of_incomplete_upstream_task_keys: dict[str, set[str]] = {}
+        self._keys_of_tasks_waiting_for_external_events: set[str] = set()
+
         self._ready_state_files_loaded_from_disk = None
+        self._pending_queries: dict[str, int] = {}
+
+        if self._task_generator is not None:
+            self._generator_exhausted = False
+        else:
+            self._generator_exhausted = True
+
+        self._no_runnable_tasks_left = False
+
+    def query_all_completed(self, glob_expression):
+
+        query_all_matches_count = 0
+        query_completed_matches = []
+
+        for state_file in self.state_file_tracker.all_tasks():
+            if fnmatch.fnmatch(state_file.task_key, glob_expression):
+                query_all_matches_count += 1
+                if state_file.is_completed():
+                    query_completed_matches.append(state_file)
+
+        if query_all_matches_count == 0:
+            return []
+        elif query_all_matches_count == len(query_completed_matches):
+            self._pending_queries.pop(glob_expression, None)
+
+            class Match:
+                def __init__(self):
+                    self.tasks = query_completed_matches
+
+            return Match(),
+        else:
+            prev_count = self._pending_queries.get(glob_expression)
+            if prev_count is None:
+                self._pending_queries[glob_expression] = query_all_matches_count
+                return []
+            elif prev_count != query_all_matches_count:
+                raise InvalidQueryInTaskGenerator(
+                    f"Warning: query {glob_expression} matched on tasks that were yielded AFTER the first" +
+                    " invocation of 'query_all_completed'"
+                )
+            else:
+                return []
 
     def prepare_for_run_without_generator(self):
         self._ready_state_files_loaded_from_disk = []
@@ -217,19 +273,19 @@ class StateMachine:
             return True
         else:
             # copy the set, because it will be mutated
-            self.keys_of_waiting_tasks_to_set_of_incomplete_upstream_task_keys[task_key] = {
+            self._keys_of_waiting_tasks_to_set_of_incomplete_upstream_task_keys[task_key] = {
                 k for k in upstream_dep_keys
             }
             return False
 
     def _register_completion_of_upstream_tasks(self, task_key, set_of_newly_completed_task_keys):
 
-        upstream_task_keys = self.keys_of_waiting_tasks_to_set_of_incomplete_upstream_task_keys[task_key]
+        upstream_task_keys = self._keys_of_waiting_tasks_to_set_of_incomplete_upstream_task_keys[task_key]
 
         upstream_task_keys.difference_update(set_of_newly_completed_task_keys)
 
         if len(upstream_task_keys) == 0:
-            del self.keys_of_waiting_tasks_to_set_of_incomplete_upstream_task_keys[task_key]
+            del self._keys_of_waiting_tasks_to_set_of_incomplete_upstream_task_keys[task_key]
             return True
         else:
             return False
@@ -238,22 +294,32 @@ class StateMachine:
         return set(self.state_file_tracker.completed_task_keys())
 
     def _ready_state_files_from_generator(self):
-        for task in self.task_generator():
+
+        new_generated_tasks = 0
+
+        for task in self._task_generator(self):
             is_new, state_file = self.state_file_tracker.create_true_state_if_new_else_fetch_from_memory(task)
             if is_new:
+                new_generated_tasks += 1
                 if self._register_upstream_task_dependencies_if_any_and_return_ready_status(
                     task.key, task.upstream_dep_keys
                 ):
                     yield state_file
 
+        if new_generated_tasks == 0 and len(self._pending_queries) == 0:
+            self._generator_exhausted = True
+
     def iterate_tasks_to_launch(self):
 
+        if self._no_runnable_tasks_left:
+            raise AllRunnableTasksCompletedOrInError()
+
         def register_pre_launch(state_file):
-            self.keys_of_tasks_waiting_for_external_events.add(state_file.task_key)
+            self._keys_of_tasks_waiting_for_external_events.add(state_file.task_key)
             self.state_file_tracker.register_pre_launch(state_file)
             return state_file
 
-        if self.task_generator is not None:
+        if self._task_generator is not None:
             for state_file in self._ready_state_files_from_generator():
                 yield register_pre_launch(state_file)
         elif self._ready_state_files_loaded_from_disk is not None:
@@ -267,7 +333,7 @@ class StateMachine:
             )
 
         def gen_newly_completed_task_keys():
-            for task_key in self.keys_of_tasks_waiting_for_external_events:
+            for task_key in self._keys_of_tasks_waiting_for_external_events:
                 true_state_file = self.state_file_tracker.fetch_true_state_and_update_memory_if_changed(task_key)
                 if true_state_file is not None:
                     if true_state_file.is_completed():
@@ -275,10 +341,14 @@ class StateMachine:
 
         newly_completed_task_keys = list(gen_newly_completed_task_keys())
 
-        self.keys_of_tasks_waiting_for_external_events.difference_update(newly_completed_task_keys)
+        self._keys_of_tasks_waiting_for_external_events.difference_update(newly_completed_task_keys)
 
         # track state_file changes, update dependency map, and yield newly ready tasks
-        for key_of_waiting_task in list(self.keys_of_waiting_tasks_to_set_of_incomplete_upstream_task_keys.keys()):
+        for key_of_waiting_task in list(self._keys_of_waiting_tasks_to_set_of_incomplete_upstream_task_keys.keys()):
             if self._register_completion_of_upstream_tasks(key_of_waiting_task, newly_completed_task_keys):
                 state_file_of_ready_task = self.state_file_tracker.lookup_state_file_from_memory(key_of_waiting_task)
                 yield register_pre_launch(state_file_of_ready_task)
+
+        if self._generator_exhausted:
+            if len(self._keys_of_tasks_waiting_for_external_events) == 0:
+                self._no_runnable_tasks_left = True
