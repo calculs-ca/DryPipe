@@ -39,14 +39,19 @@ class StateFileTrackerMockup:
 
     def __init__(self):
         self.state_files_in_memory: dict[str, StateFile] = {}
+        # task_key -> path
         self.task_keys_to_task_states_on_mockup_disk: dict[str, str] = {}
         self.pipeline_work_dir = "/"
 
     def set_completed_on_disk(self, task_key):
         self.task_keys_to_task_states_on_mockup_disk[task_key] = "state.completed"
 
-    def state_file_in_memory(self, task_key):
+    def lookup_state_file_from_memory(self, task_key):
         return self.state_files_in_memory[task_key]
+
+    def register_pre_launch(self, state_file):
+        state_file.transition_to_pre_launch()
+        self.task_keys_to_task_states_on_mockup_disk[state_file.task_key] = os.path.basename(state_file.path)
 
     def completed_task_keys(self):
         for k, state_file in self.state_files_in_memory.items():
@@ -181,7 +186,7 @@ class StateFileTrackerTester:
 
         is_sf1_new, sf1_a = self.state_file_tracker.create_true_state_if_new_else_fetch_from_memory(t1)
 
-        self.test_case.assertIsNotNone(self.state_file_tracker.state_file_in_memory(t1.key))
+        self.test_case.assertIsNotNone(self.state_file_tracker.lookup_state_file_from_memory(t1.key))
 
         self.test_case.assertTrue(is_sf1_new)
 

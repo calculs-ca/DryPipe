@@ -21,14 +21,16 @@ class StateFile:
     def __str__(self):
         return f"/{self.task_key}/{os.path.basename(self.path)}"
 
-    def refresh(self, path):
-        previous_state = self.path
-        self.path = path
-        assert self.path != previous_state
-        if path.endswith("state.completed"):
+    def refresh(self, new_path):
+        assert self.path != new_path
+        self.path = new_path
+        if self.path.endswith("state.completed"):
             # load from file:
             self.outputs = None
             self.inputs = None
+
+    def transition_to_pre_launch(self):
+        self.path = os.path.join(self.tracker.pipeline_work_dir, self.task_key, "state._step-started")
 
     def state_as_string(self):
         return os.path.basename(self.path)
@@ -54,12 +56,17 @@ class StateFileTracker:
             os.path.join(self.pipeline_work_dir, task_key, "state.completed")
         )
 
+    def register_pre_launch(self, state_file):
+        previous_path = state_file.path
+        state_file.transition_to_pre_launch()
+        os.rename(previous_path, state_file.path)
+
     def completed_task_keys(self):
         for k, state_file in self.state_files_in_memory.items():
             if state_file.is_completed():
                 yield k
 
-    def state_file_in_memory(self, task_key):
+    def lookup_state_file_from_memory(self, task_key):
         return self.state_files_in_memory[task_key]
 
     def _find_state_file_in_task_control_dir(self, task_key):
@@ -73,7 +80,7 @@ class StateFileTracker:
         return None
 
     def fetch_true_state_and_update_memory_if_changed(self, task_key):
-        state_file = self.state_file_in_memory(task_key)
+        state_file = self.lookup_state_file_from_memory(task_key)
         if os.path.exists(state_file.path):
             return None
         else:
@@ -126,7 +133,7 @@ class StateFileTracker:
     def load_completed_tasks_for_query(self, glob_filter=None):
         for task_key, task_control_dir, state_file_dir_entry in self._iterate_all_tasks_from_disk(glob_filter):
             if state_file_dir_entry.name == "state.completed":
-                yield task_key, TaskInputsOutputs()
+                yield task_key, None
 
     def load_state_files_for_run(self, glob_filter=None):
         for task_key, task_control_dir, state_file_dir_entry in self._iterate_all_tasks_from_disk(glob_filter):
@@ -171,9 +178,6 @@ class StateFileTracker:
                 Path(state_file_in_memory.path).touch(exist_ok=False)
                 self.new_save_count += 1
                 return True, state_file_in_memory
-
-class TaskInputsOutputs:
-    pass
 
 class StateMachine:
 
@@ -240,17 +244,21 @@ class StateMachine:
                 if self._register_upstream_task_dependencies_if_any_and_return_ready_status(
                     task.key, task.upstream_dep_keys
                 ):
-                    self.keys_of_tasks_waiting_for_external_events.add(state_file.task_key)
                     yield state_file
 
     def iterate_tasks_to_launch(self):
 
+        def register_pre_launch(state_file):
+            self.keys_of_tasks_waiting_for_external_events.add(state_file.task_key)
+            self.state_file_tracker.register_pre_launch(state_file)
+            return state_file
+
         if self.task_generator is not None:
-            yield from self._ready_state_files_from_generator()
+            for state_file in self._ready_state_files_from_generator():
+                yield register_pre_launch(state_file)
         elif self._ready_state_files_loaded_from_disk is not None:
             for state_file in self._ready_state_files_loaded_from_disk:
-                self.keys_of_tasks_waiting_for_external_events.add(state_file.task_key)
-                yield state_file
+                yield register_pre_launch(state_file)
             self._ready_state_files_loaded_from_disk = []
         else:
             raise Exception(
@@ -272,6 +280,5 @@ class StateMachine:
         # track state_file changes, update dependency map, and yield newly ready tasks
         for key_of_waiting_task in list(self.keys_of_waiting_tasks_to_set_of_incomplete_upstream_task_keys.keys()):
             if self._register_completion_of_upstream_tasks(key_of_waiting_task, newly_completed_task_keys):
-                state_file_of_ready_task = self.state_file_tracker.state_file_in_memory(key_of_waiting_task)
-                self.keys_of_tasks_waiting_for_external_events.add(state_file_of_ready_task.task_key)
-                yield state_file_of_ready_task
+                state_file_of_ready_task = self.state_file_tracker.lookup_state_file_from_memory(key_of_waiting_task)
+                yield register_pre_launch(state_file_of_ready_task)
