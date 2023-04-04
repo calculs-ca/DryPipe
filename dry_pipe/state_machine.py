@@ -43,6 +43,9 @@ class StateFile:
     def is_completed(self):
         return self.path.endswith("state.completed")
 
+    def is_failed(self):
+        return fnmatch.fnmatch(self.path, "*/state.failed.*")
+
     def control_dir(self):
         return os.path.join(self.tracker.pipeline_work_dir, self.task_key)
 
@@ -170,14 +173,15 @@ class StateFileTracker:
 
                 yield task_key, task_control_dir, state_file_dir_entry
 
-    def load_completed_tasks_for_query(self, glob_filter=None):
+    def load_tasks_for_query(self, glob_filter=None, include_non_completed=False):
         pod = os.path.join(self.pipeline_instance_dir, "output")
         for task_key, task_control_dir, state_file_dir_entry in self._iterate_all_tasks_from_disk(glob_filter):
-            if state_file_dir_entry.name == "state.completed":
+            if state_file_dir_entry.name == "state.completed" or include_non_completed:
                 state_file = StateFile(
                     task_key, None, self, path=state_file_dir_entry.path
                 )
                 task_conf = state_file.load_task_conf_json()
+                var_file = os.path.join(task_control_dir, "output_vars")
 
                 class Task:
                     def __init__(self):
@@ -185,13 +189,17 @@ class StateFileTracker:
                         self.inputs = TaskInputs(self, task_conf, pipeline_work_dir=pod)
                         self.outputs = TaskOutputs(
                             self, task_conf,
-                            var_file=os.path.join(task_control_dir, "output_vars"),
+                            var_file=var_file,
                             task_work_dir=os.path.join(pod, task_key)
                         )
+
                         self.state_file = state_file
 
                     def is_completed(self):
                         return state_file.is_completed()
+
+                    def is_failed(self):
+                        return state_file.is_failed()
 
                 yield Task()
 
@@ -267,6 +275,7 @@ class StateMachine:
 
         self._keys_of_waiting_tasks_to_set_of_incomplete_upstream_task_keys: dict[str, set[str]] = {}
         self._keys_of_tasks_waiting_for_external_events: set[str] = set()
+        self._keys_of_failed_tasks: set[str] = set()
 
         self._ready_state_files_loaded_from_disk = None
         self._pending_queries: dict[str, int] = {}
@@ -405,16 +414,22 @@ class StateMachine:
                 "load_from_instance_dir() must be invoked before calling this method"
             )
 
+        newly_failed_task_keys = []
+
         def gen_newly_completed_task_keys():
             for task_key in self._keys_of_tasks_waiting_for_external_events:
                 true_state_file = self.state_file_tracker.fetch_true_state_and_update_memory_if_changed(task_key)
                 if true_state_file is not None:
                     if true_state_file.is_completed():
                         yield task_key
+                    elif true_state_file.is_failed():
+                        self._keys_of_failed_tasks.add(true_state_file.task_key)
+                        newly_failed_task_keys.append(true_state_file.task_key)
 
         newly_completed_task_keys = list(gen_newly_completed_task_keys())
 
         self._keys_of_tasks_waiting_for_external_events.difference_update(newly_completed_task_keys)
+        self._keys_of_tasks_waiting_for_external_events.difference_update(newly_failed_task_keys)
 
         # track state_file changes, update dependency map, and yield newly ready tasks
         for key_of_waiting_task in list(self._keys_of_waiting_tasks_to_set_of_incomplete_upstream_task_keys.keys()):

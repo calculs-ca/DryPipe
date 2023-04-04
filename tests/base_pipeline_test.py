@@ -36,7 +36,7 @@ class BasePipelineTest(unittest.TestCase):
     def run_pipeline(self):
         p = Pipeline(lambda dsl: self.dag_gen(dsl), pipeline_code_dir=self.pipeline_code_dir)
         pi = p.create_pipeline_instance(self.pipeline_instance_dir)
-        self.tasks_by_keys = pi.run_sync(fail_silently=False)
+        self.tasks_by_keys = pi.run_sync(fail_silently=True)
 
     def dag_gen(self, dsl):
         raise NotImplementedError()

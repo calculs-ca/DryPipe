@@ -28,9 +28,9 @@ class PipelineRunner:
                     if c > 2:
                         time.sleep(sleep)
                         c = 0
-            except AllRunnableTasksCompletedOrInError:
-                return
-
+            except AllRunnableTasksCompletedOrInError as ex:
+                if not fail_silently:
+                    raise ex
 
     def start(self):
         launch_queue = SimpleQueue()

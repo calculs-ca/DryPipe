@@ -263,17 +263,21 @@ class PipelineInstance:
 
     def run_sync(self, fail_silently=True):
 
-        t = StateFileTracker(self.state_file_tracker.pipeline_instance_dir)
-        state_machine = StateMachine(t, lambda dsl: self.pipeline.task_generator(dsl))
+        state_machine = StateMachine(self.state_file_tracker, lambda dsl: self.pipeline.task_generator(dsl))
         pr = PipelineRunner(state_machine)
-        pr.run_sync(fail_silently)
+        pr.run_sync(fail_silently=fail_silently)
 
         tasks_by_keys = {
             t.key: t
-            for t in t.load_completed_tasks_for_query()
+            for t in self.state_file_tracker.load_tasks_for_query()
         }
 
         return tasks_by_keys
+
+    def query(self, glob_pattern, include_incomplete_tasks=False):
+        yield from self.state_file_tracker.load_tasks_for_query(
+            glob_pattern, include_non_completed=include_incomplete_tasks
+        )
 
 
 

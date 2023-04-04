@@ -1,7 +1,9 @@
+import os.path
 from pathlib import Path
 
 from base_pipeline_test import BasePipelineTest
 from dry_pipe import DryPipe, TaskConf
+from dry_pipe.pipeline import Pipeline
 
 
 @DryPipe.python_call()
@@ -214,8 +216,51 @@ class PipelineWith3StepsCrash1(PipelineWith3StepsNoCrash):
             }
         )
 
+    def run_pipeline(self):
+        p = Pipeline(lambda dsl: self.dag_gen(dsl), pipeline_code_dir=self.pipeline_code_dir)
+        pi = p.create_pipeline_instance(self.pipeline_instance_dir)
+        pi.run_sync(fail_silently=True)
+        self.tasks_by_keys = {
+            t.key: t
+            for t in pi.query("*", include_incomplete_tasks=True)
+        }
+
     def test_validate(self):
-        self.assertEqual(self.output_as_string(), "s1\ns2\ns3\n")
+        three_phase_task = self.tasks_by_keys["three_phase_task"]
+        self.assertTrue(three_phase_task.is_failed())
+        self.assertFalse(os.path.exists(three_phase_task.outputs.out_file))
+
+class PipelineWith3StepsCrash2(PipelineWith3StepsCrash1):
+    def task_conf(self):
+        return TaskConf(
+            executer_type="process",
+            extra_env={
+                "CRASH_STEP_2": "TRUE"
+            }
+        )
+
+    def test_validate(self):
+        three_phase_task = self.tasks_by_keys["three_phase_task"]
+        self.assertTrue(three_phase_task.is_failed())
+        self.assertTrue(os.path.exists(three_phase_task.outputs.out_file))
+        self.assertEqual(self.output_as_string(), "s1\n")
+
+
+class PipelineWith3StepsCrash3(PipelineWith3StepsCrash1):
+    def task_conf(self):
+        return TaskConf(
+            executer_type="process",
+            extra_env={
+                "CRASH_STEP_3": "TRUE"
+            }
+        )
+
+    def test_validate(self):
+        three_phase_task = self.tasks_by_keys["three_phase_task"]
+        self.assertTrue(three_phase_task.is_failed())
+        self.assertTrue(os.path.exists(three_phase_task.outputs.out_file))
+        self.assertEqual(self.output_as_string(), "s1\ns2\n")
+
 
 # Same pipelines with container
 
@@ -239,3 +284,17 @@ class PipelineWithVarAndFileOutputInContainer(PipelineWithVarAndFileOutput):
 class PipelineWithVarSharingBetweenStepsInContainer(PipelineWithVarSharingBetweenSteps):
     def task_conf(self):
         return task_conf_with_test_container
+
+class PipelineWith3StepsNoCrashInContainer(PipelineWith3StepsNoCrash):
+    def task_conf(self):
+        return task_conf_with_test_container
+
+class PipelineWith3StepsCrash3InContainer(PipelineWith3StepsCrash3):
+    def task_conf(self):
+        return TaskConf(
+            executer_type="process",
+            container="singularity-test-container.sif",
+            extra_env={
+                "CRASH_STEP_3": "TRUE"
+            }
+        )
