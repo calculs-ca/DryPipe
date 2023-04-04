@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 
 from dry_pipe import TaskConf
+from dry_pipe.pipeline import Pipeline
 from dry_pipe.pipeline_runner import PipelineRunner
 from dry_pipe.state_machine import StateFileTracker, StateMachine
 
@@ -16,6 +17,8 @@ class BasePipelineTest(unittest.TestCase):
             os.path.dirname(__file__),
             "sandboxes"
         )
+
+        self.pipeline_code_dir = os.path.dirname(__file__)
 
         self.pipeline_instance_dir = os.path.join(all_sandbox_dirs, self.__class__.__name__)
         self.tasks_by_keys = {}
@@ -31,16 +34,9 @@ class BasePipelineTest(unittest.TestCase):
         return TaskConf.default()
 
     def run_pipeline(self):
-        Path(self.pipeline_instance_dir).mkdir(exist_ok=False)
-        t = StateFileTracker(self.pipeline_instance_dir)
-        state_machine = StateMachine(t, lambda dsl: self.dag_gen(dsl))
-        pr = PipelineRunner(state_machine)
-        pr.run_sync()
-
-        self.tasks_by_keys = {
-            t.key: t
-            for t in t.load_completed_tasks_for_query()
-        }
+        p = Pipeline(lambda dsl: self.dag_gen(dsl), pipeline_code_dir=self.pipeline_code_dir)
+        pi = p.create_pipeline_instance(self.pipeline_instance_dir)
+        self.tasks_by_keys = pi.run_sync(fail_silently=False)
 
     def dag_gen(self, dsl):
         raise NotImplementedError()

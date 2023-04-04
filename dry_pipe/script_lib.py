@@ -245,6 +245,24 @@ def iterate_task_env(task_conf_as_json=None, control_dir=None):
     pipeline_instance_dir = os.path.dirname(os.path.dirname(control_dir))
     task_key = os.path.basename(control_dir)
 
+    pipeline_conf = Path(pipeline_instance_dir, ".drypipe", "conf.json")
+    if os.path.exists(pipeline_conf):
+        with open(pipeline_conf) as pc:
+            pipeline_conf_json = json.loads(pc.read())
+
+            def en_vars_in_pipeline(*var_names):
+                for name in var_names:
+                    value = pipeline_conf_json.get(name)
+                    if value is not None:
+                        value = os.path.expandvars(value)
+                        yield name, value
+
+
+            yield from en_vars_in_pipeline(
+                "__containers_dir",
+                "__pipeline_code_dir"
+            )
+
     yield "__pipeline_instance_dir", pipeline_instance_dir
     yield "__pipeline_instance_name", os.path.basename(pipeline_instance_dir)
     yield "__control_dir", control_dir
@@ -703,7 +721,10 @@ def write_out_vars(out_vars):
 
 def resolve_container_path(container):
 
-    containers_dir = os.environ['__containers_dir']
+    containers_dir = os.environ.get('__containers_dir')
+
+    if containers_dir is None:
+        containers_dir = os.path.join(os.environ["__pipeline_code_dir"], "containers")
 
     if os.path.isabs(container):
         if os.path.exists(container):

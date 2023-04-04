@@ -152,6 +152,71 @@ class PipelineWithVarSharingBetweenSteps(BasePipelineTest):
         self.assertEqual(x3, 21)
 
 
+
+
+class PipelineWith3StepsNoCrash(BasePipelineTest):
+
+    def dag_gen(self, dsl):
+        three_phase_task = dsl.task(
+            key="three_phase_task",
+            task_conf=self.task_conf()
+        ).outputs(
+            out_file=dsl.file("out_file.txt")
+        ).calls("""
+            #!/usr/bin/env bash
+            
+            echo "---> $CRASH_STEP_1"
+
+            if [[ "${CRASH_STEP_1}" ]]; then
+              echo "boom in step 1" >&2
+              exit 1
+            fi
+
+            echo "s1" >> $out_file    
+        """).calls("""
+            #!/usr/bin/env bash
+
+            if [[ "${CRASH_STEP_2}" ]]; then
+              echo "boom in step 2" >&2
+              exit 1
+            fi
+
+
+            echo "s2" >> $out_file    
+        """).calls("""
+            #!/usr/bin/env bash
+
+            if [[ "${CRASH_STEP_3}" ]]; then
+              echo "boom in step 3" >&2
+              exit 1
+            fi
+
+            echo "s3" >> $out_file    
+        """)()
+
+        yield three_phase_task
+
+    def output_as_string(self):
+        three_phase_task = self.tasks_by_keys["three_phase_task"]
+        with open(three_phase_task.outputs.out_file) as f:
+            return f.read()
+
+    def test_validate(self):
+        self.assertEqual(self.output_as_string(), "s1\ns2\ns3\n")
+
+class PipelineWith3StepsCrash1(PipelineWith3StepsNoCrash):
+
+    def task_conf(self):
+        return TaskConf(
+            executer_type="process",
+            extra_env={
+                "CRASH_STEP_1": "TRUE"
+            }
+        )
+
+    def test_validate(self):
+        self.assertEqual(self.output_as_string(), "s1\ns2\ns3\n")
+
 # Same pipelines with container
 
 task_conf_with_test_container = TaskConf(

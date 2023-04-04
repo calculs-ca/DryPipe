@@ -15,7 +15,7 @@ class PipelineRunner:
         self._shutdown_requested = False
         self.running_status = "idle"
 
-    def run_sync(self, sleep=1):
+    def run_sync(self, sleep=1, fail_silently=True):
         for state_machine in self.state_machines:
             try:
                 while True:
