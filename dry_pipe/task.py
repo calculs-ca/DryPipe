@@ -71,7 +71,7 @@ class Task:
         raise Exception(f"deprecated, use get_state().as_json()")
 
     def all_produced_files(self):
-        for f, item in self.out.produces.items():
+        for f, item in self.outputs.produces.items():
             if isinstance(item, ProducedFile):
                 yield item
 
@@ -511,8 +511,6 @@ class Task:
             pathlib.Path(self.v_abs_scratch_dir()).mkdir(
                 parents=True, exist_ok=True, mode=FileCreationDefaultModes.pipeline_instance_directories)
 
-        return TaskState.create_non_existing(self.v_abs_control_dir())
-
     def reset_logs(self):
 
         if os.path.exists(self.v_abs_err_log()):
@@ -605,40 +603,21 @@ class TaskStep:
 
 class TaskInputs:
 
-    def __init__(self, task, task_conf_json=None, task_inputs=None):
+    def __init__(self, task, task_conf_json=None, task_inputs=None, pipeline_work_dir=None):
         self.task = task
-        self.task_conf_json = task_conf_json
         self._task_inputs = task_inputs
+        if task_conf_json is not None:
+            self._task_inputs = {}
+
+            for task_input, k, v in resolve_upstream_and_constant_vars(
+                pipeline_work_dir,
+                task_conf_json
+            ):
+                self._task_inputs[k] = task_input.parse(v)
 
     def __iter__(self):
         yield from self._task_inputs
 
-    def _resolve(self):
-
-        if self._task_inputs is None:
-
-            task_state = self.task.get_state()
-
-            if not task_state.is_completed():
-                # TODO: relax the task completion constraint, only restrict access to non completed upstream vars
-                raise Exception(
-                    f"called _resolve() on a non completed task, ensure task completed before accessing task inputs"
-                )
-
-            if self.task_conf_json is None:
-                task_conf_file = self.task.v_abs_task_conf_file()
-                with open(task_conf_file) as f:
-                    task_conf_json = json.loads(f.read())
-            else:
-                task_conf_json = self.task_conf_json
-
-            self._task_inputs = {}
-
-            for task_input, k, v in resolve_upstream_and_constant_vars(
-                self.task.pipeline_instance.pipeline_instance_dir,
-                task_conf_json
-            ):
-                self._task_inputs[k] = task_input.parse(v)
 
     def __getattr__(self, name):
 
@@ -658,45 +637,25 @@ class TaskInputs:
 
 class TaskOutputs:
 
-    def __init__(self, task, task_conf_json=None, task_outputs=None):
+    def __init__(self, task, task_conf_json=None, task_outputs=None, var_file=None, task_work_dir=None):
         self.task = task
-        self.task_conf_json = task_conf_json
         self._task_outputs = task_outputs
+        if task_conf_json is not None:
+            self._task_outputs = {}
+            unparsed_out_vars = dict(iterate_out_vars_from(var_file))
+
+            for o in task_conf_json["outputs"]:
+                o = TaskOutput.from_json(o)
+                o._set_resolved_value(unparsed_out_vars.get(o.name))
+                self._task_outputs[o.name] = o
+
+            for o, k, f in iterate_file_task_outputs(task_conf_json, task_work_dir):
+                o._set_resolved_value(f)
+                self._task_outputs[k] = o
+
 
     def __iter__(self):
-        if self._task_outputs is None:
-            self._resolve()
-
         yield from self._task_outputs
-
-    def _resolve(self):
-
-        task_state = self.task.get_state()
-
-        if not task_state.is_completed():
-            # TODO: relax the task completion constraint, only restrict access to non completed upstream vars
-            raise Exception(
-                f"called _resolve() on a non completed task, ensure task completed before accessing task inputs"
-            )
-
-        if self.task_conf_json is None:
-            task_conf_file = self.task.v_abs_task_conf_file()
-            with open(task_conf_file) as f:
-                task_conf_json = json.loads(f.read())
-        else:
-            task_conf_json = self.task_conf_json
-
-        self._task_outputs = {}
-        unparsed_out_vars = dict(iterate_out_vars_from(self.task.v_abs_output_var_file()))
-
-        for o in task_conf_json["outputs"]:
-            o = TaskOutput.from_json(o)
-            o._set_resolved_value(unparsed_out_vars.get(o.name))
-            self._task_outputs[o.name] = o
-
-        for o, k, f in iterate_file_task_outputs(task_conf_json, self.task.v_abs_work_dir()):
-            o._set_resolved_value(f)
-            self._task_outputs[k] = o
 
     def __getattr__(self, name):
 

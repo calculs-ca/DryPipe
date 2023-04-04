@@ -244,11 +244,11 @@ class Local(Executor):
             f"  >{task.v_abs_out_log()} 2>{task.v_abs_err_log()} {back_ground}'"
         ]
 
-    def execute(self, task, touch_pid_file_func, wait_for_completion=False, fail_silently=False):
+    def execute(self, task_script, touch_pid_file_func, wait_for_completion=False, fail_silently=False):
         if wait_for_completion:
-            cmd = [task.v_abs_script_file(), "--wait"]
+            cmd = [task_script, "--wait"]
         else:
-            cmd = [task.v_abs_script_file()]
+            cmd = [task_script]
 
         logger.debug("will launch task %s", ' '.join(cmd))
 

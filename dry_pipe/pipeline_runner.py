@@ -1,8 +1,11 @@
+import os.path
 from concurrent.futures import ThreadPoolExecutor
 from itertools import islice
 from queue import SimpleQueue
 import time
 from threading import Thread
+
+from dry_pipe.state_machine import AllRunnableTasksCompletedOrInError
 
 
 class PipelineRunner:
@@ -12,13 +15,22 @@ class PipelineRunner:
         self._shutdown_requested = False
         self.running_status = "idle"
 
-    def run_sync(self):
+    def run_sync(self, sleep=1):
         for state_machine in self.state_machines:
-            for state_file in state_machine.iterate_tasks_to_launch():
-                if state_file is None:
-                    time.sleep(1)
-                else:
-                    self.launch(state_file)
+            try:
+                while True:
+                    c = 0
+                    for state_file in state_machine.iterate_tasks_to_launch():
+                        task_conf = state_file.load_task_conf()
+                        e = task_conf.create_executer()
+                        e.execute(os.path.join(state_file.control_dir(), "task"), None, wait_for_completion=True)
+                        c += 1
+                    if c > 2:
+                        time.sleep(sleep)
+                        c = 0
+            except AllRunnableTasksCompletedOrInError:
+                return
+
 
     def start(self):
         launch_queue = SimpleQueue()

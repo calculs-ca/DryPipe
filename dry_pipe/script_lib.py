@@ -687,7 +687,7 @@ def sign_files():
 
 
 def transition_to_completed(state_file):
-    return _transition_state_file(state_file, "completed-unsigned")
+    return _transition_state_file(state_file, "completed")
 
 
 def write_out_vars(out_vars):

@@ -1,10 +1,12 @@
 import fnmatch
 import json
 import os.path
+import shutil
 from pathlib import Path
 
-from dry_pipe import TaskBuilder, TaskConf
-from dry_pipe.script_lib import FileCreationDefaultModes
+from dry_pipe import TaskBuilder, TaskConf, script_lib
+from dry_pipe.script_lib import FileCreationDefaultModes, write_pipeline_lib_script
+from dry_pipe.task import TaskOutputs, TaskInputs
 
 
 # TODO: rename to TaskState
@@ -41,6 +43,15 @@ class StateFile:
     def is_completed(self):
         return self.path.endswith("state.completed")
 
+    def control_dir(self):
+        return os.path.join(self.tracker.pipeline_work_dir, self.task_key)
+
+    def load_task_conf_json(self):
+        with open(os.path.join(self.control_dir(), "task-conf.json")) as tc:
+            return json.loads(tc.read())
+
+    def load_task_conf(self):
+        return TaskConf.from_json(self.load_task_conf_json())
 
 
 class StateFileTracker:
@@ -58,6 +69,13 @@ class StateFileTracker:
             exist_ok=True, mode=FileCreationDefaultModes.pipeline_instance_directories)
         Path(self.pipeline_instance_dir, "output").mkdir(
             exist_ok=True, mode=FileCreationDefaultModes.pipeline_instance_directories)
+        shutil.copy(script_lib.__file__, self.pipeline_work_dir)
+
+        script_lib_file = os.path.join(self.pipeline_work_dir, "script_lib")
+        with open(script_lib_file, "w") as script_lib_file_handle:
+            write_pipeline_lib_script(script_lib_file_handle)
+        os.chmod(script_lib_file, 0o764)
+
 
     def set_completed_on_disk(self, task_key):
         os.rename(
@@ -129,6 +147,10 @@ class StateFileTracker:
     def _iterate_all_tasks_from_disk(self, glob_filter):
         with os.scandir(self.pipeline_work_dir) as pwd_i:
             for task_control_dir_entry in pwd_i:
+                if not task_control_dir_entry.is_dir():
+                    continue
+                if task_control_dir_entry.name == "__pycache__":
+                    continue
                 task_control_dir = task_control_dir_entry.path
                 task_key = os.path.basename(task_control_dir)
 
@@ -143,9 +165,29 @@ class StateFileTracker:
                 yield task_key, task_control_dir, state_file_dir_entry
 
     def load_completed_tasks_for_query(self, glob_filter=None):
+        pod = os.path.join(self.pipeline_instance_dir, "output")
         for task_key, task_control_dir, state_file_dir_entry in self._iterate_all_tasks_from_disk(glob_filter):
             if state_file_dir_entry.name == "state.completed":
-                yield task_key, None
+                state_file = StateFile(
+                    task_key, None, self, path=state_file_dir_entry.path
+                )
+                task_conf = state_file.load_task_conf_json()
+
+                class Task:
+                    def __init__(self):
+                        self.key = task_key
+                        self.inputs = TaskInputs(self, task_conf, pipeline_work_dir=pod)
+                        self.outputs = TaskOutputs(
+                            self, task_conf,
+                            var_file=os.path.join(task_control_dir, "output_vars"),
+                            task_work_dir=os.path.join(pod, task_key)
+                        )
+                        self.state_file = state_file
+
+                    def is_completed(self):
+                        return state_file.is_completed()
+
+                yield Task()
 
     def load_state_files_for_run(self, glob_filter=None):
         for task_key, task_control_dir, state_file_dir_entry in self._iterate_all_tasks_from_disk(glob_filter):

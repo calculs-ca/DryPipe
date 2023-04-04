@@ -11,64 +11,60 @@ import pipeline_with_two_python_tasks
 import pipeline_with_multistep_tasks_with_shared_vars
 
 from dry_pipe import TaskConf, DryPipe
+from dry_pipe.pipeline_runner import PipelineRunner
 from dry_pipe.script_lib import iterate_task_env
+from dry_pipe.state_machine import StateMachine, StateFileTracker
 from pipeline_with_dependency_on_other_pipeline import pipeline_with_external_deps_dag_gen
 from test_utils import TestSandboxDir
 
 
 class SingleTaskPipelinesTests(unittest.TestCase):
 
+    def _prepare_and_run(self, sandbox, dag_gen, task_conf=None):
+
+        t = StateFileTracker(sandbox.sandbox_dir)
+        state_machine = StateMachine(t, lambda dsl: dag_gen(dsl, task_conf))
+        pr = PipelineRunner(state_machine)
+        pr.run_sync()
+        return list(t.load_completed_tasks_for_query("multiply_x_by_y"))
+
+
     def test_single_python_task_pipeline(self):
 
         d = TestSandboxDir(self)
+        multiply_x_by_y, = self._prepare_and_run(d, pipeline_with_single_python_task.pipeline)
 
-        pipeline_instance = d.pipeline_instance_from_generator(
-            pipeline_with_single_python_task.pipeline,
-            completed=True
-        )
-
-        pipeline_with_single_python_task.validate_single_task_pipeline(pipeline_instance)
-
-    def test_single_python_task_pipeline_with_container(self):
-
-        d = TestSandboxDir(self)
-
-        pipeline_instance = d.pipeline_instance_from_generator(
-            pipeline_with_single_python_task.pipeline,
-            task_conf=TaskConf(
-                executer_type="process",
-                container="singularity-test-container.sif"
-            ),
-            completed=True
-        )
-
-        pipeline_with_single_python_task.validate_single_task_pipeline(pipeline_instance)
+        pipeline_with_single_python_task.validate_single_task_pipeline(multiply_x_by_y)
 
     def test_single_bash_task_pipeline(self):
 
         d = TestSandboxDir(self)
 
-        pipeline_instance = d.pipeline_instance_from_generator(
-            pipeline_with_single_bash_task.pipeline,
-            completed=True
-        )
+        multiply_x_by_y, = self._prepare_and_run(d, pipeline_with_single_bash_task.pipeline)
 
-        pipeline_with_single_python_task.validate_single_task_pipeline(pipeline_instance)
+        pipeline_with_single_bash_task.validate(multiply_x_by_y)
+
+    def test_single_python_task_pipeline_with_container(self):
+
+        d = TestSandboxDir(self)
+        task_conf = TaskConf(
+            executer_type="process",
+            container="singularity-test-container.sif"
+        )
+        multiply_x_by_y, = self._prepare_and_run(d, pipeline_with_single_python_task.pipeline, task_conf)
+
+        pipeline_with_single_python_task.validate_single_task_pipeline(multiply_x_by_y)
 
     def test_single_bash_task_pipeline_with_container(self):
 
         d = TestSandboxDir(self)
-
-        pipeline_instance = d.pipeline_instance_from_generator(
-            pipeline_with_single_bash_task.pipeline,
-            task_conf=TaskConf(
-                executer_type="process",
-                container="singularity-test-container.sif"
-            ),
-            completed=True
+        task_conf = TaskConf(
+            executer_type="process",
+            container="singularity-test-container.sif"
         )
+        multiply_x_by_y, = self._prepare_and_run(d, pipeline_with_single_bash_task.pipeline, task_conf)
 
-        pipeline_with_single_python_task.validate_single_task_pipeline(pipeline_instance)
+        pipeline_with_single_bash_task.validate(self, multiply_x_by_y)
 
 
 class MinimalistPipelinesTests(unittest.TestCase):
@@ -170,21 +166,6 @@ class MinimalistPipelinesTests(unittest.TestCase):
 
         pipeline_with_kwargs_consuming_task.validate(self, pipeline_instance)
 
-
-    def test_refer_to_task_constant_inputs(self):
-
-        d = TestSandboxDir(self)
-
-        d.pipeline_instance_from_generator(
-            pipeline_with_single_bash_task.pipeline,
-            completed=True
-        )
-
-        pipeline_instance = DryPipe.load_pipeline(d.sandbox_dir)
-
-        multiply_x_by_y = pipeline_instance.query("multiply_x_by_y").single()
-
-        self.assertEqual(3, multiply_x_by_y.inputs.x)
 
     def test_refer_to_task_upstream_inputs(self):
         d = TestSandboxDir(self)
