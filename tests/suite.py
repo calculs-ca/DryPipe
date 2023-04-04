@@ -28,6 +28,7 @@ def low_level_tests():
         pipeline_tests_with_single_tasks.PipelineWith3StepsCrash2,
         pipeline_tests_with_single_tasks.PipelineWith3StepsCrash3,
         pipeline_tests_with_multiple_tasks.PipelineWithVariablePassing,
+        pipeline_tests_with_multiple_tasks.PipelineWithTwoPythonTasks,
         pipeline_tests_with_single_tasks.PipelineWith4MixedStepsCrash,
         pipeline_tests_with_single_tasks.PipelineWithSinglePythonTask,
         pipeline_tests_with_single_tasks.PipelineWithSingleBashTask,
@@ -48,6 +49,7 @@ def quick_sanity_tests():
         pipeline_tests_with_multiple_tasks.PipelineWithVariablePassing,
         pipeline_tests_with_single_tasks.PipelineWith4MixedStepsCrash,
         pipeline_tests_with_single_tasks.PipelineWithSinglePythonTask,
+        pipeline_tests_with_multiple_tasks.PipelineWithTwoPythonTasks,
         pipeline_tests_with_single_tasks.PipelineWithVarAndFileOutput,
         pipeline_tests_with_single_tasks.PipelineWithVarSharingBetweenSteps
     ]

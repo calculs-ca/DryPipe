@@ -214,6 +214,9 @@ class StateFileTracker:
                     def is_failed(self):
                         return state_file.is_failed()
 
+                    def state_name(self):
+                        return state_file.state_as_string()
+
                 yield Task()
 
     def load_state_files_for_run(self, glob_filter=None):

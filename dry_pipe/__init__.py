@@ -435,29 +435,21 @@ class TaskBuilder:
         The consumes clause
         :param args:
         :param kwargs:
-        :return a new :py:meth:`dry_pipe.TaskBuilder` with the added consumes declaration
+        :return a new :py:meth:`dry_pipe.TaskBuilder` with the added inputs declaration
         """
 
         def deps_from_args():
             for o in args:
-                if isinstance(o, int):
-                    if o.is_rehydrated():
-                        yield o.var_name, IndeterminateFile(o.file_path, manage_signature=False)
-                    else:
-                        yield o.var_name, o
-                elif isinstance(o, OutputVar):
-                    if o.is_rehydrated():
-                        yield o.name, Val(o.fetch())
-                    else:
-                        yield o.name, o
+                if isinstance(o, TaskOutput):
+                    yield o.name, TaskInput(o.name, o.type, upstream_task_key=o.task_key, name_in_upstream_task=o.name)
                 else:
                     raise ValidationError(
                         f"bad arg: {o} passed to {self}"
                     )
 
-        for v, count in collections.Counter([k for k, _ in deps_from_args()]).items():
+        for o, count in collections.Counter([k for k, _ in deps_from_args()]).items():
             if count > 1:
-                raise Exception(f"duplicate variable {v} in task(key={self.key}).consumes(...) clause")
+                raise Exception(f"duplicate variable {o} in task(key={self.key}).consumes(...) clause")
 
         return TaskBuilder(** {
             ** vars(self),
