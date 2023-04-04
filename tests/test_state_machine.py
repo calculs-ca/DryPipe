@@ -1,10 +1,11 @@
-import json
 import os
+import shutil
 import unittest
 from pathlib import Path
 
-from dry_pipe.state_machine import StateMachine, StateFile, StateFileTracker, AllRunnableTasksCompletedOrInError, \
+from dry_pipe.state_machine import StateMachine, StateFileTracker, AllRunnableTasksCompletedOrInError, \
     InvalidQueryInTaskGenerator
+from mockups import TaskMockup, StateFileTrackerMockup
 from test_utils import TestSandboxDir
 
 class Counter:
@@ -14,96 +15,6 @@ class Counter:
 
     def inc(self):
         self.value += 1
-
-
-class TaskMockup:
-    def __init__(self, key, upstream_dep_keys=[]):
-        self.key = key
-        self._upstream_dep_keys = upstream_dep_keys
-        self.inputs = [1, 5, 4]
-
-    def upstream_dep_keys(self):
-        return self._upstream_dep_keys
-
-    def cause_change_of_hash_code(self, data):
-        self.inputs.append(data)
-
-    def compute_hash_code(self):
-        return ",".join(str(i) for i in self.inputs)
-
-    def save(self, pipeline_instance_dir, hash_code):
-        task_control_dir = Path(pipeline_instance_dir, ".drypipe", self.key)
-        task_control_dir.mkdir(exist_ok=True, parents=True)
-        inputs = [
-            {
-                "upstream_task_key": k
-            }
-            for k in self.upstream_dep_keys()
-        ]
-        with open(os.path.join(task_control_dir, "task-conf.json"), "w") as tc:
-            tc.write(json.dumps({
-                "hash_code": hash_code,
-                "inputs": inputs
-            }))
-
-
-class StateFileTrackerMockup:
-
-    def __init__(self):
-        self.state_files_in_memory: dict[str, StateFile] = {}
-        # task_key -> path
-        self.task_keys_to_task_states_on_mockup_disk: dict[str, str] = {}
-        self.pipeline_work_dir = "/"
-
-    def prepare_instance_dir(self):
-        pass
-
-    def set_completed_on_disk(self, task_key):
-        self.task_keys_to_task_states_on_mockup_disk[task_key] = "state.completed"
-
-    def all_tasks(self):
-        return self.state_files_in_memory.values()
-
-    def lookup_state_file_from_memory(self, task_key):
-        return self.state_files_in_memory[task_key]
-
-    def register_pre_launch(self, state_file):
-        state_file.transition_to_pre_launch()
-        self.task_keys_to_task_states_on_mockup_disk[state_file.task_key] = os.path.basename(state_file.path)
-
-    def completed_task_keys(self):
-        for k, state_file in self.state_files_in_memory.items():
-            if state_file.is_completed():
-                yield k
-
-    def fetch_true_state_and_update_memory_if_changed(self, task_key):
-
-        true_task_state = self.task_keys_to_task_states_on_mockup_disk.get(task_key)
-        state_file_in_memory = self.state_files_in_memory.get(task_key)
-
-        if state_file_in_memory is None:
-            raise Exception(f"{task_key} should be in memory by now")
-
-        if str(state_file_in_memory) == f"/{task_key}/{true_task_state}":
-            return None
-        else:
-            state_file_in_memory.refresh(f"/{task_key}/{true_task_state}")
-            return state_file_in_memory
-
-    def create_true_state_if_new_else_fetch_from_memory(self, task):
-        """
-        :param task:
-        :return: (task_is_new, state_file)
-        """
-        true_task_state = self.task_keys_to_task_states_on_mockup_disk.get(task.key)
-
-        if true_task_state is None:
-            s = StateFile(task.key, task.compute_hash_code(), self)
-            self.task_keys_to_task_states_on_mockup_disk[task.key] = s.state_as_string()
-            self.state_files_in_memory[task.key] = s
-            return True, s
-        else:
-            return False, self.state_files_in_memory[task.key]
 
 
 class StateMachineTester:
@@ -190,50 +101,62 @@ class StateMachineTester:
             return [tester] + list(dag_gen(None))
 
 
-class StateFileTrackerTester:
+class BaseStateFileTrackerTester(unittest.TestCase):
 
-    def __init__(self, test_case: unittest.TestCase, state_file_tracker):
-        self.test_case = test_case
-        self.state_file_tracker = state_file_tracker
+    def state_file_tracker(self):
+        raise NotImplementedError()
 
-    def test_01(self):
+    def test_task_state_tracking(self):
         t1, t2, t3 = [
             TaskMockup(f"t{i}")
             for i in [1, 2, 3]
         ]
 
-        is_sf1_new, sf1_a = self.state_file_tracker.create_true_state_if_new_else_fetch_from_memory(t1)
+        state_file_tracker = self.state_file_tracker()
 
-        self.test_case.assertIsNotNone(self.state_file_tracker.lookup_state_file_from_memory(t1.key))
+        is_sf1_new, sf1_a = state_file_tracker.create_true_state_if_new_else_fetch_from_memory(t1)
 
-        self.test_case.assertTrue(is_sf1_new)
+        self.assertIsNotNone(state_file_tracker.lookup_state_file_from_memory(t1.key))
 
-        is_sf1_new, sf1_b = self.state_file_tracker.create_true_state_if_new_else_fetch_from_memory(t1)
-        self.test_case.assertFalse(is_sf1_new)
+        self.assertTrue(is_sf1_new)
 
-        self.test_case.assertEqual(sf1_a.path, sf1_b.path)
+        is_sf1_new, sf1_b = state_file_tracker.create_true_state_if_new_else_fetch_from_memory(t1)
+        self.assertFalse(is_sf1_new)
 
-        self.state_file_tracker.set_completed_on_disk("t1")
+        self.assertEqual(sf1_a.path, sf1_b.path)
 
-        true_state_file = self.state_file_tracker.fetch_true_state_and_update_memory_if_changed("t1")
+        state_file_tracker.set_completed_on_disk("t1")
 
-        self.test_case.assertEqual("/t1/state.completed", str(true_state_file))
+        true_state_file = state_file_tracker.fetch_true_state_and_update_memory_if_changed("t1")
+
+        self.assertEqual("/t1/state.completed", str(true_state_file))
 
         # ensure only fetched once:
-        true_state_file = self.state_file_tracker.fetch_true_state_and_update_memory_if_changed("t1")
-        self.test_case.assertIsNone(true_state_file)
+        true_state_file = state_file_tracker.fetch_true_state_and_update_memory_if_changed("t1")
+        self.assertIsNone(true_state_file)
 
 
-class StateFileTrackerTests(unittest.TestCase):
+class MockupStateFileTrackerTest(BaseStateFileTrackerTester):
+    def state_file_tracker(self):
+        return StateFileTrackerMockup()
 
-    def test_mockup_state_file_tracker(self):
-        tester = StateFileTrackerTester(self, StateFileTrackerMockup())
-        tester.test_01()
+class StateFileTrackerTest(BaseStateFileTrackerTester):
 
-    def test_real_state_file_tracker(self):
-        d = TestSandboxDir(self)
-        tester = StateFileTrackerTester(self, StateFileTracker(d.sandbox_dir))
-        tester.test_01()
+    def setUp(self) -> None:
+        all_sandbox_dirs = os.path.join(
+            os.path.dirname(__file__),
+            "sandboxes"
+        )
+
+        self.pipeline_instance_dir = os.path.join(all_sandbox_dirs, self.__class__.__name__)
+
+        d = Path(self.pipeline_instance_dir)
+        if d.exists():
+            shutil.rmtree(d)
+
+    def state_file_tracker(self):
+        return StateFileTracker(self.pipeline_instance_dir)
+
 
     def test_real_state_file_tracker_change_tracking(self):
         d = TestSandboxDir(self)
@@ -265,7 +188,6 @@ class StateFileTrackerTests(unittest.TestCase):
         self.assertEqual(tracker.resave_count, 1)
         self.assertEqual(state_file.path, state_file3.path)
         self.assertNotEqual(state_file.hash_code, state_file3.hash_code)
-
 
 class StateMachineTests(unittest.TestCase):
 
@@ -479,8 +401,6 @@ class StateMachineTests(unittest.TestCase):
             InvalidQueryInTaskGenerator,
             lambda: tester.iterate_once_and_mutate_set_of_next_state_files_ready()
         )
-
-
 
     # state machine 00
 

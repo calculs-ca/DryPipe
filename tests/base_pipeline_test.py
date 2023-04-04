@@ -43,7 +43,7 @@ class BasePipelineTest(unittest.TestCase):
         }
 
     def dag_gen(self, dsl):
-        pass
+        raise NotImplementedError()
 
     def test_validate(self):
-        pass
+        raise NotImplementedError()
