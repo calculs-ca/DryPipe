@@ -8,6 +8,7 @@ import sys
 import tempfile
 import textwrap
 from fnmatch import fnmatch
+from pathlib import Path
 
 from dry_pipe.script_lib import PortablePopen, parse_ssh_specs, invoke_rsync, TaskInput, TaskOutput
 from dry_pipe.utils import bash_shebang
@@ -488,12 +489,14 @@ class TaskBuilder:
 
         def outputs():
             for k, v in kwargs.items():
-                if isinstance(v, type(int)):
+                if v == int:
                     yield k, TaskOutput(k, 'int', task_key=self.key)
-                elif isinstance(v, str):
+                elif v == str:
                     yield k, TaskOutput(k, 'str', task_key=self.key)
-                elif isinstance(v, float):
+                elif v == float:
                     yield k, TaskOutput(k, 'float', task_key=self.key)
+                elif isinstance(v, Path):
+                    yield k, TaskOutput(k, 'file', task_key=self.key, produced_file_name=v.name)
                 elif isinstance(v, FileSet):
                     yield k, v
                 else:

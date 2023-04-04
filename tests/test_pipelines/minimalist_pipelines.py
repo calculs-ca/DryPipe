@@ -1,41 +1,21 @@
-from dry_pipe import DryPipe
-from dry_pipe.pipeline_runner import PipelineRunner
-from dry_pipe.state_machine import StateFileTracker, StateMachine
+from pathlib import Path
+
+from base_pipeline_test import BasePipelineTest
+from dry_pipe import DryPipe, TaskConf
 
 
-class PipelineTester:
+@DryPipe.python_call()
+def multiply_by_x(x, y):
+    return {
+        "result": x * y
+    }
 
-    def __init__(self, test_case, sandbox, task_conf=None):
-        self.test_case = test_case
-        self.sandbox = sandbox
-        self.task_conf = task_conf
-        self.tasks_by_keys = {}
-
-        t = StateFileTracker(self.sandbox.sandbox_dir)
-        state_machine = StateMachine(t, lambda dsl: self.dag_gen(dsl))
-        pr = PipelineRunner(state_machine)
-        pr.run_sync()
-
-        self.tasks_by_keys = {
-            t.key: t
-            for t in t.load_completed_tasks_for_query()
-        }
-        self.validate()
-
-    def dag_gen(self, dsl):
-        pass
-
-    def validate(self):
-        pass
-
-
-
-class PipelineWithSingleBashTask(PipelineTester):
+class PipelineWithSingleBashTask(BasePipelineTest):
 
     def dag_gen(self, dsl):
         yield dsl.task(
             key="multiply_x_by_y",
-            task_conf=self.task_conf
+            task_conf=self.task_conf()
         ).inputs(
             x=3,
             y=5
@@ -51,26 +31,20 @@ class PipelineWithSingleBashTask(PipelineTester):
             """
         )()
 
-    def validate(self):
+
+    def test_validate(self):
         multiply_x_by_y_task = self.tasks_by_keys["multiply_x_by_y"]
-        self.test_case.assertEqual(3, multiply_x_by_y_task.inputs.x)
-        self.test_case.assertEqual(5, multiply_x_by_y_task.inputs.y)
-        self.test_case.assertEqual(15, int(multiply_x_by_y_task.outputs.result))
+        self.assertEqual(3, multiply_x_by_y_task.inputs.x)
+        self.assertEqual(5, multiply_x_by_y_task.inputs.y)
+        self.assertEqual(15, int(multiply_x_by_y_task.outputs.result))
 
 
-@DryPipe.python_call()
-def multiply_by_x(x, y):
-    return {
-        "result": x * y
-    }
-
-
-class PipelineWithSinglePythonTask(PipelineTester):
+class PipelineWithSinglePythonTask(BasePipelineTest):
 
     def dag_gen(self, dsl):
         yield dsl.task(
             key="multiply_x_by_y",
-            task_conf=self.task_conf
+            task_conf=self.task_conf()
         ).inputs(
             x=3, y=4
         ).outputs(
@@ -80,7 +54,7 @@ class PipelineWithSinglePythonTask(PipelineTester):
         )()
 
 
-    def validate(self):
+    def test_validate(self):
         multiply_x_by_y_task = self.tasks_by_keys["multiply_x_by_y"]
 
         if not multiply_x_by_y_task.is_completed():
@@ -93,3 +67,64 @@ class PipelineWithSinglePythonTask(PipelineTester):
         res = int(multiply_x_by_y_task.outputs.result)
         if res != 12:
             raise Exception(f"expected 12, got {res}")
+
+
+#TODO :  error when CONSUME VARS are arguments:ex:
+# def func(i, a, x, f):
+@DryPipe.python_call()
+def func(i, f):
+
+    with open(f, "w") as _f:
+        _f.write("THE_FILE_CONTENT_123")
+
+    return {
+        "x": 123,
+        "a": "abc"
+    }
+
+
+class PipelineWithVarAndFileOutput(BasePipelineTest):
+
+    def dag_gen(self, dsl):
+
+        yield dsl.task(
+            key="t1",
+            task_conf=self.task_conf()
+        ).inputs(
+            i=123
+        ).outputs(
+            x=int,
+            a=str,
+            f=Path("f.txt")
+        ).calls(func)()
+
+
+    def test_validate(self):
+        task = self.tasks_by_keys["t1"]
+
+        if not task.is_completed():
+            raise Exception(f"expected completed, got {task.state_name()}")
+
+        with open(task.outputs.f) as f:
+            s = f.read()
+            self.assertEqual(s, "THE_FILE_CONTENT_123")
+
+
+# Same pipelines with container
+
+task_conf_with_test_container = TaskConf(
+    executer_type="process",
+    container="singularity-test-container.sif"
+)
+
+class PipelineWithSingleBashTaskInContainer(PipelineWithSingleBashTask):
+    def task_conf(self):
+        return task_conf_with_test_container
+
+class PipelineWithSinglePythonTaskInContainer(PipelineWithSinglePythonTask):
+    def task_conf(self):
+        return task_conf_with_test_container
+
+class PipelineWithVarAndFileOutputInContainer(PipelineWithVarAndFileOutput):
+    def task_conf(self):
+        return task_conf_with_test_container

@@ -19,8 +19,11 @@ class Counter:
 class TaskMockup:
     def __init__(self, key, upstream_dep_keys=[]):
         self.key = key
-        self.upstream_dep_keys = upstream_dep_keys
+        self._upstream_dep_keys = upstream_dep_keys
         self.inputs = [1, 5, 4]
+
+    def upstream_dep_keys(self):
+        return self._upstream_dep_keys
 
     def cause_change_of_hash_code(self, data):
         self.inputs.append(data)
@@ -35,7 +38,7 @@ class TaskMockup:
             {
                 "upstream_task_key": k
             }
-            for k in self.upstream_dep_keys
+            for k in self.upstream_dep_keys()
         ]
         with open(os.path.join(task_control_dir, "task-conf.json"), "w") as tc:
             tc.write(json.dumps({
@@ -51,6 +54,9 @@ class StateFileTrackerMockup:
         # task_key -> path
         self.task_keys_to_task_states_on_mockup_disk: dict[str, str] = {}
         self.pipeline_work_dir = "/"
+
+    def prepare_instance_dir(self):
+        pass
 
     def set_completed_on_disk(self, task_key):
         self.task_keys_to_task_states_on_mockup_disk[task_key] = "state.completed"

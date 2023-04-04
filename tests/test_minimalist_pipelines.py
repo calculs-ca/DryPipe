@@ -4,67 +4,46 @@ import unittest
 
 import pipeline_with_file_and_var_output
 import pipeline_with_kwargs_consuming_task
-import pipeline_with_single_bash_task
-import pipeline_with_single_python_task
 import pipeline_with_variable_passing
 import pipeline_with_two_python_tasks
 import pipeline_with_multistep_tasks_with_shared_vars
 
 from dry_pipe import TaskConf, DryPipe
-from dry_pipe.pipeline_runner import PipelineRunner
 from dry_pipe.script_lib import iterate_task_env
-from dry_pipe.state_machine import StateMachine, StateFileTracker
 from pipeline_with_dependency_on_other_pipeline import pipeline_with_external_deps_dag_gen
+from test_pipelines.minimalist_pipelines import PipelineWithSingleBashTask, PipelineWithSinglePythonTask, \
+    PipelineWithVarAndFileOutput
 from test_utils import TestSandboxDir
 
 
 class SingleTaskPipelinesTests(unittest.TestCase):
 
-    def _prepare_and_run(self, sandbox, dag_gen, task_conf=None):
-
-        t = StateFileTracker(sandbox.sandbox_dir)
-        state_machine = StateMachine(t, lambda dsl: dag_gen(dsl, task_conf))
-        pr = PipelineRunner(state_machine)
-        pr.run_sync()
-        return list(t.load_completed_tasks_for_query("multiply_x_by_y"))
-
-
-    def test_single_python_task_pipeline(self):
-
+    def test_single_bash_task(self):
         d = TestSandboxDir(self)
-        multiply_x_by_y, = self._prepare_and_run(d, pipeline_with_single_python_task.pipeline)
+        PipelineWithSingleBashTask(self, d)
 
-        pipeline_with_single_python_task.validate_single_task_pipeline(multiply_x_by_y)
-
-    def test_single_bash_task_pipeline(self):
-
+    def test_single_bash_task_with_container(self):
         d = TestSandboxDir(self)
+        PipelineWithSingleBashTask(self, d, self._task_conf_with_container())
 
-        multiply_x_by_y, = self._prepare_and_run(d, pipeline_with_single_bash_task.pipeline)
-
-        pipeline_with_single_bash_task.validate(multiply_x_by_y)
-
-    def test_single_python_task_pipeline_with_container(self):
-
+    def test_single_python_task(self):
         d = TestSandboxDir(self)
-        task_conf = TaskConf(
+        PipelineWithSinglePythonTask(self, d)
+
+    def test_single_python_task_with_container(self):
+        d = TestSandboxDir(self)
+        PipelineWithSinglePythonTask(self, d, self._task_conf_with_container())
+
+    def _task_conf_with_container(self):
+        return TaskConf(
             executer_type="process",
             container="singularity-test-container.sif"
         )
-        multiply_x_by_y, = self._prepare_and_run(d, pipeline_with_single_python_task.pipeline, task_conf)
 
-        pipeline_with_single_python_task.validate_single_task_pipeline(multiply_x_by_y)
-
-    def test_single_bash_task_pipeline_with_container(self):
-
+    def test_pipeline_with_file_and_var_output(self):
         d = TestSandboxDir(self)
-        task_conf = TaskConf(
-            executer_type="process",
-            container="singularity-test-container.sif"
-        )
-        multiply_x_by_y, = self._prepare_and_run(d, pipeline_with_single_bash_task.pipeline, task_conf)
+        PipelineWithVarAndFileOutput(self, d)
 
-        pipeline_with_single_bash_task.validate(self, multiply_x_by_y)
 
 
 class MinimalistPipelinesTests(unittest.TestCase):
@@ -116,14 +95,6 @@ class MinimalistPipelinesTests(unittest.TestCase):
         )
 
         pipeline_with_multistep_tasks_with_shared_vars.validate(self, pipeline_instance)
-
-    def test_ultra_minimalist_pipeline(self):
-        d = TestSandboxDir(self)
-        pipeline_instance = d.pipeline_instance_from_generator(
-            pipeline_with_file_and_var_output.dag_gen,
-            completed=True
-        )
-        pipeline_with_file_and_var_output.validate(self, pipeline_instance.tasks["t1"])
 
     def test_inter_pipeline_dependencies(self):
 
