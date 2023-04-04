@@ -11,38 +11,7 @@ import pipeline_with_multistep_tasks_with_shared_vars
 from dry_pipe import TaskConf, DryPipe
 from dry_pipe.script_lib import iterate_task_env
 from pipeline_with_dependency_on_other_pipeline import pipeline_with_external_deps_dag_gen
-from test_pipelines.minimalist_pipelines import PipelineWithSingleBashTask, PipelineWithSinglePythonTask, \
-    PipelineWithVarAndFileOutput
 from test_utils import TestSandboxDir
-
-
-class SingleTaskPipelinesTests(unittest.TestCase):
-
-    def test_single_bash_task(self):
-        d = TestSandboxDir(self)
-        PipelineWithSingleBashTask(self, d)
-
-    def test_single_bash_task_with_container(self):
-        d = TestSandboxDir(self)
-        PipelineWithSingleBashTask(self, d, self._task_conf_with_container())
-
-    def test_single_python_task(self):
-        d = TestSandboxDir(self)
-        PipelineWithSinglePythonTask(self, d)
-
-    def test_single_python_task_with_container(self):
-        d = TestSandboxDir(self)
-        PipelineWithSinglePythonTask(self, d, self._task_conf_with_container())
-
-    def _task_conf_with_container(self):
-        return TaskConf(
-            executer_type="process",
-            container="singularity-test-container.sif"
-        )
-
-    def test_pipeline_with_file_and_var_output(self):
-        d = TestSandboxDir(self)
-        PipelineWithVarAndFileOutput(self, d)
 
 
 

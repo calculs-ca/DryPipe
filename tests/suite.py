@@ -12,31 +12,28 @@ from test_dynamic_dags import DynamicDagTests
 from test_monitoring import MonitoringTests
 from test_multistep_tasks import MultipstepTaskTests
 from test_pipeline_composition import PipelineCompositionTests
-from test_pipelines import minimalist_pipelines
 from test_regressions import RegressionTests
 from test_remote_tasks import RemoteTaskTests1, RemoteTaskTests2, RemoteTaskTestsWithSlurm
 from test_script_lib import ScriptLibTests
-from test_minimalist_pipelines import SingleTaskPipelinesTests, MinimalistPipelinesTests
+from test_minimalist_pipelines import MinimalistPipelinesTests
 from test_state_machine import StateMachineTests, StateFileTrackerTest, MockupStateFileTrackerTest
-
+import single_task_pipelines
 
 def state_machine_tests():
     return [StateMachineTests, StateFileTrackerTest]
 
-def single_task_tests():
-    return [SingleTaskPipelinesTests]
 
 def low_level_tests():
     return [
         MockupStateFileTrackerTest,
         StateFileTrackerTest,
         StateMachineTests,
-        minimalist_pipelines.PipelineWithSinglePythonTask,
-        minimalist_pipelines.PipelineWithSinglePythonTaskInContainer,
-        minimalist_pipelines.PipelineWithSingleBashTask,
-        minimalist_pipelines.PipelineWithSingleBashTaskInContainer,
-        minimalist_pipelines.PipelineWithVarAndFileOutput,
-        minimalist_pipelines.PipelineWithVarAndFileOutputInContainer
+        single_task_pipelines.PipelineWithSinglePythonTask,
+        single_task_pipelines.PipelineWithSinglePythonTaskInContainer,
+        single_task_pipelines.PipelineWithSingleBashTask,
+        single_task_pipelines.PipelineWithSingleBashTaskInContainer,
+        single_task_pipelines.PipelineWithVarAndFileOutput,
+        single_task_pipelines.PipelineWithVarAndFileOutputInContainer
     ]
 
 def quick_sanity_tests():
@@ -98,7 +95,6 @@ if __name__ == '__main__':
 
     suite_funcs = {
         "state_machine_tests": state_machine_tests,
-        "single_task_tests": single_task_tests,
         "low_level_tests": low_level_tests,
         "quick_sanity_tests": quick_sanity_tests,
         "remote_tests": remote_tests,
