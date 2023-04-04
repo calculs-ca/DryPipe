@@ -109,6 +109,48 @@ class PipelineWithVarAndFileOutput(BasePipelineTest):
             s = f.read()
             self.assertEqual(s, "THE_FILE_CONTENT_123")
 
+@DryPipe.python_call()
+def f3(x1, x2):
+
+    print("f3")
+
+    return {
+        "x3": x1 + x2
+    }
+
+
+class PipelineWithVarSharingBetweenSteps(BasePipelineTest):
+
+    def dag_gen(self, dsl):
+        yield dsl.task(
+            key="t"
+        ).outputs(
+            x1=int,
+            x2=int,
+            x3=int
+        ).calls("""
+            #!/usr/bin/env bash        
+            export x1=7
+        """).calls("""
+            #!/usr/bin/env bash                
+            export x2=$(( $x1 * 2 ))    
+        """).calls(f3)()
+
+
+    def test_validate(self):
+
+        t = self.tasks_by_keys["t"]
+
+        self.assertTrue(t.is_completed())
+
+        x1 = int(t.outputs.x1)
+        x2 = int(t.outputs.x2)
+        x3 = int(t.outputs.x3)
+
+        self.assertEqual(x1, 7)
+        self.assertEqual(x2, 14)
+        self.assertEqual(x3, 21)
+
 
 # Same pipelines with container
 
@@ -126,5 +168,9 @@ class PipelineWithSinglePythonTaskInContainer(PipelineWithSinglePythonTask):
         return task_conf_with_test_container
 
 class PipelineWithVarAndFileOutputInContainer(PipelineWithVarAndFileOutput):
+    def task_conf(self):
+        return task_conf_with_test_container
+
+class PipelineWithVarSharingBetweenStepsInContainer(PipelineWithVarSharingBetweenSteps):
     def task_conf(self):
         return task_conf_with_test_container

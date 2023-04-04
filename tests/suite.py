@@ -33,7 +33,9 @@ def low_level_tests():
         single_task_pipelines.PipelineWithSingleBashTask,
         single_task_pipelines.PipelineWithSingleBashTaskInContainer,
         single_task_pipelines.PipelineWithVarAndFileOutput,
-        single_task_pipelines.PipelineWithVarAndFileOutputInContainer
+        single_task_pipelines.PipelineWithVarAndFileOutputInContainer,
+        single_task_pipelines.PipelineWithVarSharingBetweenSteps,
+        single_task_pipelines.PipelineWithVarSharingBetweenStepsInContainer
     ]
 
 def quick_sanity_tests():
