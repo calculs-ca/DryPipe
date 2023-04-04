@@ -417,6 +417,8 @@ class TaskBuilder:
                     yield k, TaskInput(k, 'float', value=v)
                 elif isinstance(v, TaskOutput):
                     yield k, TaskInput(k, v.type, upstream_task_key=v.task_key, name_in_upstream_task=v.name)
+                elif isinstance(v, Path):
+                    yield k, TaskInput(k, 'file', file_name=str(v))
                 else:
                     raise ValidationError(
                         f"_consumes can only take DryPipe.file() or _consumes(a_file=other_task.out.name_of_file()" +

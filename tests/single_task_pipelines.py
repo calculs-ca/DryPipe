@@ -262,6 +262,88 @@ class PipelineWith3StepsCrash3(PipelineWith3StepsCrash1):
         self.assertEqual(self.output_as_string(), "s1\ns2\n")
 
 
+@DryPipe.python_call()
+def step2_in_python(out_file):
+    with open(out_file, "a") as f:
+        f.write("s2\n")
+
+
+@DryPipe.python_call()
+def step4_in_python(out_file):
+    with open(out_file, "a") as f:
+        f.write("s4\n")
+
+
+class PipelineWith4MixedStepsNoCrash(BasePipelineTest):
+
+    def dag_gen(self, dsl):
+        three_phase_task = dsl.task(
+            key="three_phase_task",
+            task_conf=self.task_conf()
+        ).outputs(
+            out_file=dsl.file("out_file.txt")
+        ).calls(
+            """
+                #!/usr/bin/env bash
+                echo "zaz -> $CRASH_STEP_3"
+    
+                if [[ "${CRASH_STEP_1}" ]]; then
+                  exit 1
+                fi
+    
+                echo "s1" >> $out_file        
+            """
+        ).calls(
+            step2_in_python
+        ).calls("""
+            #!/usr/bin/env bash                        
+    
+            if [[ "${CRASH_STEP_3}" ]]; then
+              exit 1
+            fi
+    
+            echo "s3" >> $out_file    
+        """).calls(
+            step4_in_python
+        )()
+
+        yield three_phase_task
+
+
+    def output_as_string(self):
+        three_phase_task = self.tasks_by_keys["three_phase_task"]
+        with open(three_phase_task.outputs.out_file) as f:
+            return f.read()
+
+    def test_validate(self):
+        self.assertEqual(self.output_as_string(), "s1\ns2\ns3\ns4\n")
+
+
+class PipelineWith4MixedStepsCrash(PipelineWith4MixedStepsNoCrash):
+    def task_conf(self):
+        return TaskConf(
+            executer_type="process",
+            extra_env={
+                "CRASH_STEP_3": "TRUE"
+            }
+        )
+
+    def run_pipeline(self):
+        p = Pipeline(lambda dsl: self.dag_gen(dsl), pipeline_code_dir=self.pipeline_code_dir)
+        pi = p.create_pipeline_instance(self.pipeline_instance_dir)
+        pi.run_sync(fail_silently=True)
+        self.tasks_by_keys = {
+            t.key: t
+            for t in pi.query("*", include_incomplete_tasks=True)
+        }
+
+    def test_validate(self):
+        three_phase_task = self.tasks_by_keys["three_phase_task"]
+        self.assertTrue(three_phase_task.is_failed())
+        self.assertTrue(os.path.exists(three_phase_task.outputs.out_file))
+        self.assertEqual(self.output_as_string(), "s1\ns2\n")
+
+
 # Same pipelines with container
 
 task_conf_with_test_container = TaskConf(
