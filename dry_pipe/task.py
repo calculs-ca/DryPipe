@@ -33,7 +33,7 @@ class Task:
     def __init__(self, task_builder):
 
         self.inputs = TaskInputs(self, task_inputs=task_builder._consumes.values())
-        self.outputs = TaskOutputs(self, task_outputs=task_builder._produces.values())
+        self.outputs = TaskOutputs(self, task_outputs=task_builder._produces)
         self.python_bin = None
         self.conda_env = None
         self.key = task_builder.key
@@ -613,7 +613,8 @@ class TaskInputs:
                 pipeline_work_dir,
                 task_conf_json
             ):
-                self._task_inputs[k] = task_input.parse(v)
+                if v is not None:
+                    self._task_inputs[k] = task_input.parse(v)
 
     def __iter__(self):
         yield from self._task_inputs
@@ -637,37 +638,22 @@ class TaskInputs:
 
 class TaskOutputs:
 
-    def __init__(self, task, task_conf_json=None, task_outputs=None, var_file=None, task_work_dir=None):
+    def __init__(self, task, task_outputs=None):
         self.task = task
         self._task_outputs = task_outputs
-        if task_conf_json is not None:
-            self._task_outputs = {}
-            unparsed_out_vars = dict(iterate_out_vars_from(var_file))
-
-            for o in task_conf_json["outputs"]:
-                o = TaskOutput.from_json(o)
-                o._set_resolved_value(unparsed_out_vars.get(o.name))
-                self._task_outputs[o.name] = o
-
-            for o, k, f in iterate_file_task_outputs(task_conf_json, task_work_dir):
-                o._set_resolved_value(f)
-                self._task_outputs[k] = o
 
 
     def __iter__(self):
-        yield from self._task_outputs
+        yield from self._task_outputs.values()
 
     def __getattr__(self, name):
-
-        if self._task_outputs is None:
-            self._resolve()
 
         p = self._task_outputs.get(name)
 
         if p is None:
             raise ValidationError(
-                f"task {self.task} does not declare output '{name}' in it's produced() clause.\n" +
-                f"Use task({self.task.key}).produces({name}=...) to specify output"
+                f"task {self.task} does not declare output '{name}' in it's outputs() clause.\n" +
+                f"Use task({self.task.key}).outputs({name}=...) to specify outputs"
             )
 
         return p

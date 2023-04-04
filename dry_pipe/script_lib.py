@@ -1507,7 +1507,7 @@ class TaskOutput:
         self._resolved_value = None
         self.task_key = task_key
 
-    def _set_resolved_value(self, v):
+    def set_resolved_value(self, v):
         self._resolved_value = self.parse(v)
 
     def is_file(self):

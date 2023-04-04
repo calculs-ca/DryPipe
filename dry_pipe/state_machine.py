@@ -5,7 +5,8 @@ import shutil
 from pathlib import Path
 
 from dry_pipe import TaskBuilder, TaskConf, script_lib
-from dry_pipe.script_lib import FileCreationDefaultModes, write_pipeline_lib_script
+from dry_pipe.script_lib import FileCreationDefaultModes, write_pipeline_lib_script, iterate_out_vars_from, TaskOutput, \
+    iterate_file_task_outputs
 from dry_pipe.task import TaskOutputs, TaskInputs
 
 
@@ -182,18 +183,30 @@ class StateFileTracker:
                 )
                 task_conf = state_file.load_task_conf_json()
                 var_file = os.path.join(task_control_dir, "output_vars")
+                is_complete = state_file_dir_entry.name == "state.completed"
 
                 class Task:
                     def __init__(self):
                         self.key = task_key
                         self.inputs = TaskInputs(self, task_conf, pipeline_work_dir=pod)
-                        self.outputs = TaskOutputs(
-                            self, task_conf,
-                            var_file=var_file,
-                            task_work_dir=os.path.join(pod, task_key)
-                        )
 
+                        task_outputs = {}
+                        unparsed_out_vars = dict(iterate_out_vars_from(var_file))
+
+                        for o in task_conf["outputs"]:
+                            o = TaskOutput.from_json(o)
+                            if o.type != 'file':
+                                o.set_resolved_value(unparsed_out_vars.get(o.name))
+                                task_outputs[o.name] = o
+                            else:
+                                o.set_resolved_value(os.path.join(pod, task_key, o.produced_file_name))
+                                task_outputs[o.name] = o
+
+                        self.outputs = TaskOutputs(self, task_outputs)
                         self.state_file = state_file
+
+                    def __str__(self):
+                        return f"Task(key={self.key})"
 
                     def is_completed(self):
                         return state_file.is_completed()

@@ -2,22 +2,17 @@ import sys
 
 from unittest import TextTestRunner, TestSuite, defaultTestLoader
 
-from base_tests import BaseTests, NonTrivialPipelineTests, NonTrivialPipelineLocalContainerlessTests, \
+from base_tests import BaseTests, \
     NonTrivialPipelineLocalWithSingularityContainerTests, NonTrivialPipelineSlurmContainerlessTests, \
     NonTrivialPipelineSlurmWithSingularityContainerTests
-from ground_level_tests import GroundLevelTests, TaskSignatureTests
+import pipeline_tests_with_single_tasks
+import pipeline_tests_with_multiple_tasks
 from test_corner_case_failure_handling import CornerCasesFailureTests, CornerCasesRemoteZombiTests
-from test_daemon_mode import DaemonModeTests
-from test_dynamic_dags import DynamicDagTests
 from test_monitoring import MonitoringTests
-from test_multistep_tasks import MultipstepTaskTests
-from test_pipeline_composition import PipelineCompositionTests
 from test_regressions import RegressionTests
 from test_remote_tasks import RemoteTaskTests1, RemoteTaskTests2, RemoteTaskTestsWithSlurm
-from test_script_lib import ScriptLibTests
-from test_minimalist_pipelines import MinimalistPipelinesTests
 from test_state_machine import StateMachineTests, StateFileTrackerTest, MockupStateFileTrackerTest
-import single_task_pipelines
+
 
 def state_machine_tests():
     return [StateMachineTests, StateFileTrackerTest]
@@ -28,31 +23,33 @@ def low_level_tests():
         MockupStateFileTrackerTest,
         StateFileTrackerTest,
         StateMachineTests,
-        single_task_pipelines.PipelineWith3StepsNoCrash,
-        single_task_pipelines.PipelineWith3StepsCrash1,
-        single_task_pipelines.PipelineWith3StepsCrash2,
-        single_task_pipelines.PipelineWith3StepsCrash3,
-        single_task_pipelines.PipelineWith3StepsCrash3InContainer,
-        single_task_pipelines.PipelineWithSinglePythonTask,
-        single_task_pipelines.PipelineWithSinglePythonTaskInContainer,
-        single_task_pipelines.PipelineWithSingleBashTask,
-        single_task_pipelines.PipelineWithSingleBashTaskInContainer,
-        single_task_pipelines.PipelineWithVarAndFileOutput,
-        single_task_pipelines.PipelineWithVarAndFileOutputInContainer,
-        single_task_pipelines.PipelineWithVarSharingBetweenSteps,
-        single_task_pipelines.PipelineWithVarSharingBetweenStepsInContainer
+        pipeline_tests_with_single_tasks.PipelineWith3StepsNoCrash,
+        pipeline_tests_with_single_tasks.PipelineWith3StepsCrash1,
+        pipeline_tests_with_single_tasks.PipelineWith3StepsCrash2,
+        pipeline_tests_with_single_tasks.PipelineWith3StepsCrash3,
+        pipeline_tests_with_multiple_tasks.PipelineWithVariablePassing,
+        pipeline_tests_with_single_tasks.PipelineWith4MixedStepsCrash,
+        pipeline_tests_with_single_tasks.PipelineWithSinglePythonTask,
+        pipeline_tests_with_single_tasks.PipelineWithSingleBashTask,
+        pipeline_tests_with_single_tasks.PipelineWithVarAndFileOutput,
+        pipeline_tests_with_single_tasks.PipelineWithVarSharingBetweenSteps,
+        pipeline_tests_with_single_tasks.PipelineWith3StepsCrash3InContainer,
+        pipeline_tests_with_single_tasks.PipelineWithSinglePythonTaskInContainer,
+        pipeline_tests_with_single_tasks.PipelineWithSingleBashTaskInContainer,
+        pipeline_tests_with_single_tasks.PipelineWithVarAndFileOutputInContainer,
+        pipeline_tests_with_single_tasks.PipelineWithVarSharingBetweenStepsInContainer
     ]
 
 def quick_sanity_tests():
     return [
-        ScriptLibTests,
-        MinimalistPipelinesTests,
-        DaemonModeTests,
-        NonTrivialPipelineTests,
-        NonTrivialPipelineLocalContainerlessTests,
-        TaskSignatureTests,
-        GroundLevelTests,
-        PipelineCompositionTests
+        MockupStateFileTrackerTest,
+        StateFileTrackerTest,
+        StateMachineTests,
+        pipeline_tests_with_multiple_tasks.PipelineWithVariablePassing,
+        pipeline_tests_with_single_tasks.PipelineWith4MixedStepsCrash,
+        pipeline_tests_with_single_tasks.PipelineWithSinglePythonTask,
+        pipeline_tests_with_single_tasks.PipelineWithVarAndFileOutput,
+        pipeline_tests_with_single_tasks.PipelineWithVarSharingBetweenSteps
     ]
 
 
