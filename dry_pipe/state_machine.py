@@ -56,6 +56,9 @@ class StateFile:
     def control_dir(self):
         return os.path.join(self.tracker.pipeline_work_dir, self.task_key)
 
+    def output_dir(self):
+        return os.path.join(self.tracker.pipeline_output_dir, self.task_key)
+
     def load_task_conf_json(self):
         with open(os.path.join(self.control_dir(), "task-conf.json")) as tc:
             return json.loads(tc.read())
@@ -155,7 +158,7 @@ class StateFileTracker:
             #load inputs and outputs
         else:
             if task_conf["hash_code"] != state_file.hash_code:
-                task.save(os.path.dirname(pipeline_work_dir), current_hash_code)
+                task.save(state_file, current_hash_code)
                 state_file.hash_code = current_hash_code
                 self.resave_count += 1
         self.load_from_disk_count += 1
@@ -297,8 +300,8 @@ class StateFileTracker:
             else:
                 # task is new
                 hash_code = task.compute_hash_code()
-                task.save(self.pipeline_instance_dir, hash_code)
                 state_file_in_memory = StateFile(task.key, hash_code, self)
+                task.save(state_file_in_memory, hash_code)
                 self.state_files_in_memory[task.key] = state_file_in_memory
                 Path(state_file_in_memory.path).touch(exist_ok=False)
                 self.new_save_count += 1

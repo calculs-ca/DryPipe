@@ -20,8 +20,8 @@ class TaskMockup:
     def compute_hash_code(self):
         return ",".join(str(i) for i in self.inputs)
 
-    def save(self, pipeline_instance_dir, hash_code):
-        task_control_dir = Path(pipeline_instance_dir, ".drypipe", self.key)
+    def save(self, state_file, hash_code):
+        task_control_dir = Path(state_file.tracker.pipeline_instance_dir, ".drypipe", self.key)
         task_control_dir.mkdir(exist_ok=True, parents=True)
         inputs = [
             {

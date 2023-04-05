@@ -318,7 +318,7 @@ class RemoteSSH(Executor):
 
     def download_task_results(self, task_state):
         with perf_logger_timer("RemoteSSH.download_task_results") as t:
-            task_control_dir = task_state.control_dir()
+            task_control_dir = task_state.control_dir_relative_to_pid()
 
             rsync_call, remote_dir = self._rsync_with_args_and_remote_dir()
             pipeline_instance_dir = os.path.dirname(os.path.dirname(task_control_dir))

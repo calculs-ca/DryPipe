@@ -181,7 +181,7 @@ class TaskMatch:
                     def write_file(f):
                         _file_list.write(f"{f}\n")
 
-                    for f in glob.glob(os.path.join(task.control_dir(), "*")):
+                    for f in glob.glob(os.path.join(task.control_dir_relative_to_pid(), "*")):
                         write_file(f)
 
                     for o in task.outputs:
@@ -352,9 +352,7 @@ class DryPipeDsl:
 
         return FileSet(glob_pattern)
 
-    def task(self,
-             key,
-             task_conf=None):
+    def task(self, key, task_conf=None):
         """
         Creates a :py:meth:`dry_pipe.TaskBuilder`, the object for declaring tasks
 
@@ -394,18 +392,52 @@ class TaskBuilder:
 
     def __init__(self, key, _consumes={}, _produces={},
                  dsl=None, task_steps=[],
-                 _upstream_task_completion_dependencies=None, _props=None, task_conf=None, pipeline_instance=None):
+                 task_conf=None, pipeline_instance=None, slurm_array_name=None,
+                 is_slurm_parent=None, max_simultaneous_jobs_in_slurm_array=None):
 
         self.key = key
         self.dsl = dsl
-        self._props = _props or {}
         self._consumes = _consumes
         self._produces = _produces
         self.task_steps = task_steps
         self.task_conf = task_conf
         self.pipeline_instance = pipeline_instance
+        self.slurm_array_name = slurm_array_name
+        self.is_slurm_parent = is_slurm_parent
+        self.max_simultaneous_jobs_in_slurm_array = max_simultaneous_jobs_in_slurm_array
 
-    def _deps_from_kwargs(self, kwargs):
+    def slurm_array_child(self, group_name):
+        return TaskBuilder(** {
+            ** vars(self),
+            ** {"slurm_array_name": group_name}
+        })
+
+    def slurm_array_parent(self, group_name, max_simultaneous_jobs=None):
+        """
+        :param group_name:
+        :param max_simultaneous_jobs:
+        :return:
+            200 child tasks, and max_simultaneous_jobs=None will give:
+            --array=0-200
+            432 child tasks, and max_simultaneous_jobs=50 will give:
+            --array=0-200%50
+        """
+        return TaskBuilder(** {
+            ** vars(self),
+            ** {
+                "slurm_array_name": group_name,
+                "is_slurm_parent": True,
+                "max_simultaneous_jobs_in_slurm_array": max_simultaneous_jobs
+            }
+        })
+
+    def inputs(self, *args, **kwargs):
+        """
+        The consumes clause
+        :param args:
+        :param kwargs:
+        :return a new :py:meth:`dry_pipe.TaskBuilder` with the added inputs declaration
+        """
 
         def deps():
             for k, v in kwargs.items():
@@ -425,18 +457,6 @@ class TaskBuilder:
                         f"task(key={self.key}) was given {type(v)}",
                         ValidationError.consumes_has_invalid_kwarg_type
                     )
-        return {
-            ** self._consumes,
-            ** dict(deps())
-        }
-
-    def inputs(self, *args, **kwargs):
-        """
-        The consumes clause
-        :param args:
-        :param kwargs:
-        :return a new :py:meth:`dry_pipe.TaskBuilder` with the added inputs declaration
-        """
 
         def deps_from_args():
             for o in args:
@@ -456,15 +476,9 @@ class TaskBuilder:
             ** {"_consumes": {
                     ** self._consumes,
                     ** dict(deps_from_args()),
-                    ** dict(self._deps_from_kwargs(kwargs))
+                    ** dict(deps())
                 }
             }
-        })
-
-    def props(self, **kwargs):
-        return TaskBuilder(** {
-            ** vars(self),
-            ** {"_props": kwargs}
         })
 
     def outputs(self, *args, **kwargs):
