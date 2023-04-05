@@ -4,8 +4,7 @@ import unittest
 from pathlib import Path
 
 from base_pipeline_test import BasePipelineTest
-from dry_pipe.pipeline import PipelineInstance
-from dry_pipe.script_lib import launch_task, load_task_conf_dict, UpstreamTasksNotCompleted
+from dry_pipe.script_lib import launch_task, UpstreamTasksNotCompleted
 import pipeline_tests_with_single_tasks
 import pipeline_tests_with_multiple_tasks
 
@@ -21,7 +20,6 @@ class TaskLaunchTest(unittest.TestCase):
 
         self.pipeline_code_dir = os.path.dirname(__file__)
         self.pipeline_instance_dir = os.path.join(all_sandbox_dirs, self.__class__.__name__)
-        self.pipeline_instance: PipelineInstance = None
         self.exceptions_raised = set()
 
     def setUp(self):
@@ -30,20 +28,16 @@ class TaskLaunchTest(unittest.TestCase):
         if d.exists():
             shutil.rmtree(d)
 
-        t = self.pipeline_test()
-        self.pipeline_instance = t.create_pipeline_instance(self.pipeline_instance_dir)
-
-    def prepare_env_and_launch_task(self, state_file, task_conf_json):
+    def prepare_env_and_launch_task(self, state_file):
 
         self.assertFalse(state_file.is_completed())
         env_copy = os.environ.copy()
         try:
             os.environ["__script_location"] = os.path.join(
-                self.pipeline_instance.state_file_tracker.pipeline_work_dir,
+                state_file.tracker.pipeline_work_dir,
                 state_file.task_key
             )
-            load_task_conf_dict()
-            launch_task(wait_for_completion=True, task_conf_dict=task_conf_json, exit_process_when_done=False)
+            launch_task(wait_for_completion=True, task_conf_dict=None, exit_process_when_done=False)
         finally:
             os.environ.clear()
             for k, v in env_copy.items():
@@ -53,16 +47,10 @@ class TaskLaunchTest(unittest.TestCase):
     def test_run(self):
 
         def e(state_file):
-            self.prepare_env_and_launch_task(state_file, state_file.load_task_conf_json())
+            self.prepare_env_and_launch_task(state_file)
 
-        self.pipeline_instance.run_sync(executer_func=e)
-
-        self.validate_after_all_launched()
-
-    def validate_after_all_launched(self):
-        for task in self.pipeline_instance.query("*", include_incomplete_tasks=False):
-            self.assertIsNotNone(task)
-            self.assertTrue(task.is_completed())
+        t = self.pipeline_test()
+        t.test_run_pipeline(executer_func=e, pipeline_instance_dir=self.pipeline_instance_dir)
 
     def pipeline_test(self) -> BasePipelineTest:
         raise NotImplementedError()
@@ -86,26 +74,39 @@ class PipelineWithVariablePassingTaskLauncherTest(TaskLaunchTest):
 
 class EnsureFailOfLaunchWhenUnsatisfiedUpstreamDependencyTest(TaskLaunchTest):
 
+
     def test_run(self):
 
-        self.pipeline_instance.run_sync(queue_only_pattern="*")
+        def e(state_file):
+            raise Exception("should not get called")
 
-        consume_and_produce_a_var = self.pipeline_instance.lookup_single_task(
+        t = self.pipeline_test()
+
+        pi, tasks_by_keys = t.test_run_pipeline(
+            executer_func=e,
+            pipeline_instance_dir=self.pipeline_instance_dir,
+            queue_only_pattern="*"
+        )
+
+        consume_and_produce_a_var = pi.lookup_single_task(
             "consume_and_produce_a_var",
             include_incomplete_tasks=True
         )
 
-        def f():
-            self.prepare_env_and_launch_task(
-                consume_and_produce_a_var.state_file,
-                consume_and_produce_a_var.state_file.load_task_conf_json()
-            )
-
-        self.assertRaises(UpstreamTasksNotCompleted, f)
+        self.assertRaises(
+            UpstreamTasksNotCompleted,
+            lambda: self.prepare_env_and_launch_task(consume_and_produce_a_var.state_file)
+        )
 
 
     def pipeline_test(self) -> BasePipelineTest:
-        return pipeline_tests_with_multiple_tasks.PipelineWithVariablePassing()
+        class T(pipeline_tests_with_multiple_tasks.PipelineWithVariablePassing):
+            def is_fail_test(self):
+                return True
+            def validate(self, tasks_by_keys):
+                pass
+
+        return T()
 
 
 # tests in containers

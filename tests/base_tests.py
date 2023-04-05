@@ -5,7 +5,6 @@ import shutil
 import time
 import unittest
 
-import pipeline_with_single_bash_task
 import test_helpers
 from dry_pipe.internals import ValidationError, ProducedFile
 from dry_pipe import DryPipe, TaskConf, DryPipeDsl
