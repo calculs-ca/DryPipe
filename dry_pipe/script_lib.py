@@ -10,7 +10,6 @@ import tarfile
 import textwrap
 import logging
 import logging.config
-from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from functools import reduce
 from pathlib import Path

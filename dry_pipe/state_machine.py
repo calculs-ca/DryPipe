@@ -47,6 +47,9 @@ class StateFile:
     def is_failed(self):
         return fnmatch.fnmatch(self.path, "*/state.failed.*")
 
+    def is_waiting(self):
+        return self.path.endswith("state.waiting")
+
     def control_dir(self):
         return os.path.join(self.tracker.pipeline_work_dir, self.task_key)
 
@@ -217,6 +220,9 @@ class StateFileTracker:
 
                 def is_completed(self):
                     return state_file.is_completed()
+
+                def is_waiting(self):
+                    return state_file.is_waiting()
 
                 def is_failed(self):
                     return state_file.is_failed()
