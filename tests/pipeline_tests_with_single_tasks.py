@@ -33,9 +33,8 @@ class PipelineWithSingleBashTask(BasePipelineTest):
             """
         )()
 
-
-    def test_validate(self):
-        multiply_x_by_y_task = self.tasks_by_keys["multiply_x_by_y"]
+    def validate(self, tasks_by_keys):
+        multiply_x_by_y_task = tasks_by_keys["multiply_x_by_y"]
         self.assertEqual(3, multiply_x_by_y_task.inputs.x)
         self.assertEqual(5, multiply_x_by_y_task.inputs.y)
         self.assertEqual(15, int(multiply_x_by_y_task.outputs.result))
@@ -56,8 +55,8 @@ class PipelineWithSinglePythonTask(BasePipelineTest):
         )()
 
 
-    def test_validate(self):
-        multiply_x_by_y_task = self.tasks_by_keys["multiply_x_by_y"]
+    def validate(self, tasks_by_keys):
+        multiply_x_by_y_task = tasks_by_keys["multiply_x_by_y"]
 
         if not multiply_x_by_y_task.is_completed():
             raise Exception(f"expected completed, got {multiply_x_by_y_task.state_name()}")
@@ -100,9 +99,8 @@ class PipelineWithVarAndFileOutput(BasePipelineTest):
             f=Path("f.txt")
         ).calls(func)()
 
-
-    def test_validate(self):
-        task = self.tasks_by_keys["t1"]
+    def validate(self, tasks_by_keys):
+        task = tasks_by_keys["t1"]
 
         if not task.is_completed():
             raise Exception(f"expected completed, got {task.state_name()}")
@@ -139,9 +137,9 @@ class PipelineWithVarSharingBetweenSteps(BasePipelineTest):
         """).calls(f3)()
 
 
-    def test_validate(self):
 
-        t = self.tasks_by_keys["t"]
+    def validate(self, tasks_by_keys):
+        t = tasks_by_keys["t"]
 
         self.assertTrue(t.is_completed())
 
@@ -198,13 +196,13 @@ class PipelineWith3StepsNoCrash(BasePipelineTest):
 
         yield three_phase_task
 
-    def output_as_string(self):
-        three_phase_task = self.tasks_by_keys["three_phase_task"]
+    def output_as_string(self, tasks_by_keys):
+        three_phase_task = tasks_by_keys["three_phase_task"]
         with open(three_phase_task.outputs.out_file) as f:
             return f.read()
 
-    def test_validate(self):
-        self.assertEqual(self.output_as_string(), "s1\ns2\ns3\n")
+    def validate(self, tasks_by_keys):
+        self.assertEqual(self.output_as_string(tasks_by_keys), "s1\ns2\ns3\n")
 
 class PipelineWith3StepsCrash1(PipelineWith3StepsNoCrash):
 
@@ -216,17 +214,11 @@ class PipelineWith3StepsCrash1(PipelineWith3StepsNoCrash):
             }
         )
 
-    def run_pipeline(self):
-        p = Pipeline(lambda dsl: self.dag_gen(dsl), pipeline_code_dir=self.pipeline_code_dir)
-        pi = p.create_pipeline_instance(self.pipeline_instance_dir)
-        pi.run_sync(fail_silently=True)
-        self.tasks_by_keys = {
-            t.key: t
-            for t in pi.query("*", include_incomplete_tasks=True)
-        }
+    def is_fail_test(self):
+        return True
 
-    def test_validate(self):
-        three_phase_task = self.tasks_by_keys["three_phase_task"]
+    def validate(self, tasks_by_keys):
+        three_phase_task = tasks_by_keys["three_phase_task"]
         self.assertTrue(three_phase_task.is_failed())
         self.assertFalse(os.path.exists(three_phase_task.outputs.out_file))
 
@@ -239,11 +231,14 @@ class PipelineWith3StepsCrash2(PipelineWith3StepsCrash1):
             }
         )
 
-    def test_validate(self):
-        three_phase_task = self.tasks_by_keys["three_phase_task"]
+    def is_fail_test(self):
+        return True
+
+    def validate(self, tasks_by_keys):
+        three_phase_task = tasks_by_keys["three_phase_task"]
         self.assertTrue(three_phase_task.is_failed())
         self.assertTrue(os.path.exists(three_phase_task.outputs.out_file))
-        self.assertEqual(self.output_as_string(), "s1\n")
+        self.assertEqual(self.output_as_string(tasks_by_keys), "s1\n")
 
 
 class PipelineWith3StepsCrash3(PipelineWith3StepsCrash1):
@@ -255,11 +250,14 @@ class PipelineWith3StepsCrash3(PipelineWith3StepsCrash1):
             }
         )
 
-    def test_validate(self):
-        three_phase_task = self.tasks_by_keys["three_phase_task"]
+    def is_fail_test(self):
+        return True
+
+    def validate(self, tasks_by_keys):
+        three_phase_task = tasks_by_keys["three_phase_task"]
         self.assertTrue(three_phase_task.is_failed())
         self.assertTrue(os.path.exists(three_phase_task.outputs.out_file))
-        self.assertEqual(self.output_as_string(), "s1\ns2\n")
+        self.assertEqual(self.output_as_string(tasks_by_keys), "s1\ns2\n")
 
 
 @DryPipe.python_call()
@@ -310,13 +308,13 @@ class PipelineWith4MixedStepsNoCrash(BasePipelineTest):
         yield three_phase_task
 
 
-    def output_as_string(self):
-        three_phase_task = self.tasks_by_keys["three_phase_task"]
+    def output_as_string(self, tasks_by_keys):
+        three_phase_task = tasks_by_keys["three_phase_task"]
         with open(three_phase_task.outputs.out_file) as f:
             return f.read()
 
-    def test_validate(self):
-        self.assertEqual(self.output_as_string(), "s1\ns2\ns3\ns4\n")
+    def validate(self, tasks_by_keys):
+        self.assertEqual(self.output_as_string(tasks_by_keys), "s1\ns2\ns3\ns4\n")
 
 
 class PipelineWith4MixedStepsCrash(PipelineWith4MixedStepsNoCrash):
@@ -328,20 +326,14 @@ class PipelineWith4MixedStepsCrash(PipelineWith4MixedStepsNoCrash):
             }
         )
 
-    def run_pipeline(self):
-        p = Pipeline(lambda dsl: self.dag_gen(dsl), pipeline_code_dir=self.pipeline_code_dir)
-        pi = p.create_pipeline_instance(self.pipeline_instance_dir)
-        pi.run_sync(fail_silently=True)
-        self.tasks_by_keys = {
-            t.key: t
-            for t in pi.query("*", include_incomplete_tasks=True)
-        }
+    def is_fail_test(self):
+        return True
 
-    def test_validate(self):
-        three_phase_task = self.tasks_by_keys["three_phase_task"]
+    def validate(self, tasks_by_keys):
+        three_phase_task = tasks_by_keys["three_phase_task"]
         self.assertTrue(three_phase_task.is_failed())
         self.assertTrue(os.path.exists(three_phase_task.outputs.out_file))
-        self.assertEqual(self.output_as_string(), "s1\ns2\n")
+        self.assertEqual(self.output_as_string(tasks_by_keys), "s1\ns2\n")
 
 
 # Same pipelines with container

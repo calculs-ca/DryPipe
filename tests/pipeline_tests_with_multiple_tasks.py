@@ -33,10 +33,10 @@ class PipelineWithVariablePassing(BasePipelineTest):
         )()
 
 
-    def test_validate(self):
+    def validate(self, tasks_by_keys):
 
-        consume_and_produce_a_var = self.tasks_by_keys["consume_and_produce_a_var"]
-        produce_a_var = self.tasks_by_keys["produce_a_var"]
+        consume_and_produce_a_var = tasks_by_keys["consume_and_produce_a_var"]
+        produce_a_var = tasks_by_keys["produce_a_var"]
 
         self.assertEqual(int(produce_a_var.outputs.v), 1234)
         self.assertEqual(int(consume_and_produce_a_var.outputs.result), 2468)
@@ -87,9 +87,8 @@ class PipelineWithTwoPythonTasks(BasePipelineTest):
             export r=$(( $x + $z ))    
         """)()
 
-
-    def test_validate(self):
-        t2 = self.tasks_by_keys["t2"]
+    def validate(self, tasks_by_keys):
+        t2 = tasks_by_keys["t2"]
 
         if not t2.is_completed():
             raise Exception(f"expected completed, got {t2.state_name()}")
