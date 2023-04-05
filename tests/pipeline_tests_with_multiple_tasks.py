@@ -97,3 +97,10 @@ class PipelineWithTwoPythonTasks(BasePipelineTest):
         res = int(t2.outputs.r)
         if res != 46:
             raise Exception(f"expected 46, got {res}")
+
+
+def all_basic_tests():
+    return [
+        PipelineWithVariablePassing,
+        PipelineWithTwoPythonTasks
+    ]

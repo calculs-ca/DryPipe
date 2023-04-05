@@ -13,7 +13,6 @@ import logging.config
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from functools import reduce
-from itertools import groupby
 from pathlib import Path
 from threading import Thread
 
@@ -509,40 +508,6 @@ def iterate_out_vars_from(file):
                 yield var_name.strip(), value.strip()
 
 
-def parse_in_out_meta(name_to_meta_dict):
-
-    raise Exception(f"deprecated")
-
-    # export __meta_<var-name>="(int|str|float):<producing-task-key>:<name_in_producing_task>"
-    # export __meta_<file-name>="file:<producing-task-key>:<name_in_producing_task>"
-
-    #Note: when producing-task-key == "", meta are output values and files
-
-    def gen():
-        for k, v in name_to_meta_dict.items():
-            var_name = k[7:]
-            typez, task_key, name_in_producing_task = v.split(":")
-
-            yield task_key, name_in_producing_task, var_name, typez
-
-    def k(t):
-        return t[0]
-
-    for producing_task_key, produced_files_or_vars_meta in groupby(sorted(gen(), key=k), key=k):
-
-        produced_files_or_vars_meta = list(produced_files_or_vars_meta)
-
-        def filter_and_map(condition_on_typez):
-            return [
-                (name_in_producing_task, var_name, typez)
-                for task_key, name_in_producing_task, var_name, typez
-                in produced_files_or_vars_meta
-                if condition_on_typez(typez)
-            ]
-
-        yield producing_task_key, filter_and_map(lambda t: t != "file"), filter_and_map(lambda t: t == "file")
-
-
 def read_task_state(control_dir=None, state_file=None):
 
     if control_dir is None:
@@ -671,37 +636,6 @@ def register_signal_handlers():
     signal.signal(signal.SIGTERM, _terminate_descendants_and_exit)
 
     logger.debug("signal handlers registered")
-
-
-def sign_files():
-    file_list_to_sign = os.environ.get('__file_list_to_sign')
-
-    if file_list_to_sign is None or file_list_to_sign == "":
-        return
-
-    sig_dir = os.path.join(os.environ['__control_dir'], 'out_sigs')
-
-    Path(sig_dir).mkdir(exist_ok=True, mode=FileCreationDefaultModes.pipeline_instance_directories)
-
-    def all_files():
-        for f in file_list_to_sign.split(","):
-            if os.path.exists(f) and os.path.isfile(f):
-                yield f
-
-    def checksum_one_file(f):
-        bf = os.path.basename(f)
-        sig_file = os.path.join(sig_dir, f"{bf}.sig")
-        cmd = f"sha1sum {f}"
-        with PortablePopen(cmd.split(" ")) as p:
-            p.wait_and_raise_if_non_zero()
-            sha1sum = p.stdout_as_string()
-            with open(sig_file, "w") as f:
-                f.write(sha1sum)
-            return True
-
-    with ThreadPoolExecutor(max_workers=4) as executor:
-        for b in executor.map(checksum_one_file, all_files()):
-            assert b
 
 
 def transition_to_completed(state_file):
@@ -931,7 +865,7 @@ def handle_main():
     is_run_command = not (is_tail_command or is_ps_command or is_kill_command or is_env)
 
     if is_run_command:
-        _launch_task(wait_for_completion)
+        launch_task(wait_for_completion)
     else:
 
         def quit_command(p1, p2):
@@ -1087,8 +1021,11 @@ def _run_steps(task_conf_dict):
 
     transition_to_completed(state_file)
 
-def _launch_task(wait_for_completion):
-    task_conf_dict = load_task_conf_dict()
+def launch_task(wait_for_completion, task_conf_dict=None, exit_process_when_done=True):
+
+    if task_conf_dict is None:
+        task_conf_dict = load_task_conf_dict()
+
     def task_func_wrapper():
         try:
             logger.debug("task func started")
@@ -1097,7 +1034,8 @@ def _launch_task(wait_for_completion):
         except Exception as ex:
             logger.exception(ex)
         finally:
-            _exit_process()
+            if exit_process_when_done:
+                _exit_process()
 
     if wait_for_completion:
         task_func_wrapper()

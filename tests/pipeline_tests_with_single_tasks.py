@@ -380,3 +380,29 @@ class PipelineWith3StepsCrash3InContainer(PipelineWith3StepsCrash3):
                 "CRASH_STEP_3": "TRUE"
             }
         )
+
+
+def all_basic_tests():
+    return [
+        PipelineWith3StepsNoCrash,
+        PipelineWith3StepsCrash1,
+        PipelineWith3StepsCrash2,
+        PipelineWith3StepsCrash3,
+        PipelineWith4MixedStepsCrash,
+        PipelineWithSinglePythonTask,
+        PipelineWithSingleBashTask,
+        PipelineWithVarAndFileOutput,
+        PipelineWithVarSharingBetweenSteps
+    ]
+
+def all_tests_in_containers():
+    return [
+        PipelineWith3StepsCrash3InContainer,
+        PipelineWithSinglePythonTaskInContainer,
+        PipelineWithSingleBashTaskInContainer,
+        PipelineWithVarAndFileOutputInContainer,
+        PipelineWithVarSharingBetweenStepsInContainer
+    ]
+
+def all_tests():
+    return all_basic_tests() + all_tests_in_containers()

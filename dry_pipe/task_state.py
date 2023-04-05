@@ -2,14 +2,13 @@ import glob
 import os
 import time
 import pathlib
-import mmap
 import copy
 from datetime import datetime
 from itertools import groupby
 from subprocess import TimeoutExpired
 
 from dry_pipe.actions import TaskAction
-from dry_pipe.script_lib import parse_in_out_meta, PortablePopen, load_pid, load_slurm_job_id, ps_resources, \
+from dry_pipe.script_lib import PortablePopen, load_pid, load_slurm_job_id, ps_resources, \
     resolve_input_vars, UpstreamTasksNotCompleted
 
 """

@@ -261,11 +261,15 @@ class PipelineInstance:
     def get_state(self, create_if_not_exists=False):
         return PipelineState.from_pipeline_work_dir(self.state_file_tracker.pipeline_work_dir, create_if_not_exists)
 
-    def run_sync(self, fail_silently=True):
+    def run_sync(self, queue_only_pattern=None, fail_silently=True, sleep=1):
 
-        state_machine = StateMachine(self.state_file_tracker, lambda dsl: self.pipeline.task_generator(dsl))
+        state_machine = StateMachine(
+            self.state_file_tracker,
+            lambda dsl: self.pipeline.task_generator(dsl),
+            queue_only_pattern=queue_only_pattern
+        )
         pr = PipelineRunner(state_machine)
-        pr.run_sync(fail_silently=fail_silently)
+        pr.run_sync(fail_silently=fail_silently, sleep=sleep)
 
         tasks_by_keys = {
             t.key: t
@@ -278,6 +282,19 @@ class PipelineInstance:
         yield from self.state_file_tracker.load_tasks_for_query(
             glob_pattern, include_non_completed=include_incomplete_tasks
         )
+
+    def lookup_single_task_or_none(self, task_key, include_incomplete_tasks=False):
+        return self.state_file_tracker.load_single_task_or_none(
+            task_key, include_non_completed=include_incomplete_tasks
+        )
+
+    def lookup_single_task(self, task_key, include_incomplete_tasks=False):
+        task = self.lookup_single_task_or_none(task_key, include_incomplete_tasks)
+        if task is not None:
+            return task
+        else:
+            raise Exception(f"expected a task with key {task_key}, found none")
+
 
 
 

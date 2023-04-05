@@ -1,11 +1,17 @@
 import inspect
 import sys
 from unittest import TextTestRunner, TestSuite, defaultTestLoader
+
+from dry_pipe.cli import _configure_logging
 from suite import exhaustive_3, low_level_tests
 
-test_func = "test_pipeline_with_dynamic_dag"
+# test_non_trivial_local_with_singularity
+# test_pipeline_with_mixed_python_bash
+test_func = "test_single_bash_task"
 
 if __name__ == '__main__':
+
+    #_configure_logging("logging-configs/debug-remote.json")
 
     def search():
 
