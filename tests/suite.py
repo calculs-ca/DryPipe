@@ -8,6 +8,11 @@ import task_launch_tests
 from test_state_machine import StateMachineTests, StateFileTrackerTest, MockupStateFileTrackerTest
 
 
+def ad_hoc():
+    return [
+        task_launch_tests.PipelineWithVariablePassingTaskLauncherTest,
+        task_launch_tests.EnsureFailOfLaunchWhenUnsatisfiedUpstreamDependencyTest,
+    ]
 
 def low_level_tests():
     return [
@@ -46,7 +51,8 @@ if __name__ == '__main__':
     suite_funcs = {
         "low_level_tests": low_level_tests,
         "quick_sanity_tests": quick_sanity_tests,
-        "task_launch_tests": task_launch_tests.all_launch_tests
+        "task_launch_tests": task_launch_tests.all_launch_tests,
+        "ad_hoc": ad_hoc
     }
 
     def gen_test_classes(test_classes_or_list_of_test_classes):

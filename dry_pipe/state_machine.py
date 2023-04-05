@@ -50,6 +50,9 @@ class StateFile:
     def is_waiting(self):
         return self.path.endswith("state.waiting")
 
+    def is_in_pre_launch(self):
+        return fnmatch.fnmatch(self.path, "*/state._step-started")
+
     def control_dir(self):
         return os.path.join(self.tracker.pipeline_work_dir, self.task_key)
 
@@ -321,6 +324,8 @@ class StateMachine:
         self.state_file_tracker = state_file_tracker
         if queue_only_pattern is None:
             self._queue_only_func = lambda i: False
+        elif queue_only_pattern == "*":
+            self._queue_only_func = lambda i: True
         else:
             self._queue_only_func = lambda task_key: fnmatch.fnmatch(task_key, queue_only_pattern)
 

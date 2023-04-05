@@ -9,7 +9,7 @@ from subprocess import TimeoutExpired
 
 from dry_pipe.actions import TaskAction
 from dry_pipe.script_lib import PortablePopen, load_pid, load_slurm_job_id, ps_resources, \
-    resolve_input_vars, UpstreamTasksNotCompleted
+    UpstreamTasksNotCompleted
 
 """
 

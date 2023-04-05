@@ -289,18 +289,6 @@ def iterate_task_env(task_conf_as_json=None, control_dir=None):
         for k, v in extra_env.items():
             yield k, os.path.expandvars(v)
 
-    logger.debug("pipeline instance level vars")
-    pipeline_overrides = os.path.join(pipeline_instance_dir, ".drypipe", "pipeline-env.sh")
-
-    if os.path.exists(pipeline_overrides):
-        env = _env_from_sourcing(pipeline_overrides)
-        with open(pipeline_overrides) as f:
-            for line in f:
-                if line.startswith("export "):
-                    line = line[7:].strip()
-                    k, v = line.split("=")
-                    yield k, env.get(k)
-
     logger.debug("resolved and constant input vars")
     for _, k, v in resolve_upstream_and_constant_vars(pipeline_instance_dir, task_conf_as_json):
         yield k, v
@@ -1058,12 +1046,12 @@ def launch_task(wait_for_completion, task_conf_dict=None, exit_process_when_done
             Thread(target=task_func_wrapper).start()
             signal.pause()
 
-def resolve_input_vars(pipeline_instance_dir, task_key):
-
-    task_conf = os.path.join(pipeline_instance_dir, ".drypipe", task_key, "task-conf.json")
-    with open(task_conf) as _task_conf:
-        for _, k, v in resolve_upstream_and_constant_vars(pipeline_instance_dir, json.loads(_task_conf.read())):
-            yield k, v
+#def resolve_input_vars(pipeline_instance_dir, task_key):
+#
+#    task_conf = os.path.join(pipeline_instance_dir, ".drypipe", task_key, "task-conf.json")
+#    with open(task_conf) as _task_conf:
+#        for _, k, v in resolve_upstream_and_constant_vars(pipeline_instance_dir, json.loads(_task_conf.read())):
+#            yield k, v
 
 
 def _root_dir(d):
