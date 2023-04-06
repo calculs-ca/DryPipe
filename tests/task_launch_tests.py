@@ -1,73 +1,40 @@
-import os
 
-from base_pipeline_test import BasePipelineTest, TestWithDirectorySandbox
-from dry_pipe.script_lib import launch_task, UpstreamTasksNotCompleted
+from dry_pipe.script_lib import UpstreamTasksNotCompleted
 import pipeline_tests_with_single_tasks
 import pipeline_tests_with_multiple_tasks
 
 
-class TaskLaunchTest(TestWithDirectorySandbox):
+class BashTaskLauncherTest(pipeline_tests_with_single_tasks.PipelineWithSingleBashTask):
+
+    def launches_tasks_in_process(self):
+        return True
 
 
-    def prepare_env_and_launch_task(self, state_file):
+class PythonTaskLauncherTest(pipeline_tests_with_single_tasks.PipelineWithSinglePythonTask):
 
-        self.assertFalse(state_file.is_completed())
-        env_copy = os.environ.copy()
-        try:
-            os.environ["__script_location"] = os.path.join(
-                state_file.tracker.pipeline_work_dir,
-                state_file.task_key
-            )
-            launch_task(wait_for_completion=True, exit_process_when_done=False)
-        finally:
-            os.environ.clear()
-            for k, v in env_copy.items():
-                os.environ[k] = v
-            self.assertEqual(os.environ.copy(), env_copy)
-
-    def test_run(self):
-
-        def e(state_file):
-            self.prepare_env_and_launch_task(state_file)
-
-        t = self.pipeline_test()
-        t.test_run_pipeline(executer_func=e, pipeline_instance_dir=self.pipeline_instance_dir)
-
-    def pipeline_test(self) -> BasePipelineTest:
-        raise NotImplementedError()
+    def launches_tasks_in_process(self):
+        return True
 
 
-class BashTaskLauncherTest(TaskLaunchTest):
 
-    def pipeline_test(self):
-        return pipeline_tests_with_single_tasks.PipelineWithSingleBashTask()
+class PipelineWithVariablePassingTaskLauncherTest(pipeline_tests_with_multiple_tasks.PipelineWithVariablePassing):
 
-
-class PythonTaskLauncherTest(TaskLaunchTest):
-
-    def pipeline_test(self):
-        return pipeline_tests_with_single_tasks.PipelineWithSinglePythonTask()
-
-class PipelineWithVariablePassingTaskLauncherTest(TaskLaunchTest):
-
-    def pipeline_test(self):
-        return pipeline_tests_with_multiple_tasks.PipelineWithVariablePassing()
-
-class EnsureFailOfLaunchWhenUnsatisfiedUpstreamDependencyTest(TaskLaunchTest):
+    def launches_tasks_in_process(self):
+        return True
 
 
-    def test_run(self):
+class EnsureFailOfLaunchWhenUnsatisfiedUpstreamDependencyTest(pipeline_tests_with_multiple_tasks.PipelineWithVariablePassing):
+
+
+    def launches_tasks_in_process(self):
+        return True
+
+    def test_run_pipeline(self):
 
         def e(state_file):
             raise Exception("should not get called")
 
-        t = self.pipeline_test()
-
-        pi, tasks_by_keys = t.test_run_pipeline(
-            executer_func=e,
-            pipeline_instance_dir=self.pipeline_instance_dir,
-            queue_only_pattern="*"
-        )
+        pi, tasks_by_keys = self.run_pipeline(executer_func=e, queue_only_pattern="*")
 
         consume_and_produce_a_var = pi.lookup_single_task(
             "consume_and_produce_a_var",
@@ -76,32 +43,28 @@ class EnsureFailOfLaunchWhenUnsatisfiedUpstreamDependencyTest(TaskLaunchTest):
 
         self.assertRaises(
             UpstreamTasksNotCompleted,
-            lambda: self.prepare_env_and_launch_task(consume_and_produce_a_var.state_file)
+            lambda: self.launch_task_in_current_process(consume_and_produce_a_var.state_file)
         )
 
+    def is_fail_test(self):
+        return True
 
-    def pipeline_test(self) -> BasePipelineTest:
-        class T(pipeline_tests_with_multiple_tasks.PipelineWithVariablePassing):
-            def is_fail_test(self):
-                return True
-            def validate(self, tasks_by_keys):
-                pass
-
-        return T()
+    def validate(self, tasks_by_keys):
+        pass
 
 
 # tests in containers
 
-class BashTaskLauncherTestInContainer(TaskLaunchTest):
+class BashTaskLauncherTestInContainer(pipeline_tests_with_single_tasks.PipelineWithSingleBashTaskInContainer):
 
-    def pipeline_test(self):
-        return pipeline_tests_with_single_tasks.PipelineWithSingleBashTaskInContainer()
+    def launches_tasks_in_process(self):
+        return True
 
 
-class PythonTaskLauncherTestInContainer(TaskLaunchTest):
+class PythonTaskLauncherTestInContainer(pipeline_tests_with_single_tasks.PipelineWithSinglePythonTaskInContainer):
 
-    def pipeline_test(self):
-        return pipeline_tests_with_single_tasks.PipelineWithSinglePythonTaskInContainer()
+    def launches_tasks_in_process(self):
+        return True
 
 
 def all_launch_tests():
