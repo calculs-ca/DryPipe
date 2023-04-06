@@ -31,10 +31,7 @@ class EnsureFailOfLaunchWhenUnsatisfiedUpstreamDependencyTest(pipeline_tests_wit
 
     def test_run_pipeline(self):
 
-        def e(state_file):
-            raise Exception("should not get called")
-
-        pi, tasks_by_keys = self.run_pipeline(executer_func=e, queue_only_pattern="*")
+        pi = self.run_pipeline(queue_only_pattern="*")
 
         consume_and_produce_a_var = pi.lookup_single_task(
             "consume_and_produce_a_var",
