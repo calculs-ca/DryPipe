@@ -392,8 +392,8 @@ class TaskBuilder:
 
     def __init__(self, key, _consumes={}, _produces={},
                  dsl=None, task_steps=[],
-                 task_conf=None, pipeline_instance=None, slurm_array_name=None,
-                 is_slurm_parent=None, max_simultaneous_jobs_in_slurm_array=None):
+                 task_conf=None, pipeline_instance=None, is_slurm_array_child=None,
+                 is_slurm_parent=None, max_simultaneous_jobs_in_slurm_array=None, children_tasks=None):
 
         self.key = key
         self.dsl = dsl
@@ -402,19 +402,14 @@ class TaskBuilder:
         self.task_steps = task_steps
         self.task_conf = task_conf
         self.pipeline_instance = pipeline_instance
-        self.slurm_array_name = slurm_array_name
+        self.is_slurm_array_child = is_slurm_array_child
         self.is_slurm_parent = is_slurm_parent
+        self.children_tasks = children_tasks
         self.max_simultaneous_jobs_in_slurm_array = max_simultaneous_jobs_in_slurm_array
 
-    def slurm_array_child(self, group_name):
-        return TaskBuilder(** {
-            ** vars(self),
-            ** {"slurm_array_name": group_name}
-        })
-
-    def slurm_array_parent(self, group_name, max_simultaneous_jobs=None):
+    def slurm_array_parent(self, children_tasks, max_simultaneous_jobs=None):
         """
-        :param group_name:
+        :param children_tasks:
         :param max_simultaneous_jobs:
         :return:
             200 child tasks, and max_simultaneous_jobs=None will give:
@@ -425,7 +420,7 @@ class TaskBuilder:
         return TaskBuilder(** {
             ** vars(self),
             ** {
-                "slurm_array_name": group_name,
+                "children_tasks": children_tasks,
                 "is_slurm_parent": True,
                 "max_simultaneous_jobs_in_slurm_array": max_simultaneous_jobs
             }

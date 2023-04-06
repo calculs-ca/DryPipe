@@ -5,8 +5,7 @@ import shutil
 from pathlib import Path
 
 from dry_pipe import TaskBuilder, TaskConf, script_lib
-from dry_pipe.script_lib import FileCreationDefaultModes, write_pipeline_lib_script, iterate_out_vars_from, TaskOutput, \
-    iterate_file_task_outputs
+from dry_pipe.script_lib import FileCreationDefaultModes, write_pipeline_lib_script, iterate_out_vars_from, TaskOutput
 from dry_pipe.task import TaskOutputs, TaskInputs
 
 
@@ -23,6 +22,7 @@ class StateFile:
         self.hash_code = current_hash_code
         self.inputs = None
         self.outputs = None
+        self.is_slurm_array_child = False
 
     def __str__(self):
         return f"/{self.task_key}/{os.path.basename(self.path)}"
@@ -49,6 +49,9 @@ class StateFile:
 
     def is_waiting(self):
         return self.path.endswith("state.waiting")
+
+    def is_ready(self):
+        return self.path.endswith("state.ready")
 
     def is_in_pre_launch(self):
         return fnmatch.fnmatch(self.path, "*/state._step-started")
@@ -102,6 +105,11 @@ class StateFileTracker:
             self.state_files_in_memory[task_key].path,
             os.path.join(self.pipeline_work_dir, task_key, "state.completed")
         )
+
+    def set_ready_on_disk_and_in_memory(self, task_key):
+        p = os.path.join(self.pipeline_work_dir, task_key, "state.ready")
+        os.rename(self.state_files_in_memory[task_key].path, p)
+        self.state_files_in_memory[task_key].path = p
 
     def register_pre_launch(self, state_file):
         previous_path = state_file.path
@@ -301,6 +309,7 @@ class StateFileTracker:
                 # task is new
                 hash_code = task.compute_hash_code()
                 state_file_in_memory = StateFile(task.key, hash_code, self)
+                state_file_in_memory.is_slurm_array_child = task.is_slurm_array_child
                 task.save(state_file_in_memory, hash_code)
                 self.state_files_in_memory[task.key] = state_file_in_memory
                 Path(state_file_in_memory.path).touch(exist_ok=False)
@@ -352,36 +361,44 @@ class StateMachine:
         #TODO: clean up:
         self.task_conf = TaskConf.default()
 
-    def task(self, key=None, task_conf=None):
+    def task(self, key=None, task_conf=None, is_slurm_array_child=False):
         if key is None:
             raise Exception(f"key can't be none")
 
         if task_conf is None:
             task_conf = TaskConf.default()
-        return TaskBuilder(key, task_conf=task_conf, dsl=self)
+        return TaskBuilder(key, task_conf=task_conf, dsl=self, is_slurm_array_child=is_slurm_array_child)
 
     def file(self, p):
         return Path(p)
 
-    def query_all_completed(self, glob_expression):
+    def query_all_or_nothing(self, glob_expression, state="completed"):
+
+        def is_required_state(state_file):
+            if state == "completed":
+                return state_file.is_completed()
+            elif state == "ready":
+                return state_file.is_ready()
+            else:
+                raise Exception(f"invalid state: {state}, must be 'completed', or 'ready'")
 
         query_all_matches_count = 0
-        query_completed_matches = []
+        query_with_required_state_matches = []
 
         for state_file in self.state_file_tracker.all_tasks():
             if fnmatch.fnmatch(state_file.task_key, glob_expression):
                 query_all_matches_count += 1
-                if state_file.is_completed():
-                    query_completed_matches.append(state_file)
+                if is_required_state(state_file):
+                    query_with_required_state_matches.append(state_file)
 
         if query_all_matches_count == 0:
             return []
-        elif query_all_matches_count == len(query_completed_matches):
+        elif query_all_matches_count == len(query_with_required_state_matches):
             self._pending_queries.pop(glob_expression, None)
 
             class Match:
                 def __init__(self):
-                    self.tasks = query_completed_matches
+                    self.tasks = query_with_required_state_matches
 
             return Match(),
         else:
@@ -461,15 +478,18 @@ class StateMachine:
 
         def register_pre_launch(state_file):
             self._keys_of_tasks_waiting_for_external_events.add(state_file.task_key)
-            self.state_file_tracker.register_pre_launch(state_file)
-            return state_file
+            if state_file.is_slurm_array_child:
+                self.state_file_tracker.set_ready_on_disk_and_in_memory(state_file.task_key)
+            else:
+                self.state_file_tracker.register_pre_launch(state_file)
+                yield state_file
 
         if self._task_generator is not None:
             for state_file in self._ready_state_files_from_generator():
-                yield register_pre_launch(state_file)
+                yield from register_pre_launch(state_file)
         elif self._ready_state_files_loaded_from_disk is not None:
             for state_file in self._ready_state_files_loaded_from_disk:
-                yield register_pre_launch(state_file)
+                yield from register_pre_launch(state_file)
             self._ready_state_files_loaded_from_disk = []
         else:
             raise Exception(
@@ -498,7 +518,7 @@ class StateMachine:
         for key_of_waiting_task in list(self._keys_of_waiting_tasks_to_set_of_incomplete_upstream_task_keys.keys()):
             if self._register_completion_of_upstream_tasks(key_of_waiting_task, newly_completed_task_keys):
                 state_file_of_ready_task = self.state_file_tracker.lookup_state_file_from_memory(key_of_waiting_task)
-                yield register_pre_launch(state_file_of_ready_task)
+                yield from register_pre_launch(state_file_of_ready_task)
 
         if self._generator_exhausted:
             if len(self._keys_of_tasks_waiting_for_external_events) == 0:

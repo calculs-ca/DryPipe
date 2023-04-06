@@ -37,6 +37,7 @@ class StateMachineTester:
 
     def iterate_once_and_mutate_set_of_next_state_files_ready(self):
         self.list_of_ready_state_files = list(self.state_machine.iterate_tasks_to_launch())
+        return self.list_of_ready_state_files
 
     def assert_set_of_next_tasks_ready(self, *expected_task_keys):
         expected_task_keys = set(expected_task_keys)
@@ -79,6 +80,8 @@ class StateMachineTester:
     def assert_completed_task_keys(self, *task_keys):
         self.test_case.assertEqual(self.state_machine.set_of_completed_task_keys(), set(task_keys))
 
+    def assert_task_keys_to_states(self, task_keys_to_states):
+        self.state_file_tracker.all_tasks()
 
     @staticmethod
     def create_scenario(test_case, dependency_graph, state_file_tracker=None, save_dag_and_restart=False):
@@ -328,7 +331,7 @@ class StateMachineTests(unittest.TestCase):
         def dag_gen(dsl):
             yield TaskMockup("t1")
             yield TaskMockup("t2")
-            for _ in dsl.query_all_completed("t*"):
+            for _ in dsl.query_all_or_nothing("t*"):
                 yield TaskMockup("A1")
 
         d = TestSandboxDir(self)
@@ -381,7 +384,7 @@ class StateMachineTests(unittest.TestCase):
             yield TaskMockup("t1")
             if counter.value > 1:
                 yield TaskMockup("t2")
-            for _ in dsl.query_all_completed("t*"):
+            for _ in dsl.query_all_or_nothing("t*"):
                 yield TaskMockup("A")
             counter.inc()
 

@@ -37,7 +37,7 @@ class TaskLaunchTest(unittest.TestCase):
                 state_file.tracker.pipeline_work_dir,
                 state_file.task_key
             )
-            launch_task(wait_for_completion=True, task_conf_dict=None, exit_process_when_done=False)
+            launch_task(wait_for_completion=True, exit_process_when_done=False)
         finally:
             os.environ.clear()
             for k, v in env_copy.items():

@@ -21,21 +21,19 @@ class Task:
 
     def __init__(self, task_builder):
 
+        self.key = task_builder.key
         self.inputs = TaskInputs(self, task_inputs=task_builder._consumes.values())
         self.outputs = TaskOutputs(self, task_outputs=task_builder._produces)
-        self.python_bin = None
-        self.conda_env = None
-        self.key = task_builder.key
         self.pipeline_instance = task_builder.pipeline_instance
         self.task_steps = task_builder.task_steps
         self.task_conf = task_builder.task_conf
+        self.is_slurm_array_child = task_builder.is_slurm_array_child
+        self.max_simultaneous_jobs_in_slurm_array = task_builder.max_simultaneous_jobs_in_slurm_array
 
-        self.has_python_step = False
 
-        for s in self.task_steps:
-            if s.python_call is not None:
-                self.has_python_step = True
-                break
+    """            
+        dsl.query_all_or_nothing("my-array-tasks.*", state="ready")
+    """
 
     def upstream_dep_keys(self):
         return [
@@ -46,9 +44,6 @@ class Task:
 
     def __str__(self):
         return f"Task(key={self.key})"
-
-    def suffix(self):
-        return self.key.split(".")[1]
 
     def _visit_input_and_output_files(self, collect_deps_and_outputs_func):
         raise Exception(f"to implement")

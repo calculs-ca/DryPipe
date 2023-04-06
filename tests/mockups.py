@@ -10,6 +10,7 @@ class TaskMockup:
         self.key = key
         self._upstream_dep_keys = upstream_dep_keys
         self.inputs = [1, 5, 4]
+        self.is_slurm_array_child = False
 
     def upstream_dep_keys(self):
         return self._upstream_dep_keys

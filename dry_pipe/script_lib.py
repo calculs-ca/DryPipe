@@ -1008,13 +1008,31 @@ def _run_steps(task_conf_dict):
 
     transition_to_completed(state_file)
 
-def launch_task(wait_for_completion, task_conf_dict=None, exit_process_when_done=True):
+def _script_location_of_array_task_id_if_applies(sloc):
+    slurm_array_task_id = os.environ.get("SLURM_ARRAY_TASK_ID")
+    if slurm_array_task_id is None:
+        return slurm_array_task_id
+    else:
+        slurm_array_task_id = int(slurm_array_task_id)
+        with open(os.path.join(sloc, "array_children_task_ids.tsv")) as _array_children_task_ids:
+            c = 0
+            for line in _array_children_task_ids:
+                if c == slurm_array_task_id:
+                    p = os.path.join(os.path.dirname(sloc), line.strip())
+                    os.environ['__script_location'] = p
+                    return p
+                else:
+                    c += 1
 
-    if task_conf_dict is None:
-        task_conf_dict = load_task_conf_dict()
+        msg = f"Error: no task_key for SLURM_ARRAY_TASK_ID={slurm_array_task_id}"
+        raise Exception(msg)
+
+
+def launch_task(wait_for_completion, exit_process_when_done=True):
 
     def task_func_wrapper():
         try:
+            task_conf_dict = load_task_conf_dict()
             logger.debug("task func started")
             _run_steps(task_conf_dict)
             logger.info("task completed")
@@ -1027,13 +1045,16 @@ def launch_task(wait_for_completion, task_conf_dict=None, exit_process_when_done
     if wait_for_completion:
         task_func_wrapper()
     else:
-        is_slurm = os.environ.get("__is_slurm") == "True"
+        slurm_job_id = os.environ.get("SLURM_JOB_ID")
+        is_slurm = slurm_job_id is not None
         if (not is_slurm) and os.fork() != 0:
+            # launching process, die to let the child run in the background
             exit(0)
         else:
+            # forked child, or slurm job
             sloc = os.environ['__script_location']
             if is_slurm:
-                slurm_job_id = os.environ.get("SLURM_JOB_ID")
+                sloc = _script_location_of_array_task_id_if_applies(sloc)
                 logger.info("slurm job started, slurm_job_id=%s", slurm_job_id)
                 with open(os.path.join(sloc, "slurm_job_id"), "w") as f:
                     f.write(str(os.getpid()))
