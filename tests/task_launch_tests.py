@@ -1,32 +1,13 @@
 import os
-import shutil
-import unittest
-from pathlib import Path
 
-from base_pipeline_test import BasePipelineTest
+from base_pipeline_test import BasePipelineTest, TestWithDirectorySandbox
 from dry_pipe.script_lib import launch_task, UpstreamTasksNotCompleted
 import pipeline_tests_with_single_tasks
 import pipeline_tests_with_multiple_tasks
 
 
-class TaskLaunchTest(unittest.TestCase):
+class TaskLaunchTest(TestWithDirectorySandbox):
 
-    def __init__(self, methodName='runTest'):
-        super().__init__(methodName)
-        all_sandbox_dirs = os.path.join(
-            os.path.dirname(__file__),
-            "sandboxes"
-        )
-
-        self.pipeline_code_dir = os.path.dirname(__file__)
-        self.pipeline_instance_dir = os.path.join(all_sandbox_dirs, self.__class__.__name__)
-        self.exceptions_raised = set()
-
-    def setUp(self):
-
-        d = Path(self.pipeline_instance_dir)
-        if d.exists():
-            shutil.rmtree(d)
 
     def prepare_env_and_launch_task(self, state_file):
 
@@ -69,7 +50,7 @@ class PythonTaskLauncherTest(TaskLaunchTest):
 
 class PipelineWithVariablePassingTaskLauncherTest(TaskLaunchTest):
 
-    def pipeline_test(self) -> BasePipelineTest:
+    def pipeline_test(self):
         return pipeline_tests_with_multiple_tasks.PipelineWithVariablePassing()
 
 class EnsureFailOfLaunchWhenUnsatisfiedUpstreamDependencyTest(TaskLaunchTest):

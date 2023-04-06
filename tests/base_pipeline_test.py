@@ -7,7 +7,7 @@ from dry_pipe import TaskConf
 from dry_pipe.pipeline import Pipeline, PipelineInstance
 
 
-class BasePipelineTest(unittest.TestCase):
+class TestWithDirectorySandbox(unittest.TestCase):
 
     def __init__(self, methodName='runTest'):
         super().__init__(methodName)
@@ -23,6 +23,10 @@ class BasePipelineTest(unittest.TestCase):
         d = Path(self.pipeline_instance_dir)
         if d.exists():
             shutil.rmtree(d)
+
+
+
+class BasePipelineTest(TestWithDirectorySandbox):
 
     def task_conf(self):
         return TaskConf.default()

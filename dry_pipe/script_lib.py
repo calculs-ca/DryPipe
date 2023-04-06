@@ -1037,6 +1037,8 @@ def launch_task(wait_for_completion, exit_process_when_done=True):
             _run_steps(task_conf_dict)
             logger.info("task completed")
         except Exception as ex:
+            if not exit_process_when_done:
+                raise ex
             logger.exception(ex)
         finally:
             if exit_process_when_done:
