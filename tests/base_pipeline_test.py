@@ -4,8 +4,8 @@ import unittest
 from pathlib import Path
 
 from dry_pipe import TaskConf
-from dry_pipe.pipeline import Pipeline, PipelineInstance
-from dry_pipe.script_lib import launch_task
+from dry_pipe.pipeline import Pipeline
+from dry_pipe.script_lib import TaskProcess
 
 
 class TestWithDirectorySandbox(unittest.TestCase):
@@ -38,7 +38,8 @@ class BasePipelineTest(TestWithDirectorySandbox):
                 state_file.tracker.pipeline_work_dir,
                 state_file.task_key
             )
-            launch_task(wait_for_completion=True, exit_process_when_done=False)
+            r = TaskProcess()
+            r.launch_task(wait_for_completion=True, exit_process_when_done=False)
         finally:
             os.environ.clear()
             for k, v in env_copy.items():

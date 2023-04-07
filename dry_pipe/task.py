@@ -4,7 +4,7 @@ import pathlib
 
 import textwrap
 
-from dry_pipe.script_lib import FileCreationDefaultModes, resolve_upstream_and_constant_vars
+from dry_pipe.script_lib import FileCreationDefaultModes
 from dry_pipe import bash_shebang
 from dry_pipe.internals import ValidationError
 
@@ -330,15 +330,15 @@ class TaskStep:
 
 class TaskInputs:
 
-    def __init__(self, task, task_conf_json=None, task_inputs=None, pipeline_work_dir=None):
+    def __init__(self, task, task_runner=None, task_inputs=None, pipeline_work_dir=None):
         self.task = task
         self._task_inputs = task_inputs
-        if task_conf_json is not None:
+        if task_runner is not None:
             self._task_inputs = {}
 
-            for task_input, k, v in resolve_upstream_and_constant_vars(
+            for task_input, k, v in task_runner.resolve_upstream_and_constant_vars(
                 pipeline_work_dir,
-                task_conf_json
+                task_runner.task_conf
             ):
                 if v is not None:
                     self._task_inputs[k] = task_input.parse(v)

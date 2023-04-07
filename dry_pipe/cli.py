@@ -20,10 +20,8 @@ from dry_pipe.janitors import Janitor
 from dry_pipe.monitoring import fetch_task_groups_stats
 from dry_pipe.pipeline import PipelineInstance, Pipeline
 from dry_pipe.pipeline_state import PipelineState
-from dry_pipe.script_lib import create_task_logger, iterate_out_vars_from, \
-    write_out_vars, FileCreationDefaultModes, TaskInput, TaskOutput, iterate_task_env, iterate_file_task_outputs, \
-    resolve_upstream_and_constant_vars
-from dry_pipe.task_state import NON_TERMINAL_STATES, TaskState
+from dry_pipe.script_lib import create_task_logger, FileCreationDefaultModes, TaskOutput, TaskProcess
+from dry_pipe.task_state import TaskState
 
 logger = logging.getLogger(__name__)
 
@@ -718,10 +716,12 @@ def call(ctx, mod_func, task_env):
 
         tc_json = json.loads(tc.read())
 
-        for task_input, k, v in resolve_upstream_and_constant_vars(os.environ["__pipeline_instance_dir"], tc_json, control_dir):
+        task_runner = TaskProcess(tc_json)
+
+        for task_input, k, v in task_runner.resolve_upstream_and_constant_vars(os.environ["__pipeline_instance_dir"], tc_json, control_dir):
             inputs_by_name[k] = task_input.parse(v)
 
-        for o, k, f in iterate_file_task_outputs(tc_json, os.environ["__task_output_dir"]):
+        for o, k, f in task_runner.iterate_file_task_outputs(tc_json, os.environ["__task_output_dir"]):
             file_outputs_by_name[k] = f
 
         for o in tc_json["outputs"]:
@@ -785,7 +785,7 @@ def call(ctx, mod_func, task_env):
 
     try:
         if out_vars is not None:
-            prev_out_vars = dict(iterate_out_vars_from(os.environ["__output_var_file"]))
+            prev_out_vars = dict(task_runner.iterate_out_vars_from(os.environ["__output_var_file"]))
 
             for k, v in out_vars.items():
                 try:
@@ -800,7 +800,7 @@ def call(ctx, mod_func, task_env):
                     logging.shutdown()
                     exit(1)
 
-            write_out_vars(prev_out_vars)
+            task_runner.write_out_vars(prev_out_vars)
 
         #for pid_file in glob.glob(os.path.join(control_dir, "*.pid")):
         #    os.remove(pid_file)

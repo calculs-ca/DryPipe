@@ -5,7 +5,7 @@ import shutil
 from pathlib import Path
 
 from dry_pipe import TaskBuilder, TaskConf, script_lib
-from dry_pipe.script_lib import FileCreationDefaultModes, write_pipeline_lib_script, iterate_out_vars_from, TaskOutput
+from dry_pipe.script_lib import FileCreationDefaultModes, write_pipeline_lib_script, TaskOutput, TaskProcess
 from dry_pipe.task import TaskOutputs, TaskInputs
 
 
@@ -212,15 +212,16 @@ class StateFileTracker:
 
             pod = self.pipeline_output_dir
 
+            task_conf = state_file.load_task_conf_json()
+            task_runner = TaskProcess(task_conf)
+
             class Task:
                 def __init__(self):
                     self.key = task_key
-
-                    task_conf = self.task_conf_json()
-                    self.inputs = TaskInputs(self, task_conf, pipeline_work_dir=pod)
+                    self.inputs = TaskInputs(self, task_runner, pipeline_work_dir=pod)
 
                     task_outputs = {}
-                    unparsed_out_vars = dict(iterate_out_vars_from(var_file))
+                    unparsed_out_vars = dict(task_runner.iterate_out_vars_from(var_file))
 
                     for o in task_conf["outputs"]:
                         o = TaskOutput.from_json(o)
@@ -240,7 +241,7 @@ class StateFileTracker:
                     return f"Task(key={self.key})"
 
                 def task_conf_json(self):
-                    return state_file.load_task_conf_json()
+                    return task_conf
 
                 def is_completed(self):
                     return state_file.is_completed()

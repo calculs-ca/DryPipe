@@ -63,6 +63,27 @@ if __script_location is None:
 else:
     logger = create_task_logger(__script_location)
 
+def parse_ssh_specs(ssh_specs):
+    ssh_specs_parts = ssh_specs.split(":")
+    if len(ssh_specs_parts) == 2:
+        ssh_username_ssh_host, key_filename = ssh_specs_parts
+    elif len(ssh_specs_parts) == 1:
+        ssh_username_ssh_host = ssh_specs_parts[0]
+        key_filename = "~/.ssh/id_rsa"
+    else:
+        raise Exception(f"bad ssh_specs format: {ssh_specs}")
+
+    ssh_username, ssh_host = ssh_username_ssh_host.split("@")
+
+    return ssh_username, ssh_host, key_filename
+
+def _fail_safe_stderr(process):
+    try:
+        err = process.stderr.read().decode("utf-8")
+    except Exception as _e:
+        err = ""
+    return err
+
 
 class PortablePopen:
 
@@ -179,666 +200,641 @@ def task_script_header():
         loader.exec_module(script_lib)        
     """)
 
-
-def _exit_process():
-    _delete_pid_and_slurm_job_id()
-    logging.shutdown()
-    os._exit(0)
-
-def load_task_conf_dict():
-    script_location = os.environ["__script_location"]
-    with open(os.path.join(script_location, "task-conf.json")) as _task_conf:
-        task_conf_as_json = json.loads(_task_conf.read())
-
-        set_generic_task_env(task_conf_as_json)
-
-        command_before_task = task_conf_as_json.get("command_before_task")
-
-        if command_before_task is not None:
-            exec_cmd_before_launch(command_before_task)
-
-        def override_deps(dep_file, bucket):
-            dep_file = os.path.join(os.path.join(os.environ["__control_dir"], dep_file))
-            if not os.path.exists(dep_file):
-                return
-
-            file_cache = os.path.join(task_conf_as_json["remote_base_dir"], "file-cache", bucket)
-
-            logger.debug("will resolve external file deps: %s", file_cache)
-
-            with open(dep_file) as f:
-                deps = {l.strip() for l in f.readlines() if l != ""}
-                for k, v in os.environ.items():
-                    if v in deps:
-                        if v.startswith("/"):
-                            v = v[1:]
-                        new_v = os.path.join(file_cache, v)
-                        os.environ[k] = new_v
-                        logger.debug("override var '%s' -> '%s'", k, new_v)
-
-        override_deps("external-deps.txt", "shared")
-        override_deps("external-deps-pipeline-instance.txt", os.environ["__pipeline_instance_name"])
-
-        #for k, v in resolve_upstream_vars(task_conf_as_json):
-        #    if v is not None:
-        #        os.environ[k] = v
-
-        return task_conf_as_json
-
-def set_generic_task_env(task_conf_as_json):
-    for k, v in iterate_task_env(task_conf_as_json):
-        v = str(v)
-        logger.debug("env var %s = %s", k, v)
-        os.environ[k] = v
-
-def iterate_task_env(task_conf_as_json=None, control_dir=None):
-
-    if control_dir is None:
-        control_dir = os.environ["__script_location"]
-
-    if task_conf_as_json is None:
-        with open(os.path.join(control_dir, "task-conf.json")) as _task_conf:
-            task_conf_as_json = json.loads(_task_conf.read())
-
-    pipeline_instance_dir = os.path.dirname(os.path.dirname(control_dir))
-    task_key = os.path.basename(control_dir)
-
-    pipeline_conf = Path(pipeline_instance_dir, ".drypipe", "conf.json")
-    if os.path.exists(pipeline_conf):
-        with open(pipeline_conf) as pc:
-            pipeline_conf_json = json.loads(pc.read())
-
-            def en_vars_in_pipeline(*var_names):
-                for name in var_names:
-                    value = pipeline_conf_json.get(name)
-                    if value is not None:
-                        value = os.path.expandvars(value)
-                        yield name, value
-
-
-            yield from en_vars_in_pipeline(
-                "__containers_dir",
-                "__pipeline_code_dir"
-            )
-
-    yield "__pipeline_instance_dir", pipeline_instance_dir
-    yield "__pipeline_instance_name", os.path.basename(pipeline_instance_dir)
-    yield "__control_dir", control_dir
-    yield "__task_key", task_key
-    task_output_dir = os.path.join(pipeline_instance_dir, "output", task_key)
-    yield "__task_output_dir", task_output_dir
-    yield "__scratch_dir", os.path.join(task_output_dir, "scratch")
-    yield "__output_var_file", os.path.join(control_dir, "output_vars")
-    yield "__out_log", os.path.join(control_dir, "out.log")
-    yield "__err_log", os.path.join(control_dir, "err.log")
-    if task_conf_as_json.get("ssh_specs") is not None:
-        yield "__is_remote", "True"
-    else:
-        yield "__is_remote", "False"
-
-    container = task_conf_as_json.get("container")
-    if container is not None and container != "":
-        yield "__is_singularity", "True"
-    else:
-        yield "__is_singularity", "False"
-
-    logger.debug("extra_env vars from task-conf.json")
-
-    extra_env = task_conf_as_json["extra_env"]
-    if extra_env is not None:
-        for k, v in extra_env.items():
-            yield k, os.path.expandvars(v)
-
-    logger.debug("resolved and constant input vars")
-    for _, k, v in resolve_upstream_and_constant_vars(pipeline_instance_dir, task_conf_as_json):
-        yield k, v
-
-    logger.debug("file output vars")
-    for _, k, f in iterate_file_task_outputs(task_conf_as_json, task_output_dir):
-        yield k, f
-
-
-def iterate_file_task_outputs(task_conf_as_json, task_output_dir):
-    for o in task_conf_as_json["outputs"]:
-        o = TaskOutput.from_json(o)
-        if o.is_file():
-            yield o, o.name, os.path.join(task_output_dir, o.produced_file_name)
-
 class UpstreamTasksNotCompleted(Exception):
     def __init__(self, upstream_task_key, msg):
         self.upstream_task_key = upstream_task_key
         self.msg = msg
 
-def resolve_upstream_and_constant_vars(
-    pipeline_instance_dir, task_conf_as_json, log_error_if_upstream_task_not_completed=True
-):
 
-    for i in task_conf_as_json["inputs"]:
-        i = TaskInput.from_json(i)
-        if logger.level == logging.DEBUG:
-            logger.debug("%s", i.as_string())
-        if i.is_upstream_output():
+class TaskProcess:
 
-            def ensure_upstream_task_is_completed():
-                for state_file in glob.glob(os.path.join(pipeline_instance_dir, ".drypipe", i.upstream_task_key,"state.*")):
-                    if not "completed" in state_file:
-                        msg = f"upstream task {i.upstream_task_key} " + \
-                            f"not completed (state={state_file}), this task " + \
-                            f"dependency on {i.name_in_upstream_task} not satisfied"
-                        if not log_error_if_upstream_task_not_completed:
-                            logger.error(msg)
-                        else:
-                            raise UpstreamTasksNotCompleted(i.upstream_task_key, msg)
+    def __init__(self, task_conf=None):
+        self.task_conf = task_conf
 
-            ensure_upstream_task_is_completed()
+    def _exit_process(self):
+        self._delete_pid_and_slurm_job_id()
+        logging.shutdown()
+        os._exit(0)
 
-            if i.is_file():
-                yield i, i.name, os.path.join(pipeline_instance_dir, "output", i.upstream_task_key, i.file_name)
-            else:
-                out_vars = dict(iterate_out_vars_from(
-                    os.path.join(pipeline_instance_dir, ".drypipe", i.upstream_task_key, "output_vars")
-                ))
-                v = out_vars.get(i.name_in_upstream_task)
-                yield i, i.name, v
-        elif i.is_constant():
-            yield i, i.name, i.value
-        elif i.is_file():
-            # not is_upstream_output means they have either absolute path, or in pipeline_instance_dir
-            if os.path.isabs(i.file_name):
-                yield i, i.name, i.file_name
-            else:
-                yield i, i.name, os.path.join(pipeline_instance_dir, i.file_name)
+    def load_task_conf_dict(self):
+        script_location = os.environ["__script_location"]
+        with open(os.path.join(script_location, "task-conf.json")) as _task_conf:
+            self.task_conf = json.loads(_task_conf.read())
 
+            self.set_generic_task_env()
 
-def run_python(task_conf_dict, mod_func, container=None):
+            command_before_task = self.task_conf.get("command_before_task")
 
-    switches = "-u"
-    cmd = [
-        task_conf_dict["python_bin"],
-        switches,
-        "-m",
-        "dry_pipe.cli",
-        "call",
-        mod_func
-    ]
+            if command_before_task is not None:
+                self.exec_cmd_before_launch(command_before_task)
 
-    if container is not None:
-        cmd = [
-            APPTAINER_COMMAND,
-            "exec",
-            resolve_container_path(container)
-        ] + cmd
+            def override_deps(dep_file, bucket):
+                dep_file = os.path.join(os.path.join(os.environ["__control_dir"], dep_file))
+                if not os.path.exists(dep_file):
+                    return
 
-    env = {**os.environ}
+                file_cache = os.path.join(self.task_conf["remote_base_dir"], "file-cache", bucket)
 
-    if os.environ.get("__is_slurm"):
-        env['__scratch_dir'] = os.environ['SLURM_TMPDIR']
+                logger.debug("will resolve external file deps: %s", file_cache)
 
-    has_failed = False
+                with open(dep_file) as f:
+                    deps = {l.strip() for l in f.readlines() if l != ""}
+                    for k, v in os.environ.items():
+                        if v in deps:
+                            if v.startswith("/"):
+                                v = v[1:]
+                            new_v = os.path.join(file_cache, v)
+                            os.environ[k] = new_v
+                            logger.debug("override var '%s' -> '%s'", k, new_v)
 
-    logger.info("run_python: %s", ' '.join(cmd))
+            override_deps("external-deps.txt", "shared")
+            override_deps("external-deps-pipeline-instance.txt", os.environ["__pipeline_instance_name"])
 
-    with open(os.environ['__out_log'], 'a') as out:
-        with open(os.environ['__err_log'], 'a') as err:
-            with PortablePopen(cmd, stdout=out, stderr=err) as p:
-                try:
-                    p.wait()
-                    has_failed = p.popen.returncode != 0
-                except Exception as ex:
-                    has_failed = True
-                    logger.exception(ex)
-                finally:
-                    if has_failed:
-                        step_number, control_dir, state_file, state_name = read_task_state()
-                        _transition_state_file(state_file, "failed", step_number)
-    if has_failed:
-        _exit_process()
+            #for k, v in resolve_upstream_vars(task_conf_as_json):
+            #    if v is not None:
+            #        os.environ[k] = v
 
-
-def _fail_safe_stderr(process):
-    try:
-        err = process.stderr.read().decode("utf-8")
-    except Exception as _e:
-        err = ""
-    return err
-
-
-def _terminate_descendants_and_exit(p1, p2):
-
-    try:
-        try:
-            logger.info("signal SIGTERM received, will transition to killed and terminate descendants")
-            step_number, control_dir, state_file, state_name = read_task_state()
-            _transition_state_file(state_file, "killed", step_number)
-            logger.info("will terminate descendants")
-        except Exception as _:
-            pass
-
-        this_pid = str(os.getpid())
-        with PortablePopen(
-            ['ps', '-opid', '--no-headers', '--ppid', this_pid]
-        ) as p:
-            p.wait_and_raise_if_non_zero()
-            pids = [
-                int(line.decode("utf-8").strip())
-                for line in p.popen.stdout.readlines()
-            ]
-            pids = [pid for pid in pids if pid != p.popen.pid]
-            logger.debug("descendants of %s: %s", this_pid, pids)
-            for pid in pids:
-                try:
-                    os.kill(pid, signal.SIGTERM)
-                except Exception as _:
-                    pass
-    except Exception as ex:
-        logger.exception(ex)
-    finally:
-        _exit_process()
-
-
-def _delete_pid_and_slurm_job_id(sloc=None):
-    try:
-        if sloc is None:
-            sloc = os.environ["__script_location"]
-
-        def delete_if_exists(f):
-            f = os.path.join(sloc, f)
-            if os.path.exists(f):
-                os.remove(f)
-
-        delete_if_exists("pid")
-        delete_if_exists("slurm_job_id")
-    except Exception as ex:
-        logger.exception(ex)
-
-
-def _env_from_sourcing(env_file):
-
-    p = os.path.abspath(sys.executable)
-
-    dump_with_python_script = f'{p} -c "import os, json; print(json.dumps(dict(os.environ)))"'
-
-    logger.debug("will source file: %s", env_file)
-
-    with PortablePopen(['/bin/bash', '-c', f". {env_file} && {dump_with_python_script}"]) as p:
-        p.wait_and_raise_if_non_zero()
-        out = p.stdout_as_string()
-        return json.loads(out)
-
-
-def exec_cmd_before_launch(command_before_task):
-
-    p = os.path.abspath(sys.executable)
-
-    dump_with_python_script = f'{p} -c "import os, json; print(json.dumps(dict(os.environ)))"'
-
-    logger.info("will execute 'command_before_task': %s", command_before_task)
-
-    out = os.environ['__out_log']
-    err = os.environ['__err_log']
-
-    with PortablePopen([
-        '/bin/bash', '-c', f"{command_before_task} 1>> {out} 2>> {err} && {dump_with_python_script}"
-    ]) as p:
-        p.wait_and_raise_if_non_zero()
-        out = p.stdout_as_string()
-        env = json.loads(out)
-        for k, v in env.items():
+    def set_generic_task_env(self):
+        for k, v in self.iterate_task_env(self.task_conf):
+            v = str(v)
+            logger.debug("env var %s = %s", k, v)
             os.environ[k] = v
 
+    def resolve_upstream_and_constant_vars(
+            self, pipeline_instance_dir, task_conf_as_json, log_error_if_upstream_task_not_completed=True
+    ):
 
-def iterate_out_vars_from(file):
-    if os.path.exists(file):
-        with open(file) as f:
-            for line in f.readlines():
-                var_name, value = line.split("=")
-                yield var_name.strip(), value.strip()
+        for i in task_conf_as_json["inputs"]:
+            i = TaskInput.from_json(i)
+            if logger.level == logging.DEBUG:
+                logger.debug("%s", i.as_string())
+            if i.is_upstream_output():
+
+                def ensure_upstream_task_is_completed():
+                    for state_file in glob.glob(
+                            os.path.join(pipeline_instance_dir, ".drypipe", i.upstream_task_key, "state.*")):
+                        if not "completed" in state_file:
+                            msg = f"upstream task {i.upstream_task_key} " + \
+                                  f"not completed (state={state_file}), this task " + \
+                                  f"dependency on {i.name_in_upstream_task} not satisfied"
+                            if not log_error_if_upstream_task_not_completed:
+                                logger.error(msg)
+                            else:
+                                raise UpstreamTasksNotCompleted(i.upstream_task_key, msg)
+
+                ensure_upstream_task_is_completed()
+
+                if i.is_file():
+                    yield i, i.name, os.path.join(pipeline_instance_dir, "output", i.upstream_task_key, i.file_name)
+                else:
+                    out_vars = dict(self.iterate_out_vars_from(
+                        os.path.join(pipeline_instance_dir, ".drypipe", i.upstream_task_key, "output_vars")
+                    ))
+                    v = out_vars.get(i.name_in_upstream_task)
+                    yield i, i.name, v
+            elif i.is_constant():
+                yield i, i.name, i.value
+            elif i.is_file():
+                # not is_upstream_output means they have either absolute path, or in pipeline_instance_dir
+                if os.path.isabs(i.file_name):
+                    yield i, i.name, i.file_name
+                else:
+                    yield i, i.name, os.path.join(pipeline_instance_dir, i.file_name)
+
+    def iterate_out_vars_from(self, file):
+        if os.path.exists(file):
+            with open(file) as f:
+                for line in f.readlines():
+                    var_name, value = line.split("=")
+                    yield var_name.strip(), value.strip()
+
+    def iterate_task_env(self, task_conf_as_json=None, control_dir=None):
+
+        if control_dir is None:
+            control_dir = os.environ["__script_location"]
+
+        if task_conf_as_json is None:
+            with open(os.path.join(control_dir, "task-conf.json")) as _task_conf:
+                task_conf_as_json = json.loads(_task_conf.read())
+
+        pipeline_instance_dir = os.path.dirname(os.path.dirname(control_dir))
+        task_key = os.path.basename(control_dir)
+
+        pipeline_conf = Path(pipeline_instance_dir, ".drypipe", "conf.json")
+        if os.path.exists(pipeline_conf):
+            with open(pipeline_conf) as pc:
+                pipeline_conf_json = json.loads(pc.read())
+
+                def en_vars_in_pipeline(*var_names):
+                    for name in var_names:
+                        value = pipeline_conf_json.get(name)
+                        if value is not None:
+                            value = os.path.expandvars(value)
+                            yield name, value
 
 
-def read_task_state(control_dir=None, state_file=None):
+                yield from en_vars_in_pipeline(
+                    "__containers_dir",
+                    "__pipeline_code_dir"
+                )
 
-    if control_dir is None:
-        control_dir = os.environ["__control_dir"]
-
-    if state_file is None:
-        glob_exp = os.path.join(control_dir, "state.*")
-        state_file = list(glob.glob(glob_exp))
-
-        if len(state_file) == 0:
-            raise Exception(f"no state file in {control_dir}, {glob_exp}")
-        if len(state_file) > 1:
-            raise Exception(f"more than one state file found in {control_dir}, {glob_exp}")
-
-        state_file = state_file[0]
-
-    base_file_name = os.path.basename(state_file)
-    name_parts = base_file_name.split(".")
-    state_name = name_parts[1]
-
-    if len(name_parts) == 3:
-        step_number = int(name_parts[-1])
-    else:
-        step_number = 0
-
-    return step_number, control_dir, state_file, state_name
-
-
-def touch(fname):
-    if os.path.exists(fname):
-        os.utime(fname, None)
-    else:
-        open(fname, 'a').close()
-
-
-def _append_to_history(control_dir, state_name, step_number=None):
-    with open(os.path.join(control_dir, "history.tsv"), "a") as f:
-        f.write(state_name)
-        f.write("\t")
-        f.write(datetime.now().strftime('%Y-%m-%dT%H:%M:%S.%f'))
-        f.write("\t")
-        if step_number is None:
-            f.write("")
+        yield "__pipeline_instance_dir", pipeline_instance_dir
+        yield "__pipeline_instance_name", os.path.basename(pipeline_instance_dir)
+        yield "__control_dir", control_dir
+        yield "__task_key", task_key
+        task_output_dir = os.path.join(pipeline_instance_dir, "output", task_key)
+        yield "__task_output_dir", task_output_dir
+        yield "__scratch_dir", os.path.join(task_output_dir, "scratch")
+        yield "__output_var_file", os.path.join(control_dir, "output_vars")
+        yield "__out_log", os.path.join(control_dir, "out.log")
+        yield "__err_log", os.path.join(control_dir, "err.log")
+        if task_conf_as_json.get("ssh_specs") is not None:
+            yield "__is_remote", "True"
         else:
-            f.write(str(step_number))
-        f.write("\n")
+            yield "__is_remote", "False"
 
-
-def parse_ssh_specs(ssh_specs):
-    ssh_specs_parts = ssh_specs.split(":")
-    if len(ssh_specs_parts) == 2:
-        ssh_username_ssh_host, key_filename = ssh_specs_parts
-    elif len(ssh_specs_parts) == 1:
-        ssh_username_ssh_host = ssh_specs_parts[0]
-        key_filename = "~/.ssh/id_rsa"
-    else:
-        raise Exception(f"bad ssh_specs format: {ssh_specs}")
-
-    ssh_username, ssh_host = ssh_username_ssh_host.split("@")
-
-    return ssh_username, ssh_host, key_filename
-
-def _rsync_with_args_and_remote_dir_ng(self, control_dir):
-    with open(os.path.join(control_dir, "task-conf.json")) as tc:
-        task_conf_as_json = json.loads(tc.read())
-        ssh_username, ssh_host, key_filename = parse_ssh_specs(task_conf_as_json["ssh_specs"])
-        remote_base_dir = task_conf_as_json["remote_base_dir"]
-        ssh_args = f"-e 'ssh -q -i {key_filename} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'"
-        timeout = f"--timeout={60 * 2}"
-        return (
-            f"rsync {ssh_args} {timeout}",
-            f"{ssh_username}@{ssh_host}:{remote_base_dir}"
-        )
-
-
-def _transition_state_file(state_file, next_state_name, step_number=None, this_logger=logger):
-
-    this_logger.debug("_transition_state_file: %s", state_file)
-
-    control_dir = os.path.dirname(state_file)
-
-    if step_number is None:
-        next_step_number = None
-        next_state_basename = f"state.{next_state_name}"
-    else:
-        next_step_number = step_number
-        next_state_basename = f"state.{next_state_name}.{next_step_number}"
-
-    next_state_file = os.path.join(control_dir, next_state_basename)
-
-    this_logger.info("will transition to: %s", next_state_basename)
-    this_logger.debug("next_state_file: %s", next_state_file)
-
-    os.rename(
-        state_file,
-        next_state_file
-    )
-
-    _append_to_history(control_dir, next_state_name, step_number)
-
-    return next_state_file, next_step_number
-
-
-def transition_to_step_started(state_file, step_number):
-    return _transition_state_file(state_file, "step-started", step_number)
-
-
-def transition_to_step_completed(state_file, step_number):
-    state_file, step_number = _transition_state_file(state_file, "step-completed", step_number)
-    return state_file, step_number + 1
-
-
-def register_signal_handlers():
-
-    def timeout_handler(s, frame):
-        step_number, control_dir, state_file, state_name = read_task_state()
-        _transition_state_file(state_file, "timed-out", step_number)
-        _exit_process()
-
-    logger.debug("will register signal handlers")
-
-    signal.signal(signal.SIGINT, signal.SIG_IGN)
-    signal.signal(signal.SIGHUP, signal.SIG_IGN)
-
-    signal.signal(signal.SIGUSR1, timeout_handler)
-    signal.signal(signal.SIGTERM, _terminate_descendants_and_exit)
-
-    logger.debug("signal handlers registered")
-
-
-def transition_to_completed(state_file):
-    return _transition_state_file(state_file, "completed")
-
-
-def write_out_vars(out_vars):
-
-    all_vars = [
-        f"{k}={v}" for k, v in out_vars.items()
-    ]
-
-    with open(os.environ["__output_var_file"], "w") as f:
-        f.write("\n".join(all_vars))
-
-    logger.info("out vars written: %s", ",".join(all_vars))
-
-def resolve_container_path(container):
-
-    containers_dir = os.environ.get('__containers_dir')
-
-    if containers_dir is None:
-        containers_dir = os.path.join(os.environ["__pipeline_code_dir"], "containers")
-
-    if os.path.isabs(container):
-        if os.path.exists(container):
-            resolved_path = container
+        container = task_conf_as_json.get("container")
+        if container is not None and container != "":
+            yield "__is_singularity", "True"
         else:
-            resolved_path = os.path.join(containers_dir, os.path.basename(container))
-    else:
-        resolved_path = os.path.join(containers_dir, container)
+            yield "__is_singularity", "False"
 
-    if not os.path.exists(resolved_path):
-        raise Exception(f"container file not found: {resolved_path}, __containers_dir={containers_dir}")
+        logger.debug("extra_env vars from task-conf.json")
 
-    logger.debug("container: %s resolves to: %s", container, resolved_path)
+        extra_env = task_conf_as_json["extra_env"]
+        if extra_env is not None:
+            for k, v in extra_env.items():
+                yield k, os.path.expandvars(v)
 
-    return resolved_path
+        logger.debug("resolved and constant input vars")
+        for _, k, v in self.resolve_upstream_and_constant_vars(pipeline_instance_dir, task_conf_as_json):
+            yield k, v
 
-def run_script(task_conf_dict, script, container=None):
+        logger.debug("file output vars")
+        for _, k, f in self.iterate_file_task_outputs(task_conf_as_json, task_output_dir):
+            yield k, f
 
-    env = {**os.environ}
 
-    dump_env = f'python3 -c "import os, json; print(json.dumps(dict(os.environ)))"'
-    out = os.environ['__out_log']
-    err = os.environ['__err_log']
+    def iterate_file_task_outputs(self, task_conf_as_json, task_output_dir):
+        for o in task_conf_as_json["outputs"]:
+            o = TaskOutput.from_json(o)
+            if o.is_file():
+                yield o, o.name, os.path.join(task_output_dir, o.produced_file_name)
 
-    cmd = ["bash", "-c", f". {script} 1>> {out} 2>> {err} ; {dump_env}"]
 
-    if container is not None:
+    def run_python(self, mod_func, container=None):
+
+        switches = "-u"
         cmd = [
-            APPTAINER_COMMAND,
-            "exec",
-            resolve_container_path(container),
-        ] + cmd
+            self.task_conf["python_bin"],
+            switches,
+            "-m",
+            "dry_pipe.cli",
+            "call",
+            mod_func
+        ]
 
-        apptainer_bindings = []
+        if container is not None:
+            cmd = [
+                APPTAINER_COMMAND,
+                "exec",
+                self.resolve_container_path(container)
+            ] + cmd
 
-        root_dir_of_script = _root_dir(script)
-
-        if _fs_type(root_dir_of_script) in ["autofs", "nfs", "zfs"]:
-            apptainer_bindings.append(f"{root_dir_of_script}:{root_dir_of_script}")
+        env = {**os.environ}
 
         if os.environ.get("__is_slurm"):
-            scratch_dir = os.environ['SLURM_TMPDIR']
-            env['__scratch_dir'] = scratch_dir
-            root_of_scratch_dir = _root_dir(scratch_dir)
-            apptainer_bindings.append(f"{root_of_scratch_dir}:{root_of_scratch_dir}")
+            env['__scratch_dir'] = os.environ['SLURM_TMPDIR']
 
-        if len(apptainer_bindings) > 0:
+        has_failed = False
 
-            prev_apptainer_bindings = env.get("APPTAINER_BIND")
+        logger.info("run_python: %s", ' '.join(cmd))
 
-            if prev_apptainer_bindings is not None and prev_apptainer_bindings != "":
-                bindings_prefix = f"{prev_apptainer_bindings},"
-            else:
-                bindings_prefix = ""
+        with open(os.environ['__out_log'], 'a') as out:
+            with open(os.environ['__err_log'], 'a') as err:
+                with PortablePopen(cmd, stdout=out, stderr=err) as p:
+                    try:
+                        p.wait()
+                        has_failed = p.popen.returncode != 0
+                    except Exception as ex:
+                        has_failed = True
+                        logger.exception(ex)
+                    finally:
+                        if has_failed:
+                            step_number, control_dir, state_file, state_name = self.read_task_state()
+                            self._transition_state_file(state_file, "failed", step_number)
+        if has_failed:
+            self._exit_process()
 
-            env["APPTAINER_BIND"] = f"{bindings_prefix}{','.join(apptainer_bindings)}"
+    def _terminate_descendants_and_exit(self, p1, p2):
 
-        new_bind = env.get("APPTAINER_BIND")
-        if new_bind is not None:
-            logger.info("APPTAINER_BIND not set")
-        else:
-            logger.info("APPTAINER_BIND=%s", new_bind)
+        try:
+            try:
+                logger.info("signal SIGTERM received, will transition to killed and terminate descendants")
+                step_number, control_dir, state_file, state_name = self.read_task_state()
+                self._transition_state_file(state_file, "killed", step_number)
+                logger.info("will terminate descendants")
+            except Exception as _:
+                pass
+
+            this_pid = str(os.getpid())
+            with PortablePopen(
+                ['ps', '-opid', '--no-headers', '--ppid', this_pid]
+            ) as p:
+                p.wait_and_raise_if_non_zero()
+                pids = [
+                    int(line.decode("utf-8").strip())
+                    for line in p.popen.stdout.readlines()
+                ]
+                pids = [pid for pid in pids if pid != p.popen.pid]
+                logger.debug("descendants of %s: %s", this_pid, pids)
+                for pid in pids:
+                    try:
+                        os.kill(pid, signal.SIGTERM)
+                    except Exception as _:
+                        pass
+        except Exception as ex:
+            logger.exception(ex)
+        finally:
+            self._exit_process()
 
 
-    logger.info("run_script: %s", " ".join(cmd))
+    def _delete_pid_and_slurm_job_id(self, sloc=None):
+        try:
+            if sloc is None:
+                sloc = os.environ["__script_location"]
 
-    has_failed = False
-    try:
+            def delete_if_exists(f):
+                f = os.path.join(sloc, f)
+                if os.path.exists(f):
+                    os.remove(f)
 
-        with PortablePopen(cmd, env=env) as p:
+            delete_if_exists("pid")
+            delete_if_exists("slurm_job_id")
+        except Exception as ex:
+            logger.exception(ex)
+
+
+    def _env_from_sourcing(self, env_file):
+
+        p = os.path.abspath(sys.executable)
+
+        dump_with_python_script = f'{p} -c "import os, json; print(json.dumps(dict(os.environ)))"'
+
+        logger.debug("will source file: %s", env_file)
+
+        with PortablePopen(['/bin/bash', '-c', f". {env_file} && {dump_with_python_script}"]) as p:
             p.wait_and_raise_if_non_zero()
             out = p.stdout_as_string()
-            step_output_vars = json.loads(out)
-            task_output_vars = dict(iterate_out_vars_from(os.environ["__output_var_file"]))
-
-            with open(os.path.join(os.environ["__control_dir"], "task-conf.json")) as _task_conf:
-                task_conf_as_json = json.loads(_task_conf.read())
-                for o in task_conf_as_json["outputs"]:
-                    o = TaskOutput.from_json(o)
-                    if o.type != "file":
-                        v = step_output_vars.get(o.name)
-                        logger.debug("script exported output var %s = %s", o.name, v)
-                        task_output_vars[o.name] = v
-                        if v is not None:
-                            os.environ[o.name] = v
-
-            write_out_vars(task_output_vars)
+            return json.loads(out)
 
 
-    except Exception as ex:
-        logger.exception(ex)
-        has_failed = True
-    finally:
-        if has_failed:
-            step_number, control_dir, state_file, state_name = read_task_state()
-            _transition_state_file(state_file, "failed", step_number)
-            _exit_process()
+    def exec_cmd_before_launch(self, command_before_task):
 
+        p = os.path.abspath(sys.executable)
 
-def archive_produced_files(task_output_dir, exclusion_glob_patterns):
+        dump_with_python_script = f'{p} -c "import os, json; print(json.dumps(dict(os.environ)))"'
 
-    archive_tar_name = "drypipe-archive.tar.gz"
-    archive_tar = os.path.join(task_output_dir, archive_tar_name)
+        logger.info("will execute 'command_before_task': %s", command_before_task)
 
-    if os.path.exists(archive_tar):
-        return False
+        out = os.environ['__out_log']
+        err = os.environ['__err_log']
 
-    def matches_one_pattern(f_name):
-        for p in exclusion_glob_patterns:
-            if fnmatch.fnmatch(f_name, p):
-                return True
+        with PortablePopen([
+            '/bin/bash', '-c', f"{command_before_task} 1>> {out} 2>> {err} && {dump_with_python_script}"
+        ]) as p:
+            p.wait_and_raise_if_non_zero()
+            out = p.stdout_as_string()
+            env = json.loads(out)
+            for k, v in env.items():
+                os.environ[k] = v
 
-    def gen_to_archive():
-        with os.scandir(task_output_dir) as files_in_output_dir:
-            for f in files_in_output_dir:
-                if not (f.name == archive_tar_name or matches_one_pattern(f.name)):
-                    yield f.name
+    def read_task_state(self, control_dir=None, state_file=None):
 
-    files_to_archive = list(gen_to_archive())
+        if control_dir is None:
+            control_dir = os.environ["__control_dir"]
 
-    to_delete = []
+        if state_file is None:
+            glob_exp = os.path.join(control_dir, "state.*")
+            state_file = list(glob.glob(glob_exp))
 
-    with tarfile.open(archive_tar, "w:gz") as tar:
-        for f in files_to_archive:
-            f0 = os.path.join(task_output_dir, f)
-            tar.add(f0, arcname=f)
-            to_delete.append(f0)
+            if len(state_file) == 0:
+                raise Exception(f"no state file in {control_dir}, {glob_exp}")
+            if len(state_file) > 1:
+                raise Exception(f"more than one state file found in {control_dir}, {glob_exp}")
 
-    for f in to_delete:
-        if os.path.isdir(f):
-            shutil.rmtree(f)
+            state_file = state_file[0]
+
+        base_file_name = os.path.basename(state_file)
+        name_parts = base_file_name.split(".")
+        state_name = name_parts[1]
+
+        if len(name_parts) == 3:
+            step_number = int(name_parts[-1])
         else:
-            os.remove(f)
+            step_number = 0
 
-    return True
+        return step_number, control_dir, state_file, state_name
 
 
-def launch_task_from_remote(task_key, is_slurm, wait_for_completion, drypipe_task_debug):
-
-    pipeline_instance_dir = os.path.dirname(os.path.dirname(sys.argv[0]))
-
-    control_dir = os.path.join(pipeline_instance_dir, '.drypipe', task_key)
-
-    if drypipe_task_debug:
-        os.environ["DRYPIPE_TASK_DEBUG"] = "True"
-
-    logger = create_task_logger(control_dir)
-
-    out_sigs_dir = os.path.join(control_dir, 'out_sigs')
-    touch(os.path.join(control_dir, 'output_vars'))
-
-    work_dir = os.path.join(pipeline_instance_dir, 'output', task_key)
-    scratch_dir = os.path.join(work_dir, "scratch")
-
-    for d in [work_dir, out_sigs_dir, scratch_dir]:
-        Path(d).mkdir(exist_ok=True, parents=True, mode=FileCreationDefaultModes.pipeline_instance_directories)
-
-    for state_file in glob.glob(os.path.join(control_dir, "state.*")):
-        os.remove(state_file)
-
-    touch(os.path.join(control_dir, 'state.launched.0'))
-
-    _delete_pid_and_slurm_job_id(control_dir)
-
-    env = os.environ
-
-    if is_slurm:
-        cmd = os.path.join(control_dir, 'sbatch-launcher.sh')
-        if wait_for_completion:
-            env = {**env, "SBATCH_EXTRA_ARGS": "--wait", "DRYPIPE_TASK_DEBUG": str(drypipe_task_debug)}
-            cmd = ["bash", "-c", cmd]
-    else:
-        if wait_for_completion:
-            back_ground = ""
+    def touch(fname):
+        if os.path.exists(fname):
+            os.utime(fname, None)
         else:
-            back_ground = "&"
-        scr = os.path.join(control_dir, 'task')
-        cmd = ["nohup", "bash", "-c", f"python3 {scr} {back_ground}"]
+            open(fname, 'a').close()
 
-    logger.info("launching from remote: %s", ' '.join(cmd) if isinstance(cmd, list) else cmd)
 
-    with open(os.path.join(control_dir, 'out.log'), 'w') as out:
-        with open(os.path.join(control_dir, 'err.log'), 'w') as err:
-            with PortablePopen(
-                cmd,
-                stdout=out,
-                stderr=err,
-                env=env
-            ) as p:
-                p.wait()
-                if p.popen.returncode != 0:
-                    logger.error(f"remote task launch failed: %s", sys.argv)
-                print(str(p.popen.returncode))
+    def _append_to_history(self, control_dir, state_name, step_number=None):
+        with open(os.path.join(control_dir, "history.tsv"), "a") as f:
+            f.write(state_name)
+            f.write("\t")
+            f.write(datetime.now().strftime('%Y-%m-%dT%H:%M:%S.%f'))
+            f.write("\t")
+            if step_number is None:
+                f.write("")
+            else:
+                f.write(str(step_number))
+            f.write("\n")
+
+
+    def _transition_state_file(self, state_file, next_state_name, step_number=None, this_logger=logger):
+
+        this_logger.debug("_transition_state_file: %s", state_file)
+
+        control_dir = os.path.dirname(state_file)
+
+        if step_number is None:
+            next_step_number = None
+            next_state_basename = f"state.{next_state_name}"
+        else:
+            next_step_number = step_number
+            next_state_basename = f"state.{next_state_name}.{next_step_number}"
+
+        next_state_file = os.path.join(control_dir, next_state_basename)
+
+        this_logger.info("will transition to: %s", next_state_basename)
+        this_logger.debug("next_state_file: %s", next_state_file)
+
+        os.rename(
+            state_file,
+            next_state_file
+        )
+
+        self._append_to_history(control_dir, next_state_name, step_number)
+
+        return next_state_file, next_step_number
+
+
+    def transition_to_step_started(self, state_file, step_number):
+        return self._transition_state_file(state_file, "step-started", step_number)
+
+
+    def transition_to_step_completed(self, state_file, step_number):
+        state_file, step_number = self._transition_state_file(state_file, "step-completed", step_number)
+        return state_file, step_number + 1
+
+
+    def register_signal_handlers(self):
+
+        def timeout_handler(s, frame):
+            step_number, control_dir, state_file, state_name = self.read_task_state()
+            self._transition_state_file(state_file, "timed-out", step_number)
+            self._exit_process()
+
+        logger.debug("will register signal handlers")
+
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+        signal.signal(signal.SIGHUP, signal.SIG_IGN)
+
+        signal.signal(signal.SIGUSR1, timeout_handler)
+
+        def f(p1, p2):
+            self._terminate_descendants_and_exit(p1, p2)
+        signal.signal(signal.SIGTERM, f)
+
+        logger.debug("signal handlers registered")
+
+
+    def transition_to_completed(self, state_file):
+        return self._transition_state_file(state_file, "completed")
+
+
+    def write_out_vars(self, out_vars):
+
+        all_vars = [
+            f"{k}={v}" for k, v in out_vars.items()
+        ]
+
+        with open(os.environ["__output_var_file"], "w") as f:
+            f.write("\n".join(all_vars))
+
+        logger.info("out vars written: %s", ",".join(all_vars))
+
+    def resolve_container_path(self, container):
+
+        containers_dir = os.environ.get('__containers_dir')
+
+        if containers_dir is None:
+            containers_dir = os.path.join(os.environ["__pipeline_code_dir"], "containers")
+
+        if os.path.isabs(container):
+            if os.path.exists(container):
+                resolved_path = container
+            else:
+                resolved_path = os.path.join(containers_dir, os.path.basename(container))
+        else:
+            resolved_path = os.path.join(containers_dir, container)
+
+        if not os.path.exists(resolved_path):
+            raise Exception(f"container file not found: {resolved_path}, __containers_dir={containers_dir}")
+
+        logger.debug("container: %s resolves to: %s", container, resolved_path)
+
+        return resolved_path
+
+    def run_script(self, script, container=None):
+
+        env = {**os.environ}
+
+        dump_env = f'python3 -c "import os, json; print(json.dumps(dict(os.environ)))"'
+        out = os.environ['__out_log']
+        err = os.environ['__err_log']
+
+        cmd = ["bash", "-c", f". {script} 1>> {out} 2>> {err} ; {dump_env}"]
+
+        if container is not None:
+            cmd = [
+                APPTAINER_COMMAND,
+                "exec",
+                self.resolve_container_path(container),
+            ] + cmd
+
+            apptainer_bindings = []
+
+            root_dir_of_script = _root_dir(script)
+
+            if _fs_type(root_dir_of_script) in ["autofs", "nfs", "zfs"]:
+                apptainer_bindings.append(f"{root_dir_of_script}:{root_dir_of_script}")
+
+            if os.environ.get("__is_slurm"):
+                scratch_dir = os.environ['SLURM_TMPDIR']
+                env['__scratch_dir'] = scratch_dir
+                root_of_scratch_dir = _root_dir(scratch_dir)
+                apptainer_bindings.append(f"{root_of_scratch_dir}:{root_of_scratch_dir}")
+
+            if len(apptainer_bindings) > 0:
+
+                prev_apptainer_bindings = env.get("APPTAINER_BIND")
+
+                if prev_apptainer_bindings is not None and prev_apptainer_bindings != "":
+                    bindings_prefix = f"{prev_apptainer_bindings},"
+                else:
+                    bindings_prefix = ""
+
+                env["APPTAINER_BIND"] = f"{bindings_prefix}{','.join(apptainer_bindings)}"
+
+            new_bind = env.get("APPTAINER_BIND")
+            if new_bind is not None:
+                logger.info("APPTAINER_BIND not set")
+            else:
+                logger.info("APPTAINER_BIND=%s", new_bind)
+
+
+        logger.info("run_script: %s", " ".join(cmd))
+
+        has_failed = False
+        try:
+
+            with PortablePopen(cmd, env=env) as p:
+                p.wait_and_raise_if_non_zero()
+                out = p.stdout_as_string()
+                step_output_vars = json.loads(out)
+                task_output_vars = dict(self.iterate_out_vars_from(os.environ["__output_var_file"]))
+
+                with open(os.path.join(os.environ["__control_dir"], "task-conf.json")) as _task_conf:
+                    task_conf_as_json = json.loads(_task_conf.read())
+                    for o in task_conf_as_json["outputs"]:
+                        o = TaskOutput.from_json(o)
+                        if o.type != "file":
+                            v = step_output_vars.get(o.name)
+                            logger.debug("script exported output var %s = %s", o.name, v)
+                            task_output_vars[o.name] = v
+                            if v is not None:
+                                os.environ[o.name] = v
+
+                self.write_out_vars(task_output_vars)
+
+
+        except Exception as ex:
+            logger.exception(ex)
+            has_failed = True
+        finally:
+            if has_failed:
+                step_number, control_dir, state_file, state_name = self.read_task_state()
+                self._transition_state_file(state_file, "failed", step_number)
+                self._exit_process()
+
+    def _run_steps(self):
+
+        step_number, control_dir, state_file, state_name = self.read_task_state()
+        step_invocations = self.task_conf["step_invocations"]
+
+        for i in range(step_number, len(step_invocations)):
+
+            step_invocation = step_invocations[i]
+            state_file, step_number = self.transition_to_step_started(state_file, step_number)
+
+            call = step_invocation["call"]
+
+            if call == "python":
+                self.run_python(step_invocation["module_function"], step_invocation.get("container"))
+            elif call == "bash":
+                self.run_script(os.path.expandvars(step_invocation["script"]),
+                           step_invocation.get("container"))
+            else:
+                raise Exception(f"unknown step invocation type: {call}")
+
+            state_file, step_number = self.transition_to_step_completed(state_file, step_number)
+
+        self.transition_to_completed(state_file)
+
+    def launch_task(self, wait_for_completion, exit_process_when_done=True):
+
+        def task_func_wrapper():
+            try:
+                self.load_task_conf_dict()
+                logger.debug("task func started")
+                self._run_steps()
+                logger.info("task completed")
+            except Exception as ex:
+                if not exit_process_when_done:
+                    raise ex
+                logger.exception(ex)
+            finally:
+                if exit_process_when_done:
+                    self._exit_process()
+
+        if wait_for_completion:
+            task_func_wrapper()
+        else:
+            slurm_job_id = os.environ.get("SLURM_JOB_ID")
+            is_slurm = slurm_job_id is not None
+            if (not is_slurm) and os.fork() != 0:
+                # launching process, die to let the child run in the background
+                exit(0)
+            else:
+                # forked child, or slurm job
+                sloc = os.environ['__script_location']
+                if is_slurm:
+                    sloc = _script_location_of_array_task_id_if_applies(sloc)
+                    logger.info("slurm job started, slurm_job_id=%s", slurm_job_id)
+                    with open(os.path.join(sloc, "slurm_job_id"), "w") as f:
+                        f.write(str(os.getpid()))
+                else:
+                    with open(os.path.join(sloc, "pid"), "w") as f:
+                        f.write(str(os.getpid()))
+
+                os.setpgrp()
+                self.register_signal_handlers()
+                Thread(target=task_func_wrapper).start()
+                signal.pause()
+
+    def archive_produced_files(self, task_output_dir, exclusion_glob_patterns):
+
+        archive_tar_name = "drypipe-archive.tar.gz"
+        archive_tar = os.path.join(task_output_dir, archive_tar_name)
+
+        if os.path.exists(archive_tar):
+            return False
+
+        def matches_one_pattern(f_name):
+            for p in exclusion_glob_patterns:
+                if fnmatch.fnmatch(f_name, p):
+                    return True
+
+        def gen_to_archive():
+            with os.scandir(task_output_dir) as files_in_output_dir:
+                for f in files_in_output_dir:
+                    if not (f.name == archive_tar_name or matches_one_pattern(f.name)):
+                        yield f.name
+
+        files_to_archive = list(gen_to_archive())
+
+        to_delete = []
+
+        with tarfile.open(archive_tar, "w:gz") as tar:
+            for f in files_to_archive:
+                f0 = os.path.join(task_output_dir, f)
+                tar.add(f0, arcname=f)
+                to_delete.append(f0)
+
+        for f in to_delete:
+            if os.path.isdir(f):
+                shutil.rmtree(f)
+            else:
+                os.remove(f)
+
+        return True
 
 
 def handle_main():
@@ -851,8 +847,10 @@ def handle_main():
 
     is_run_command = not (is_tail_command or is_ps_command or is_kill_command or is_env)
 
+    task_runner = TaskProcess()
+
     if is_run_command:
-        launch_task(wait_for_completion)
+        task_runner.launch_task(wait_for_completion)
     else:
 
         def quit_command(p1, p2):
@@ -869,7 +867,7 @@ def handle_main():
             _kill_command()
         elif is_env:
             prefix = "export " if is_with_exports else ""
-            for k, v in iterate_task_env():
+            for k, v in task_runner.iterate_task_env():
                 print(f"{prefix}{k}={v}")
         else:
             raise Exception(f"bad args: {sys.argv}")
@@ -985,29 +983,6 @@ def _tail_command():
     with PortablePopen(tail_cmd, stdout=sys.stdout, stderr=sys.stderr, stdin=sys.stdin) as p:
         p.wait()
 
-def _run_steps(task_conf_dict):
-
-    step_number, control_dir, state_file, state_name = read_task_state()
-    step_invocations = task_conf_dict["step_invocations"]
-
-    for i in range(step_number, len(step_invocations)):
-
-        step_invocation = step_invocations[i]
-        state_file, step_number = transition_to_step_started(state_file, step_number)
-
-        call = step_invocation["call"]
-
-        if call == "python":
-            run_python(task_conf_dict, step_invocation["module_function"], step_invocation.get("container"))
-        elif call == "bash":
-            run_script(task_conf_dict, os.path.expandvars(step_invocation["script"]), step_invocation.get("container"))
-        else:
-            raise Exception(f"unknown step invocation type: {call}")
-
-        state_file, step_number = transition_to_step_completed(state_file, step_number)
-
-    transition_to_completed(state_file)
-
 def _script_location_of_array_task_id_if_applies(sloc):
     slurm_array_task_id = os.environ.get("SLURM_ARRAY_TASK_ID")
     if slurm_array_task_id is None:
@@ -1027,54 +1002,6 @@ def _script_location_of_array_task_id_if_applies(sloc):
         msg = f"Error: no task_key for SLURM_ARRAY_TASK_ID={slurm_array_task_id}"
         raise Exception(msg)
 
-
-def launch_task(wait_for_completion, exit_process_when_done=True):
-
-    def task_func_wrapper():
-        try:
-            task_conf_dict = load_task_conf_dict()
-            logger.debug("task func started")
-            _run_steps(task_conf_dict)
-            logger.info("task completed")
-        except Exception as ex:
-            if not exit_process_when_done:
-                raise ex
-            logger.exception(ex)
-        finally:
-            if exit_process_when_done:
-                _exit_process()
-
-    if wait_for_completion:
-        task_func_wrapper()
-    else:
-        slurm_job_id = os.environ.get("SLURM_JOB_ID")
-        is_slurm = slurm_job_id is not None
-        if (not is_slurm) and os.fork() != 0:
-            # launching process, die to let the child run in the background
-            exit(0)
-        else:
-            # forked child, or slurm job
-            sloc = os.environ['__script_location']
-            if is_slurm:
-                sloc = _script_location_of_array_task_id_if_applies(sloc)
-                logger.info("slurm job started, slurm_job_id=%s", slurm_job_id)
-                with open(os.path.join(sloc, "slurm_job_id"), "w") as f:
-                    f.write(str(os.getpid()))
-            else:
-                with open(os.path.join(sloc, "pid"), "w") as f:
-                    f.write(str(os.getpid()))
-
-            os.setpgrp()
-            register_signal_handlers()
-            Thread(target=task_func_wrapper).start()
-            signal.pause()
-
-#def resolve_input_vars(pipeline_instance_dir, task_key):
-#
-#    task_conf = os.path.join(pipeline_instance_dir, ".drypipe", task_key, "task-conf.json")
-#    with open(task_conf) as _task_conf:
-#        for _, k, v in resolve_upstream_and_constant_vars(pipeline_instance_dir, json.loads(_task_conf.read())):
-#            yield k, v
 
 
 def _root_dir(d):
@@ -1193,118 +1120,6 @@ def scancel_all():
 
 def segterm_all():
     pass
-
-def detect_slurm_crashes(user, is_debug):
-
-    pipeline_instance_dir = os.path.dirname(os.path.dirname(sys.argv[0]))
-    pid_base = os.path.basename(pipeline_instance_dir)
-
-    janitor_logger = create_remote_janitor_logger(pipeline_instance_dir, "zombie-detector", is_debug)
-
-    def iterate_all_expected_job_names_and_info():
-
-        for state_file in glob.glob(os.path.join(pipeline_instance_dir, ".drypipe", "*", "state.*")):
-
-            control_dir = os.path.dirname(state_file)
-            state = os.path.basename(state_file).split(".")[1]
-
-            if state not in ["launched", "scheduled", "step-started"]:
-                continue
-
-            if not os.path.exists(os.path.join(control_dir, "slurm_job_id")):
-                continue
-
-            task_key = os.path.basename(control_dir)
-
-            yield f"{task_key}-{pid_base}", control_dir, state_file
-
-    all_expected_job_names_and_info = list(iterate_all_expected_job_names_and_info())
-
-    if len(all_expected_job_names_and_info) == 0:
-        janitor_logger.debug("no expected slurm jobs at this time")
-        return
-
-    job_names_to_info = {
-        job_name: (control_dir, state_file)
-        for job_name, control_dir, state_file in all_expected_job_names_and_info
-    }
-
-    potential_slurm_zombies_names = job_names_to_info.keys()
-
-    squeue_cmd = ['squeue', '--noheader', "--format=%j", f"--user={user}"]
-    with PortablePopen(squeue_cmd) as p:
-        p.wait_and_raise_if_non_zero()
-        stdout = p.stdout_as_string()
-        running_job_names = set([
-            s
-            for s in [s0.strip() for s0 in stdout.split("\n")]
-            if s != ""
-        ])
-        janitor_logger.debug("%s returned jobs: %s", " ".join(squeue_cmd), running_job_names)
-
-        for job_name in potential_slurm_zombies_names:
-            if job_name not in running_job_names:
-
-                control_dir, state_file = job_names_to_info[job_name]
-
-                # prevent race condition
-                if not os.path.exists(state_file):
-                    janitor_logger.info("race condition detected for %s", state_file)
-                    continue
-
-                janitor_logger.debug("zombie job %s detected, in %s:", job_name, state_file)
-
-                task_logger = create_task_logger(control_dir)
-
-                try:
-                    step_number, control_dir, state_file, state_name = read_task_state(control_dir)
-                    _transition_state_file(state_file, "crashed", step_number, this_logger=task_logger)
-                    print(f"WARNING: zombie slurm job_id={job_name} detected, in {control_dir}")
-                except FileNotFoundError as ex:
-                    janitor_logger.info(f"race condition encountered on %s", state_file)
-
-def detect_process_crashes():
-
-    def _scan_control_dirs(pipeline_instance_dir, filename):
-        for f in glob.glob(os.path.join(pipeline_instance_dir, ".drypipe", "*", filename)):
-            control_dir = os.path.dirname(f)
-            state_file = list(glob.glob(os.path.join(control_dir, "state.*")))
-            if len(state_file) == 0:
-                continue
-            with open(f) as _f:
-                slurm_job_id_or_pid = _f.read().strip()
-                if len(state_file) == 0:
-                    yield slurm_job_id_or_pid, None, None, None
-                else:
-                    state = os.path.basename(state_file[0]).split(".")[1]
-                    yield slurm_job_id_or_pid, state, control_dir, state_file[0]
-
-    pipeline_instance_dir = os.path.dirname(os.path.dirname(sys.argv[0]))
-
-    potential_process_zombies = {
-        pid: (state, control_dir, state_file)
-        for pid, state, control_dir, state_file in _scan_control_dirs(pipeline_instance_dir, "pid")
-        if state in ["launched", "scheduled", "step-started"]
-    }
-
-    potential_zombies_pids = potential_process_zombies.keys()
-
-    if len(potential_zombies_pids) > 0:
-        pids = ','.join(potential_zombies_pids)
-        with PortablePopen(["ps", f"--pid={pids}", "o", "pid", "--no-header"]) as p:
-            p.wait_and_raise_if_non_zero()
-            running_pids = set(p.stdout_as_string().split("\n"))
-            crashed_pids = set(pids) - running_pids
-
-            for pid in crashed_pids:
-                state, control_dir, state_file = potential_process_zombies[pid]
-
-                task_logger = create_task_logger(control_dir)
-
-                step_number, control_dir, state_file, state_name = read_task_state()
-                _transition_state_file(state_file, "crashed", step_number, this_logger=task_logger)
-
-                print(f"WARNING: zombie tasks detected, pid: {pid}")
 
 
 def handle_script_lib_main():
@@ -1509,3 +1324,60 @@ class TaskOutput:
             raise Exception(f"Task output {self.name} is not of type file, actual type is: {self.type} ")
 
         return self._resolved_value
+
+def launch_task_from_remote(task_key, is_slurm, wait_for_completion, drypipe_task_debug):
+
+    pipeline_instance_dir = os.path.dirname(os.path.dirname(sys.argv[0]))
+
+    control_dir = os.path.join(pipeline_instance_dir, '.drypipe', task_key)
+
+    if drypipe_task_debug:
+        os.environ["DRYPIPE_TASK_DEBUG"] = "True"
+
+    logger = create_task_logger(control_dir)
+
+    out_sigs_dir = os.path.join(control_dir, 'out_sigs')
+    touch(os.path.join(control_dir, 'output_vars'))
+
+    work_dir = os.path.join(pipeline_instance_dir, 'output', task_key)
+    scratch_dir = os.path.join(work_dir, "scratch")
+
+    for d in [work_dir, out_sigs_dir, scratch_dir]:
+        Path(d).mkdir(exist_ok=True, parents=True, mode=FileCreationDefaultModes.pipeline_instance_directories)
+
+    for state_file in glob.glob(os.path.join(control_dir, "state.*")):
+        os.remove(state_file)
+
+    touch(os.path.join(control_dir, 'state.launched.0'))
+
+    _delete_pid_and_slurm_job_id(control_dir)
+
+    env = os.environ
+
+    if is_slurm:
+        cmd = os.path.join(control_dir, 'sbatch-launcher.sh')
+        if wait_for_completion:
+            env = {**env, "SBATCH_EXTRA_ARGS": "--wait", "DRYPIPE_TASK_DEBUG": str(drypipe_task_debug)}
+            cmd = ["bash", "-c", cmd]
+    else:
+        if wait_for_completion:
+            back_ground = ""
+        else:
+            back_ground = "&"
+        scr = os.path.join(control_dir, 'task')
+        cmd = ["nohup", "bash", "-c", f"python3 {scr} {back_ground}"]
+
+    logger.info("launching from remote: %s", ' '.join(cmd) if isinstance(cmd, list) else cmd)
+
+    with open(os.path.join(control_dir, 'out.log'), 'w') as out:
+        with open(os.path.join(control_dir, 'err.log'), 'w') as err:
+            with PortablePopen(
+                cmd,
+                stdout=out,
+                stderr=err,
+                env=env
+            ) as p:
+                p.wait()
+                if p.popen.returncode != 0:
+                    logger.error(f"remote task launch failed: %s", sys.argv)
+                print(str(p.popen.returncode))
