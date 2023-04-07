@@ -12,7 +12,7 @@ from dry_pipe.task import TaskOutputs, TaskInputs
 # TODO: rename to TaskState
 class StateFile:
 
-    def __init__(self, task_key, current_hash_code, tracker, path=None):
+    def __init__(self, task_key, current_hash_code, tracker, path=None, slurm_array_id=None):
         self.tracker = tracker
         self.task_key = task_key
         if path is not None:
@@ -23,6 +23,8 @@ class StateFile:
         self.inputs = None
         self.outputs = None
         self.is_slurm_array_child = False
+        if slurm_array_id is not None:
+            self.slurm_array_id = slurm_array_id
 
     def __str__(self):
         return f"/{self.task_key}/{os.path.basename(self.path)}"
@@ -121,7 +123,7 @@ class StateFileTracker:
             if state_file.is_completed():
                 yield k
 
-    def all_tasks(self):
+    def all_state_files(self):
         return self.state_files_in_memory.values()
 
     def lookup_state_file_from_memory(self, task_key):
@@ -136,6 +138,14 @@ class StateFileTracker:
         except FileNotFoundError:
             pass
         return None
+
+    def load_state_file(self, task_key, slurm_array_id=None):
+        file = self._find_state_file_in_task_control_dir(task_key)
+        if file is None:
+            raise Exception(f"no state file exists in {os.path.join(self.pipeline_work_dir, task_key)}")
+        state_file = StateFile(task_key, None, self, path=file, slurm_array_id=slurm_array_id)
+        self.state_files_in_memory[task_key] = state_file
+        return state_file
 
     def fetch_true_state_and_update_memory_if_changed(self, task_key):
         state_file = self.lookup_state_file_from_memory(task_key)
@@ -385,7 +395,7 @@ class StateMachine:
         query_all_matches_count = 0
         query_with_required_state_matches = []
 
-        for state_file in self.state_file_tracker.all_tasks():
+        for state_file in self.state_file_tracker.all_state_files():
             if fnmatch.fnmatch(state_file.task_key, glob_expression):
                 query_all_matches_count += 1
                 if is_required_state(state_file):
