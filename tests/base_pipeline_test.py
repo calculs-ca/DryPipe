@@ -33,18 +33,8 @@ class BasePipelineTest(TestWithDirectorySandbox):
 
         self.assertFalse(state_file.is_completed())
         env_copy = os.environ.copy()
-        try:
-            os.environ["__script_location"] = os.path.join(
-                state_file.tracker.pipeline_work_dir,
-                state_file.task_key
-            )
-            r = TaskProcess()
-            r.launch_task(wait_for_completion=True, exit_process_when_done=False)
-        finally:
-            os.environ.clear()
-            for k, v in env_copy.items():
-                os.environ[k] = v
-            self.assertEqual(os.environ.copy(), env_copy)
+        TaskProcess(state_file.control_dir()).launch_task(wait_for_completion=True, exit_process_when_done=False)
+        self.assertEqual(os.environ, env_copy)
 
 
     def run_pipeline(self, queue_only_pattern=None):

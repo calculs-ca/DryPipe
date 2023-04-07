@@ -208,8 +208,9 @@ class UpstreamTasksNotCompleted(Exception):
 
 class TaskProcess:
 
-    def __init__(self, task_conf=None):
-        self.task_conf = task_conf
+    def __init__(self, control_dir):
+        self.control_dir = control_dir
+        self.task_conf = None
 
     def _exit_process(self):
         self._delete_pid_and_slurm_job_id()
@@ -217,7 +218,7 @@ class TaskProcess:
         os._exit(0)
 
     def resolve_task_env(self):
-        script_location = os.environ["__script_location"]
+        script_location = self.control_dir
         with open(os.path.join(script_location, "task-conf.json")) as _task_conf:
             self.task_conf = json.loads(_task_conf.read())
 
@@ -244,7 +245,7 @@ class TaskProcess:
                             if v.startswith("/"):
                                 v = v[1:]
                             new_v = os.path.join(file_cache, v)
-                            os.environ[k] = new_v
+                            self.env[k] = new_v
                             logger.debug("override var '%s' -> '%s'", k, new_v)
 
             #override_deps("external-deps.txt", "shared")
@@ -257,7 +258,7 @@ class TaskProcess:
     def set_generic_task_env(self):
         self.env = {}
 
-        for k, v in self.iterate_task_env(self.task_conf):
+        for k, v in self.iterate_task_env():
             v = str(v)
             logger.debug("env var %s = %s", k, v)
             self.env[k] = v
@@ -312,17 +313,11 @@ class TaskProcess:
                     var_name, value = line.split("=")
                     yield var_name.strip(), value.strip()
 
-    def iterate_task_env(self, task_conf_as_json=None, control_dir=None):
+    def iterate_task_env(self):
 
-        if control_dir is None:
-            control_dir = os.environ["__script_location"]
 
-        if task_conf_as_json is None:
-            with open(os.path.join(control_dir, "task-conf.json")) as _task_conf:
-                task_conf_as_json = json.loads(_task_conf.read())
-
-        pipeline_instance_dir = os.path.dirname(os.path.dirname(control_dir))
-        task_key = os.path.basename(control_dir)
+        pipeline_instance_dir = os.path.dirname(os.path.dirname(self.control_dir))
+        task_key = os.path.basename(self.control_dir)
 
         pipeline_conf = Path(pipeline_instance_dir, ".drypipe", "conf.json")
         if os.path.exists(pipeline_conf):
@@ -344,20 +339,20 @@ class TaskProcess:
 
         yield "__pipeline_instance_dir", pipeline_instance_dir
         yield "__pipeline_instance_name", os.path.basename(pipeline_instance_dir)
-        yield "__control_dir", control_dir
+        yield "__control_dir", self.control_dir
         yield "__task_key", task_key
         task_output_dir = os.path.join(pipeline_instance_dir, "output", task_key)
         yield "__task_output_dir", task_output_dir
         yield "__scratch_dir", os.path.join(task_output_dir, "scratch")
-        yield "__output_var_file", os.path.join(control_dir, "output_vars")
-        yield "__out_log", os.path.join(control_dir, "out.log")
-        yield "__err_log", os.path.join(control_dir, "err.log")
-        if task_conf_as_json.get("ssh_specs") is not None:
+        yield "__output_var_file", os.path.join(self.control_dir, "output_vars")
+        yield "__out_log", os.path.join(self.control_dir, "out.log")
+        yield "__err_log", os.path.join(self.control_dir, "err.log")
+        if self.task_conf.get("ssh_specs") is not None:
             yield "__is_remote", "True"
         else:
             yield "__is_remote", "False"
 
-        container = task_conf_as_json.get("container")
+        container = self.task_conf.get("container")
         if container is not None and container != "":
             yield "__is_singularity", "True"
         else:
@@ -365,17 +360,17 @@ class TaskProcess:
 
         logger.debug("extra_env vars from task-conf.json")
 
-        extra_env = task_conf_as_json["extra_env"]
+        extra_env = self.task_conf["extra_env"]
         if extra_env is not None:
             for k, v in extra_env.items():
                 yield k, os.path.expandvars(v)
 
         logger.debug("resolved and constant input vars")
-        for _, k, v in self.resolve_upstream_and_constant_vars(pipeline_instance_dir, task_conf_as_json):
+        for _, k, v in self.resolve_upstream_and_constant_vars(pipeline_instance_dir, self.task_conf):
             yield k, v
 
         logger.debug("file output vars")
-        for _, k, f in self.iterate_file_task_outputs(task_conf_as_json, task_output_dir):
+        for _, k, f in self.iterate_file_task_outputs(self.task_conf, task_output_dir):
             yield k, f
 
 
@@ -511,7 +506,6 @@ class TaskProcess:
             out = p.stdout_as_string()
             env = json.loads(out)
             for k, v in env.items():
-                #os.environ[k] = v
                 self.env[k] = v
 
     def read_task_state(self, control_dir=None, state_file=None):
@@ -861,7 +855,7 @@ def handle_main():
 
     is_run_command = not (is_tail_command or is_ps_command or is_kill_command or is_env)
 
-    task_runner = TaskProcess()
+    task_runner = TaskProcess(os.environ["__script_location"])
 
     if is_run_command:
         task_runner.launch_task(wait_for_completion)
@@ -1030,35 +1024,6 @@ def _fs_type(file):
         p.wait_and_raise_if_non_zero()
         return p.stdout_as_string().strip()
 
-
-def set_singularity_bindings():
-
-    def root_dir(d):
-        p = Path(d)
-        return os.path.join(p.parts[0], p.parts[1])
-
-    pipeline_code_dir = os.environ['__pipeline_code_dir']
-    root_of_pipeline_code_dir = root_dir(pipeline_code_dir)
-    stat_cmd = f"stat -f -L -c %T {root_of_pipeline_code_dir}"
-    with PortablePopen(stat_cmd.split()) as p:
-        p.wait_and_raise_if_non_zero()
-        fs_type = p.stdout_as_string()
-
-        bind_list = []
-
-        if fs_type in ["autofs", "nfs", "zfs"]:
-            bind_list.append(f"{root_of_pipeline_code_dir}:{root_of_pipeline_code_dir}")
-
-        if os.environ.get("__is_slurm"):
-            scratch_dir = os.environ.get("__scratch_dir")
-            root_of_scratch_dir = root_dir(scratch_dir)
-            bind_list.append(f"{root_of_scratch_dir}:{root_of_scratch_dir}")
-
-        prev_apptainer_bind = os.environ.get(APPTAINER_BIND)
-        if prev_apptainer_bind is not None:
-            bind_list.append(prev_apptainer_bind)
-
-        os.environ['APPTAINER_BIND'] = ",".join(bind_list)
 
 def _rsync_error_codes(code):
     """

@@ -212,8 +212,8 @@ class StateFileTracker:
 
             pod = self.pipeline_output_dir
 
-            task_conf = state_file.load_task_conf_json()
-            task_runner = TaskProcess(task_conf)
+            task_runner = TaskProcess(task_control_dir)
+            task_runner.resolve_task_env()
 
             class Task:
                 def __init__(self):
@@ -223,7 +223,7 @@ class StateFileTracker:
                     task_outputs = {}
                     unparsed_out_vars = dict(task_runner.iterate_out_vars_from(var_file))
 
-                    for o in task_conf["outputs"]:
+                    for o in task_runner.task_conf["outputs"]:
                         o = TaskOutput.from_json(o)
                         if o.type != 'file':
                             v = unparsed_out_vars.get(o.name)
@@ -240,8 +240,8 @@ class StateFileTracker:
                 def __str__(self):
                     return f"Task(key={self.key})"
 
-                def task_conf_json(self):
-                    return task_conf
+                #def task_conf_json(self):
+                #    return state_file.load_task_conf_json()
 
                 def is_completed(self):
                     return state_file.is_completed()
