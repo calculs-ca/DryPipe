@@ -216,7 +216,7 @@ class TaskProcess:
         logging.shutdown()
         os._exit(0)
 
-    def load_task_conf_dict(self):
+    def resolve_task_env(self):
         script_location = os.environ["__script_location"]
         with open(os.path.join(script_location, "task-conf.json")) as _task_conf:
             self.task_conf = json.loads(_task_conf.read())
@@ -229,7 +229,7 @@ class TaskProcess:
                 self.exec_cmd_before_launch(command_before_task)
 
             def override_deps(dep_file, bucket):
-                dep_file = os.path.join(os.path.join(os.environ["__control_dir"], dep_file))
+                dep_file = os.path.join(os.path.join(script_location, dep_file))
                 if not os.path.exists(dep_file):
                     return
 
@@ -247,18 +247,20 @@ class TaskProcess:
                             os.environ[k] = new_v
                             logger.debug("override var '%s' -> '%s'", k, new_v)
 
-            override_deps("external-deps.txt", "shared")
-            override_deps("external-deps-pipeline-instance.txt", os.environ["__pipeline_instance_name"])
+            #override_deps("external-deps.txt", "shared")
+            #override_deps("external-deps-pipeline-instance.txt", os.environ["__pipeline_instance_name"])
 
             #for k, v in resolve_upstream_vars(task_conf_as_json):
             #    if v is not None:
             #        os.environ[k] = v
 
     def set_generic_task_env(self):
+        self.env = {}
+
         for k, v in self.iterate_task_env(self.task_conf):
             v = str(v)
             logger.debug("env var %s = %s", k, v)
-            os.environ[k] = v
+            self.env[k] = v
 
     def resolve_upstream_and_constant_vars(
             self, pipeline_instance_dir, task_conf_as_json, log_error_if_upstream_task_not_completed=True
@@ -301,7 +303,9 @@ class TaskProcess:
                 else:
                     yield i, i.name, os.path.join(pipeline_instance_dir, i.file_name)
 
-    def iterate_out_vars_from(self, file):
+    def iterate_out_vars_from(self, file=None):
+        if file is None:
+            file = self.env["__output_var_file"]
         if os.path.exists(file):
             with open(file) as f:
                 for line in f.readlines():
@@ -401,7 +405,7 @@ class TaskProcess:
                 self.resolve_container_path(container)
             ] + cmd
 
-        env = {**os.environ}
+        env = self.env
 
         if os.environ.get("__is_slurm"):
             env['__scratch_dir'] = os.environ['SLURM_TMPDIR']
@@ -410,9 +414,9 @@ class TaskProcess:
 
         logger.info("run_python: %s", ' '.join(cmd))
 
-        with open(os.environ['__out_log'], 'a') as out:
-            with open(os.environ['__err_log'], 'a') as err:
-                with PortablePopen(cmd, stdout=out, stderr=err) as p:
+        with open(env['__out_log'], 'a') as out:
+            with open(env['__err_log'], 'a') as err:
+                with PortablePopen(cmd, stdout=out, stderr=err, env={** os.environ, ** env}) as p:
                     try:
                         p.wait()
                         has_failed = p.popen.returncode != 0
@@ -507,12 +511,13 @@ class TaskProcess:
             out = p.stdout_as_string()
             env = json.loads(out)
             for k, v in env.items():
-                os.environ[k] = v
+                #os.environ[k] = v
+                self.env[k] = v
 
     def read_task_state(self, control_dir=None, state_file=None):
 
         if control_dir is None:
-            control_dir = os.environ["__control_dir"]
+            control_dir = self.env["__control_dir"]
 
         if state_file is None:
             glob_exp = os.path.join(control_dir, "state.*")
@@ -625,17 +630,21 @@ class TaskProcess:
             f"{k}={v}" for k, v in out_vars.items()
         ]
 
-        with open(os.environ["__output_var_file"], "w") as f:
+        output_vars = os.environ.get("__output_var_file")
+        if output_vars is None:
+            output_vars = self.env["__output_var_file"]
+
+        with open(output_vars, "w") as f:
             f.write("\n".join(all_vars))
 
         logger.info("out vars written: %s", ",".join(all_vars))
 
     def resolve_container_path(self, container):
 
-        containers_dir = os.environ.get('__containers_dir')
+        containers_dir = self.env.get('__containers_dir')
 
         if containers_dir is None:
-            containers_dir = os.path.join(os.environ["__pipeline_code_dir"], "containers")
+            containers_dir = os.path.join(self.env["__pipeline_code_dir"], "containers")
 
         if os.path.isabs(container):
             if os.path.exists(container):
@@ -654,11 +663,16 @@ class TaskProcess:
 
     def run_script(self, script, container=None):
 
-        env = {**os.environ}
+        env = self.env
+
+        script = os.path.join(
+            self.env["__control_dir"],
+            os.path.basename(script)
+        )
 
         dump_env = f'python3 -c "import os, json; print(json.dumps(dict(os.environ)))"'
-        out = os.environ['__out_log']
-        err = os.environ['__err_log']
+        out = env['__out_log']
+        err = env['__err_log']
 
         cmd = ["bash", "-c", f". {script} 1>> {out} 2>> {err} ; {dump_env}"]
 
@@ -705,13 +719,13 @@ class TaskProcess:
         has_failed = False
         try:
 
-            with PortablePopen(cmd, env=env) as p:
+            with PortablePopen(cmd, env={** os.environ, ** env}) as p:
                 p.wait_and_raise_if_non_zero()
                 out = p.stdout_as_string()
                 step_output_vars = json.loads(out)
-                task_output_vars = dict(self.iterate_out_vars_from(os.environ["__output_var_file"]))
+                task_output_vars = dict(self.iterate_out_vars_from())
 
-                with open(os.path.join(os.environ["__control_dir"], "task-conf.json")) as _task_conf:
+                with open(os.path.join(env["__control_dir"], "task-conf.json")) as _task_conf:
                     task_conf_as_json = json.loads(_task_conf.read())
                     for o in task_conf_as_json["outputs"]:
                         o = TaskOutput.from_json(o)
@@ -720,7 +734,7 @@ class TaskProcess:
                             logger.debug("script exported output var %s = %s", o.name, v)
                             task_output_vars[o.name] = v
                             if v is not None:
-                                os.environ[o.name] = v
+                                self.env[o.name] = v
 
                 self.write_out_vars(task_output_vars)
 
@@ -762,7 +776,7 @@ class TaskProcess:
 
         def task_func_wrapper():
             try:
-                self.load_task_conf_dict()
+                self.resolve_task_env()
                 logger.debug("task func started")
                 self._run_steps()
                 logger.info("task completed")

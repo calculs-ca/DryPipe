@@ -718,6 +718,8 @@ def call(ctx, mod_func, task_env):
 
         task_runner = TaskProcess(tc_json)
 
+        #task_runner.resolve_task_env()
+
         for task_input, k, v in task_runner.resolve_upstream_and_constant_vars(os.environ["__pipeline_instance_dir"], tc_json, control_dir):
             inputs_by_name[k] = task_input.parse(v)
 
@@ -772,7 +774,7 @@ def call(ctx, mod_func, task_env):
 
     try:
         out_vars = python_task.func(* args, ** kwargs)
-    except Exception as ex:
+    except Exception:
         traceback.print_exc()
         logging.shutdown()
         exit(1)
