@@ -33,7 +33,7 @@ class BasePipelineTest(TestWithDirectorySandbox):
 
         self.assertFalse(state_file.is_completed())
         env_copy = os.environ.copy()
-        TaskProcess(state_file.control_dir()).launch_task(wait_for_completion=True, exit_process_when_done=False)
+        TaskProcess.run(state_file.control_dir(), as_subprocess=False, wait_for_completion=True)
         self.assertEqual(os.environ, env_copy)
 
 
@@ -42,20 +42,21 @@ class BasePipelineTest(TestWithDirectorySandbox):
         pipeline = Pipeline(lambda dsl: self.dag_gen(dsl), pipeline_code_dir=self.pipeline_code_dir)
         pipeline_instance = pipeline.create_pipeline_instance(self.pipeline_instance_dir)
 
-        if self.launches_tasks_in_process():
-            executer_func = lambda state_file: self.launch_task_in_current_process(state_file)
-        else:
-            executer_func = None
-
         if self.is_fail_test():
-            pipeline_instance.run_sync(sleep=0, executer_func=executer_func, queue_only_pattern=queue_only_pattern)
+            pipeline_instance.run_sync(
+                sleep=0,
+                queue_only_pattern=queue_only_pattern,
+                run_tasks_in_process=self.launches_tasks_in_process()
+            )
             tasks_by_keys = {
                 t.key: t
                 for t in pipeline_instance.query("*", include_incomplete_tasks=True)
             }
         else:
             tasks_by_keys = pipeline_instance.run_sync(
-                sleep=0, executer_func=executer_func, queue_only_pattern=queue_only_pattern
+                sleep=0,
+                queue_only_pattern=queue_only_pattern,
+                run_tasks_in_process=self.launches_tasks_in_process()
             )
 
         self.validate(tasks_by_keys)

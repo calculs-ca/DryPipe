@@ -261,14 +261,14 @@ class PipelineInstance:
     def get_state(self, create_if_not_exists=False):
         return PipelineState.from_pipeline_work_dir(self.state_file_tracker.pipeline_work_dir, create_if_not_exists)
 
-    def run_sync(self, queue_only_pattern=None, fail_silently=True, sleep=1, executer_func=None):
+    def run_sync(self, queue_only_pattern=None, fail_silently=True, sleep=1, run_tasks_in_process=True):
 
         state_machine = StateMachine(
             self.state_file_tracker,
             lambda dsl: self.pipeline.task_generator(dsl),
             queue_only_pattern=queue_only_pattern
         )
-        pr = PipelineRunner(state_machine, executer_func=executer_func)
+        pr = PipelineRunner(state_machine, run_tasks_in_process=run_tasks_in_process)
         pr.run_sync(fail_silently=fail_silently, sleep=sleep)
 
         tasks_by_keys = {

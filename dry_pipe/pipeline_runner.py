@@ -5,16 +5,17 @@ from queue import SimpleQueue
 import time
 from threading import Thread
 
+from dry_pipe.script_lib import TaskProcess
 from dry_pipe.state_machine import AllRunnableTasksCompletedOrInError
 
 
 class PipelineRunner:
 
-    def __init__(self, *state_machines, executer_func=None):
+    def __init__(self, *state_machines, run_tasks_in_process=False):
         self.state_machines = state_machines
         self._shutdown_requested = False
         self.running_status = "idle"
-        self.executer_func = executer_func
+        self.run_tasks_in_process = run_tasks_in_process
 
     def run_sync(self, sleep=1, fail_silently=True):
         for state_machine in self.state_machines:
@@ -22,12 +23,11 @@ class PipelineRunner:
                 while True:
                     c = 0
                     for state_file in state_machine.iterate_tasks_to_launch():
-                        if self.executer_func is not None:
-                            self.executer_func(state_file)
-                        else:
-                            task_conf = state_file.load_task_conf()
-                            e = task_conf.create_executer()
-                            e.execute(os.path.join(state_file.control_dir(), "task"), None, wait_for_completion=True)
+                        TaskProcess.run(
+                            state_file.control_dir(),
+                            as_subprocess=not self.run_tasks_in_process,
+                            wait_for_completion=True
+                        )
                         c += 1
                     if c > 2:
                         time.sleep(sleep)

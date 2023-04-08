@@ -208,6 +208,31 @@ class UpstreamTasksNotCompleted(Exception):
 
 class TaskProcess:
 
+    @staticmethod
+    def run(control_dir, as_subprocess=True, wait_for_completion=False):
+
+        if not as_subprocess:
+            TaskProcess(control_dir).launch_task(wait_for_completion, exit_process_when_done=False)
+        else:
+            task_script = os.path.join(control_dir, "task")
+            if wait_for_completion:
+                cmd = [task_script, "--wait"]
+            else:
+                cmd = [task_script]
+
+            logger.debug("will launch task %s", ' '.join(cmd))
+
+            with PortablePopen(
+                    cmd,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL
+            ) as p:
+                p.wait()
+                if p.popen.returncode != 0:
+                    logger.warning("task ended with non zero code: %s", p.popen.returncode)
+                else:
+                    logger.debug("task ended with returncode: %s", p.popen.returncode)
+
     def __init__(self, control_dir):
         self.control_dir = control_dir
         self.task_conf = None
