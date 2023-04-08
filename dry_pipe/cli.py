@@ -8,20 +8,13 @@ import pathlib
 import re
 import shutil
 import signal
-import sys
 import os
-import time
-import traceback
 
 import click
 from dry_pipe import DryPipe, Task
 from dry_pipe.internals import PythonCall
-from dry_pipe.janitors import Janitor
-from dry_pipe.monitoring import fetch_task_groups_stats
 from dry_pipe.pipeline import PipelineInstance, Pipeline
-from dry_pipe.pipeline_state import PipelineState
-from dry_pipe.script_lib import create_task_logger, FileCreationDefaultModes, TaskOutput, TaskProcess
-from dry_pipe.task_state import TaskState
+from dry_pipe.script_lib import FileCreationDefaultModes, TaskProcess
 
 logger = logging.getLogger(__name__)
 
@@ -275,12 +268,6 @@ def run(
     if not os.path.isabs(instance_dir):
         instance_dir = os.path.abspath(os.path.expanduser(os.path.expandvars(instance_dir)))
 
-    if PipelineState.from_pipeline_instance_dir(instance_dir, none_if_not_exists=True) is None:
-        if not no_confirm:
-            if not click.confirm(f"no pipeline instance exists in {instance_dir}, do you want to create one ?"):
-                click.echo("no pipeline instance created, exiting.")
-                return
-
     pipeline_instance = _pipeline_instance_creater(instance_dir, pipeline_mod_func, env)()
 
     if clean:
@@ -311,16 +298,6 @@ def run(
                         task.re_queue()
                     elif restart_killed and task_state.is_killed():
                         task.re_queue()
-
-    janitor = Janitor(
-        pipeline_instance=pipeline_instance,
-        min_sleep=0,
-        max_sleep=5,
-        queue_only=queue_only
-    )
-
-    janitor.start()
-    janitor.start_remote_janitors()
 
     if headless:
         def _sigint(p1, p2):
@@ -575,26 +552,7 @@ def watch(ctx, instances_dir_to_pipelines, env):
 
     _configure_logging(None)
 
-    janitor = Janitor(
-        pipeline_instances_iterator=Pipeline.pipeline_instances_iterator({
-            k: v
-            for k, v, _ in _parse_instances_dir_to_pipelines(instances_dir_to_pipelines, env)
-        })
-    )
-
-    janitor.start()
-
-    janitor.start_remote_janitors()
-
-    def _sigterm(p1, p2):
-        logger.info("received SIGTERM")
-        janitor.request_shutdown()
-        logging.shutdown()
-        time.sleep(3)
-        os._exit(0)
-
-    signal.signal(signal.SIGTERM, _sigterm)
-    signal.pause()
+    raise NotImplementedError()
 
 
 

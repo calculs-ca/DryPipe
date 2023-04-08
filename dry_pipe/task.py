@@ -6,7 +6,6 @@ import textwrap
 
 from dry_pipe.script_lib import FileCreationDefaultModes
 from dry_pipe import bash_shebang
-from dry_pipe.internals import ValidationError
 
 from dry_pipe.script_lib import task_script_header
 

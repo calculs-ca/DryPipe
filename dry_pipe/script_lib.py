@@ -631,8 +631,8 @@ class TaskProcess:
 
         logger.info("will execute 'command_before_task': %s", command_before_task)
 
-        out = os.environ['__out_log']
-        err = os.environ['__err_log']
+        out = self.env['__out_log']
+        err = self.env['__err_log']
 
         with PortablePopen([
             '/bin/bash', '-c', f"{command_before_task} 1>> {out} 2>> {err} && {dump_with_python_script}"
@@ -669,14 +669,6 @@ class TaskProcess:
             step_number = 0
 
         return step_number, control_dir, state_file, state_name
-
-
-    def touch(fname):
-        if os.path.exists(fname):
-            os.utime(fname, None)
-        else:
-            open(fname, 'a').close()
-
 
     def _append_to_history(self, control_dir, state_name, step_number=None):
         with open(os.path.join(control_dir, "history.tsv"), "a") as f:

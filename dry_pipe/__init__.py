@@ -1,24 +1,18 @@
 import collections
-import glob
 import inspect
 import json
 import os
 import re
 import sys
-import tempfile
 import textwrap
 from fnmatch import fnmatch
 from pathlib import Path
 
 from dry_pipe.script_lib import PortablePopen, parse_ssh_specs, invoke_rsync, TaskInput, TaskOutput
 from dry_pipe.utils import bash_shebang
-from dry_pipe.internals import \
-    Executor, Local, PreExistingFile, IndeterminateFile, ProducedFile, \
-    Slurm, IncompleteVar, Val, OutputVar, \
-    ValidationError, FileSet, PythonCall, Wait, SubPipeline
+from dry_pipe.internals import PythonCall, SubPipeline
 
 from dry_pipe.task import Task, TaskStep
-from dry_pipe.task_state import TaskState
 
 
 class DryPipe:
@@ -104,102 +98,8 @@ class DryPipe:
 
     @staticmethod
     def load_pipeline(pipeline_instance_dir):
-        from dry_pipe.pipeline import RehydratedPipelineInstance
-        return RehydratedPipelineInstance(pipeline_instance_dir)
+        raise NotImplementedError()
 
-
-class TaskSetAccessor:
-
-    def __init__(self, task_match_all, product_var):
-        self.task_match_all = task_match_all
-        self.product_var = product_var
-
-    def as_glob_expression(self):
-        return Val(
-            os.path.join(
-                "$__pipeline_instance_dir",
-                "output",
-                self.task_match_all.task_match.pattern,
-                self.product_var.file_path
-            ),
-            is_glob_expression=True
-        )
-
-    def fetch(self):
-        return [
-            task.out.__getattr__(self.product_var.name).fetch()
-            for task in self.task_match_all.task_match.tasks
-        ]
-
-
-class TaskMatchAll:
-    def __init__(self, task_match):
-        self.task_match = task_match
-
-    def __getattr__(self, name):
-        task = self.task_match.tasks[0]
-        product_var = task.out.__getattr__(name)
-        if product_var is None:
-            raise Exception(f"task {task}, does not produce '{product_var}'")
-
-        return TaskSetAccessor(self, product_var)
-
-
-class TaskMatch:
-    def __init__(self, pattern, tasks, pipeline_instance=None):
-        self.pattern = pattern
-        self.tasks = tasks
-        self.tasks_by_key = {t.key: t for t in tasks}
-        self.all = TaskMatchAll(self)
-        self.pipeline_instance = pipeline_instance
-
-    def __iter__(self):
-        if len(self.tasks) == 0:
-            yield from ()
-        else:
-            yield self
-
-    def single(self):
-        if len(self.tasks) != 1:
-            raise Exception(f"query({self.pattern}).single() expected 1 matching task, got {len(self.tasks)}")
-        return self.tasks[0]
-
-    def single_or_none(self):
-        if len(self.tasks) > 1:
-            raise Exception(
-                f"query({self.pattern}).single_or_none() expected 0 or 1 matching task, got {len(self.tasks)}"
-            )
-        if len(self.tasks) == 1:
-            return self.tasks[0]
-        return None
-
-    def rsync_tasks(self, dst_pipeline_instance_dir, tmp_file_list=None):
-
-        def go(file_list):
-            with open(file_list, "w") as _file_list:
-                for task in self.tasks:
-                    def write_file(f):
-                        _file_list.write(f"{f}\n")
-
-                    for f in glob.glob(os.path.join(task.control_dir_relative_to_pid(), "*")):
-                        write_file(f)
-
-                    for o in task.outputs:
-                        if o.type == "file":
-                            write_file(os.path.join(task.work_dir(), o.produced_file_name))
-
-            src = self.pipeline_instance.pipeline_instance_dir
-
-            cmd = f"rsync -caRz --partial --recursive --files-from={file_list} " + \
-                f"{src}/ {dst_pipeline_instance_dir}"
-
-            invoke_rsync(cmd)
-
-        if tmp_file_list is None:
-            with tempfile.NamedTemporaryFile() as file_list:
-                go(file_list)
-        else:
-            go(tmp_file_list)
 
 
 class DryPipeDsl:
@@ -224,167 +124,6 @@ class DryPipeDsl:
         :return: an instance of SubPipeline, must be yielded
         """
         return SubPipeline(pipeline, namespace_prefix, self)
-
-    def query(self, task_key_pattern, external_pipeline_instance_dir):
-        pi = DryPipe.load_pipeline(external_pipeline_instance_dir)
-        return pi.query(task_key_pattern)
-
-    def wait_for_matching_tasks(self, *patterns):
-        """
-
-        :param patterns: one or more [glob pattern](https://docs.python.org/3/library/glob.html)
-        :return: a tuple of one :py:class:<dry_pipe.TaskMatch> for every pattern passed as argument
-
-        ex:
-            for matcher_for_a, matcher_for_b in dsl.wait_for_matching_tasks("a*","b*"):
-        """
-
-        task_matchers = []
-        current_pattern_idx = 0
-
-        for pattern in patterns:
-
-            tasks = []
-
-            for key, task in self.task_by_keys.items():
-                if fnmatch(key, pattern):
-                    self.pipeline_instance.dag_determining_tasks_ids.add(key)
-                    if not task.has_completed():
-                        return []
-                    else:
-                        tasks.append(task)
-
-            if len(tasks) == 0:
-                if current_pattern_idx == 0:
-                    raise Exception(f"with_completed_matching_tasks({pattern}) matched zero tasks")
-                else:
-                    return []
-
-            task_matchers.append(TaskMatch(pattern, tasks))
-            current_pattern_idx += 1
-
-        if len(task_matchers) == 1:
-            yield task_matchers[0]
-        else:
-            yield tuple(task_matchers)
-
-    def wait_for_tasks(self, *args):
-        """
-
-        :param args: one or more task, or task_key
-        :return: a tuple of one task for every task or task key passed as argument
-        ex1: for t1 in dsl.wait_for_tasks(t1):
-
-        ex2: for t1, t2, t3 in dsl.wait_for_tasks(task1, task2, "key_of_task3"):
-                assert t1 == task1
-                assert t2 == task2
-                assert t3.key == "key_of_task3"
-
-        Note: t1
-        """
-
-        def it_completed_tasks():
-            for a in args:
-                if isinstance(a, str):
-                    key = a
-                elif isinstance(a, Task):
-                    key = a.key
-                else:
-                    raise ValidationError(
-                        f"illegal argument {type(a)} given to with_tasks, must be Task or a string Task key"
-                    )
-
-                self.pipeline_instance.dag_determining_tasks_ids.add(key)
-
-                t = self.task_by_keys.get(key)
-
-                if t is None:
-                    break
-                else:
-                    state = t.get_state()
-                    if state is not None and state.is_completed():
-                        yield t
-                    else:
-                        break
-
-        number_of_tasks = len(args)
-
-        if number_of_tasks == 0:
-            raise ValidationError(f"must supply at least one task key")
-
-        completed_tasks = list(it_completed_tasks())
-
-        if number_of_tasks == len(completed_tasks):
-            if number_of_tasks == 1:
-                yield completed_tasks[0]
-            else:
-                yield tuple(completed_tasks)
-
-    def var(self, type=str, may_be_none=False):
-        """
-        :param type: str, int, or float
-        :param may_be_none:
-        :return an object that goes in task.produces():
-        """
-        return IncompleteVar(type, may_be_none)
-
-    def val(self, v):
-        """
-        constant value to pass a task input, in the consumes(...) clause
-        :param v: the value, either an int or a str
-        :return:
-        """
-        return Val(v)
-
-    def file(self, name, manage_signature=None, remote_cache_bucket="pipeline-instance"):
-
-        if remote_cache_bucket is not None:
-            legal_values = ["pipeline-instance", "task"]
-            if remote_cache_bucket not in legal_values:
-                raise Exception(f"remote_cache_bucket can't be {remote_cache_bucket}, must be one of {legal_values}")
-
-        if type(name) != str:
-            raise ValidationError(f"invalid file name, must be a string {name}")
-
-        return IndeterminateFile(name, manage_signature, remote_cache_bucket)
-
-    def fileset(self, glob_pattern):
-
-        return FileSet(glob_pattern)
-
-    def task(self, key, task_conf=None):
-        """
-        Creates a :py:meth:`dry_pipe.TaskBuilder`, the object for declaring tasks
-
-        .. highlight:: python
-        .. code-block:: python
-
-            def my_dag_generator(dsl):
-                yield dsl.task(key="t1").\\
-                    consumes(other_task.out.x).\\
-                    produces(z=dsl.var(int)).\\
-                    calls(f1)()
-        :param key:
-        :param task_conf:
-        :return: TaskBuilder
-        """
-
-        if task_conf is None:
-            task_conf = self.task_conf
-
-        if key is None or key == "":
-            raise Exception(f"invalid key given to task(...): '{key}'")
-
-        key = f"{self.task_namespance_prefix}{key}"
-
-        return TaskBuilder(
-            key=key,
-            _produces={},
-            _consumes={},
-            dsl=self,
-            task_conf=task_conf,
-            pipeline_instance=self.pipeline_instance
-        )
 
 
 class TaskBuilder:
@@ -447,10 +186,9 @@ class TaskBuilder:
                 elif isinstance(v, Path):
                     yield k, TaskInput(k, 'file', file_name=str(v))
                 else:
-                    raise ValidationError(
+                    raise Exception(
                         f"_consumes can only take DryPipe.file() or _consumes(a_file=other_task.out.name_of_file()" +
-                        f"task(key={self.key}) was given {type(v)}",
-                        ValidationError.consumes_has_invalid_kwarg_type
+                        f"task(key={self.key}) was given {type(v)}"
                     )
 
         def deps_from_args():
@@ -458,7 +196,7 @@ class TaskBuilder:
                 if isinstance(o, TaskOutput):
                     yield o.name, TaskInput(o.name, o.type, upstream_task_key=o.task_key, name_in_upstream_task=o.name)
                 else:
-                    raise ValidationError(
+                    raise Exception(
                         f"bad arg: {o} passed to {self}"
                     )
 
@@ -485,9 +223,8 @@ class TaskBuilder:
         """
 
         if len(args) > 0:
-            raise ValidationError(
-                f"DryPipe.produces(...) can't take positional args, use the form produce(var_name=...)",
-                ValidationError.produces_cant_take_positional_args
+            raise Exception(
+                f"DryPipe.produces(...) can't take positional args, use the form produce(var_name=...)"
             )
 
         def outputs():
@@ -500,15 +237,14 @@ class TaskBuilder:
                     yield k, TaskOutput(k, 'float', task_key=self.key)
                 elif isinstance(v, Path):
                     yield k, TaskOutput(k, 'file', task_key=self.key, produced_file_name=v.name)
-                elif isinstance(v, FileSet):
-                    yield k, v
+                #elif isinstance(v, FileSet):
+                #    yield k, v
                 else:
-                    raise ValidationError(
+                    raise Exception(
                         f"invalid arg in Task({self.key}).consumes({k})\n"+
                         f"produces takes only DryPipe.file or DryPipe.vars, ex:\n " +
                         "1:    task(...).produces(var_name=DryPipe.file('abc.tsv'))\n"
-                        " 2:    task(...).produces(vars=DryPipe.vars(x=123,s='a'))",
-                        ValidationError.produces_only_takes_files
+                        " 2:    task(...).produces(vars=DryPipe.vars(x=123,s='a'))"
                     )
 
         return TaskBuilder(** {
@@ -545,7 +281,7 @@ class TaskBuilder:
                         start_idx = script_text.find("#!")
                         task_step = TaskStep(task_conf, shell_snippet=script_text[start_idx:-1])
                     else:
-                        raise ValidationError(
+                        raise Exception(
                             f"invalid arg to clause:\n ...calls({a})\nvalid arg is a script file (.sh suffix), " +
                             "or a code block with shebang (ex):\n" +
                             f"{bash_shebang}"
@@ -557,9 +293,8 @@ class TaskBuilder:
                 task_step = TaskStep(task_conf, python_call=a)
 
         if task_step is None:
-            raise ValidationError(
-                f"invalid args, task.calls(...) can take a sigle a single positional argument, was given: {args}",
-                ValidationError.call_has_bad_arg
+            raise Exception(
+                f"invalid args, task.calls(...) can take a sigle a single positional argument, was given: {args}"
             )
 
         return TaskBuilder(** {
@@ -792,31 +527,3 @@ class TaskConf:
             self.python_interpreter_switches,
             extra_env=self.extra_env
         )
-
-    _remote_ssh_executers = {}
-
-    def create_executer(self):
-
-        def remote_ssh():
-            from dry_pipe.ssh_executer import RemoteSSH
-
-            if self.remote_base_dir is None:
-                raise Exception("A task_conf with ssh must have remote_base_dir not None")
-
-            return RemoteSSH(
-                self.ssh_username, self.ssh_host, self.remote_base_dir, self.key_filename,
-                self.command_before_task
-            )
-
-        if self.executer_type == "process":
-            if self.is_remote():
-                return remote_ssh()
-            else:
-                return Local(self.command_before_task)
-        else:
-            if self.is_remote():
-                e = remote_ssh()
-                e.slurm = Slurm(self.slurm_account, self.sbatch_options)
-                return e
-            else:
-                return Slurm(self.slurm_account, self.sbatch_options)

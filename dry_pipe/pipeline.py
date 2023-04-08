@@ -1,18 +1,12 @@
-import glob
 import importlib
 import inspect
 import logging
 import os
 import pathlib
-import shutil
-from itertools import groupby
 
-from dry_pipe import TaskConf, DryPipeDsl, TaskBuilder, script_lib, bash_shebang, TaskState, TaskMatch
-from dry_pipe.internals import ValidationError, SubPipeline
-from dry_pipe.janitors import Janitor
+from dry_pipe import TaskConf
 from dry_pipe.pipeline_runner import PipelineRunner
-from dry_pipe.pipeline_state import PipelineState
-from dry_pipe.script_lib import write_pipeline_lib_script, PortablePopen, FileCreationDefaultModes
+from dry_pipe.script_lib import FileCreationDefaultModes
 from dry_pipe.state_machine import StateFileTracker, StateMachine
 from dry_pipe.task import Task
 
@@ -294,40 +288,3 @@ class PipelineInstance:
             return task
         else:
             raise Exception(f"expected a task with key {task_key}, found none")
-
-
-
-
-SLURM_SQUEUE_FORMAT_SPEC = "%A %L %j %l %T"
-
-
-def parse_status_from_squeue_line(squeue_line):
-    return squeue_line[4]
-
-
-def call_squeue_for_job_id(job_id, parser=None):
-    cmd = f"squeue -h -j {job_id} -o '{SLURM_SQUEUE_FORMAT_SPEC}'"
-
-    with PortablePopen(cmd.split(" ")) as p:
-        p.wait_and_raise_if_non_zero()
-        out_line = p.stdout_as_string().strip()
-
-        if len(out_line) == 0:
-            return None
-        elif len(out_line) > 1:
-            raise Exception(f"squeue dared return more than one line when given {cmd}")
-
-        line = map(lambda s: s.strip(), out_line[0].split(" "))
-
-        if parser is not None:
-            return parser(line)
-
-        return line
-
-
-def is_module_command_available():
-    cmd = ["bash", "-c", "type -t module"]
-    with PortablePopen(cmd) as p:
-        p.wait_and_raise_if_non_zero()
-        out = p.stdout_as_string().strip()
-        return out == "function"
