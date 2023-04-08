@@ -96,7 +96,7 @@ class StateFileTracker:
 
         shutil.copy(core_lib.__file__, self.pipeline_work_dir)
 
-        script_lib_file = os.path.join(self.pipeline_work_dir, "core")
+        script_lib_file = os.path.join(self.pipeline_work_dir, "cli")
         with open(script_lib_file, "w") as script_lib_file_handle:
             write_pipeline_lib_script(script_lib_file_handle)
         os.chmod(script_lib_file, FileCreationDefaultModes.pipeline_instance_scripts)
