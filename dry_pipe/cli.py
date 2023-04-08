@@ -689,8 +689,7 @@ def test(ctx, test_case_mod_func):
 @click.command()
 @click.pass_context
 @click.argument('mod-func', type=click.STRING)
-@click.option('--task-env', type=click.Path(exists=True, dir_okay=False))
-def call(ctx, mod_func, task_env):
+def call(ctx, mod_func):
 
     python_task = _func_from_mod_func(mod_func)
 
@@ -712,26 +711,21 @@ def call(ctx, mod_func, task_env):
     # python_calls can access outputs of previous ones with input args
     var_outputs_by_name = {}
 
-    with open(os.path.join(control_dir, "task-conf.json")) as tc:
+    task_runner = TaskProcess(control_dir)
+    task_runner.resolve_task_env()
 
-        tc_json = json.loads(tc.read())
+    for task_input, k, v in task_runner.resolve_upstream_and_constant_vars():
+        inputs_by_name[k] = task_input.parse(v)
 
-        task_runner = TaskProcess(tc_json)
+    for o, k, f in task_runner.iterate_file_task_outputs():
+        file_outputs_by_name[k] = f
 
-        #task_runner.resolve_task_env()
-
-        for task_input, k, v in task_runner.resolve_upstream_and_constant_vars(os.environ["__pipeline_instance_dir"], tc_json, control_dir):
-            inputs_by_name[k] = task_input.parse(v)
-
-        for o, k, f in task_runner.iterate_file_task_outputs(tc_json, os.environ["__task_output_dir"]):
-            file_outputs_by_name[k] = f
-
-        for o in tc_json["outputs"]:
-            o = TaskOutput.from_json(o)
-            if not o.is_file():
-                v = os.environ.get(o.name)
-                if v is not None:
-                    var_outputs_by_name[o.name] = o.parse(v)
+    for o in task_runner.task_conf["outputs"]:
+        o = TaskOutput.from_json(o)
+        if not o.is_file():
+            v = os.environ.get(o.name)
+            if v is not None:
+                var_outputs_by_name[o.name] = o.parse(v)
 
     all_function_input_candidates = {
         ** os.environ,

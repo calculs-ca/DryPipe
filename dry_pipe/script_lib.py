@@ -235,6 +235,11 @@ class TaskProcess:
 
     def __init__(self, control_dir):
         self.control_dir = control_dir
+        self.task_key = os.path.basename(control_dir)
+        self.pipeline_work_dir = os.path.dirname(control_dir)
+        self.pipeline_instance_dir = os.path.dirname(self.pipeline_work_dir)
+        self.pipeline_output_dir = os.path.join(self.pipeline_instance_dir, "output")
+        self.task_output_dir = os.path.join(self.pipeline_output_dir, self.task_key)
         self.task_conf = None
 
     def _exit_process(self):
@@ -288,11 +293,9 @@ class TaskProcess:
             logger.debug("env var %s = %s", k, v)
             self.env[k] = v
 
-    def resolve_upstream_and_constant_vars(
-            self, pipeline_instance_dir, task_conf_as_json, log_error_if_upstream_task_not_completed=True
-    ):
+    def resolve_upstream_and_constant_vars(self, log_error_if_upstream_task_not_completed=True):
 
-        for i in task_conf_as_json["inputs"]:
+        for i in self.task_conf["inputs"]:
             i = TaskInput.from_json(i)
             if logger.level == logging.DEBUG:
                 logger.debug("%s", i.as_string())
@@ -300,7 +303,7 @@ class TaskProcess:
 
                 def ensure_upstream_task_is_completed():
                     for state_file in glob.glob(
-                            os.path.join(pipeline_instance_dir, ".drypipe", i.upstream_task_key, "state.*")):
+                            os.path.join(self.pipeline_work_dir, i.upstream_task_key, "state.*")):
                         if not "completed" in state_file:
                             msg = f"upstream task {i.upstream_task_key} " + \
                                   f"not completed (state={state_file}), this task " + \
@@ -313,10 +316,10 @@ class TaskProcess:
                 ensure_upstream_task_is_completed()
 
                 if i.is_file():
-                    yield i, i.name, os.path.join(pipeline_instance_dir, "output", i.upstream_task_key, i.file_name)
+                    yield i, i.name, os.path.join(self.pipeline_output_dir, i.upstream_task_key, i.file_name)
                 else:
                     out_vars = dict(self.iterate_out_vars_from(
-                        os.path.join(pipeline_instance_dir, ".drypipe", i.upstream_task_key, "output_vars")
+                        os.path.join(self.pipeline_work_dir, i.upstream_task_key, "output_vars")
                     ))
                     v = out_vars.get(i.name_in_upstream_task)
                     yield i, i.name, v
@@ -327,7 +330,7 @@ class TaskProcess:
                 if os.path.isabs(i.file_name):
                     yield i, i.name, i.file_name
                 else:
-                    yield i, i.name, os.path.join(pipeline_instance_dir, i.file_name)
+                    yield i, i.name, os.path.join(self.pipeline_instance_dir, i.file_name)
 
     def iterate_out_vars_from(self, file=None):
         if file is None:
@@ -339,12 +342,7 @@ class TaskProcess:
                     yield var_name.strip(), value.strip()
 
     def iterate_task_env(self):
-
-
-        pipeline_instance_dir = os.path.dirname(os.path.dirname(self.control_dir))
-        task_key = os.path.basename(self.control_dir)
-
-        pipeline_conf = Path(pipeline_instance_dir, ".drypipe", "conf.json")
+        pipeline_conf = Path(self.pipeline_work_dir, "conf.json")
         if os.path.exists(pipeline_conf):
             with open(pipeline_conf) as pc:
                 pipeline_conf_json = json.loads(pc.read())
@@ -362,13 +360,12 @@ class TaskProcess:
                     "__pipeline_code_dir"
                 )
 
-        yield "__pipeline_instance_dir", pipeline_instance_dir
-        yield "__pipeline_instance_name", os.path.basename(pipeline_instance_dir)
+        yield "__pipeline_instance_dir", self.pipeline_instance_dir
+        yield "__pipeline_instance_name", os.path.basename(self.pipeline_instance_dir)
         yield "__control_dir", self.control_dir
-        yield "__task_key", task_key
-        task_output_dir = os.path.join(pipeline_instance_dir, "output", task_key)
-        yield "__task_output_dir", task_output_dir
-        yield "__scratch_dir", os.path.join(task_output_dir, "scratch")
+        yield "__task_key", self.task_key
+        yield "__task_output_dir", self.task_output_dir
+        yield "__scratch_dir", os.path.join(self.task_output_dir, "scratch")
         yield "__output_var_file", os.path.join(self.control_dir, "output_vars")
         yield "__out_log", os.path.join(self.control_dir, "out.log")
         yield "__err_log", os.path.join(self.control_dir, "err.log")
@@ -391,19 +388,19 @@ class TaskProcess:
                 yield k, os.path.expandvars(v)
 
         logger.debug("resolved and constant input vars")
-        for _, k, v in self.resolve_upstream_and_constant_vars(pipeline_instance_dir, self.task_conf):
+        for _, k, v in self.resolve_upstream_and_constant_vars():
             yield k, v
 
         logger.debug("file output vars")
-        for _, k, f in self.iterate_file_task_outputs(self.task_conf, task_output_dir):
+        for _, k, f in self.iterate_file_task_outputs():
             yield k, f
 
 
-    def iterate_file_task_outputs(self, task_conf_as_json, task_output_dir):
-        for o in task_conf_as_json["outputs"]:
+    def iterate_file_task_outputs(self):
+        for o in self.task_conf["outputs"]:
             o = TaskOutput.from_json(o)
             if o.is_file():
-                yield o, o.name, os.path.join(task_output_dir, o.produced_file_name)
+                yield o, o.name, os.path.join(self.task_output_dir, o.produced_file_name)
 
 
     def run_python(self, mod_func, container=None):
@@ -486,7 +483,7 @@ class TaskProcess:
     def _delete_pid_and_slurm_job_id(self, sloc=None):
         try:
             if sloc is None:
-                sloc = os.environ["__script_location"]
+                sloc = self.control_dir
 
             def delete_if_exists(f):
                 f = os.path.join(sloc, f)

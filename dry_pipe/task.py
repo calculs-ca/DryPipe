@@ -336,10 +336,7 @@ class TaskInputs:
         if task_runner is not None:
             self._task_inputs = {}
 
-            for task_input, k, v in task_runner.resolve_upstream_and_constant_vars(
-                pipeline_work_dir,
-                task_runner.task_conf
-            ):
+            for task_input, k, v in task_runner.resolve_upstream_and_constant_vars():
                 if v is not None:
                     self._task_inputs[k] = task_input.parse(v)
 
