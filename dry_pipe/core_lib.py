@@ -163,17 +163,17 @@ def write_pipeline_lib_script(file_handle):
             import importlib.util        
 
             __script_location = os.path.dirname(os.path.abspath(__file__))
-            script_lib_path = os.path.join(__script_location, 'script_lib.py')        
-            loader = importlib.machinery.SourceFileLoader('script_lib', script_lib_path)
+            script_lib_path = os.path.join(__script_location, 'core_lib.py')        
+            loader = importlib.machinery.SourceFileLoader('core_lib', script_lib_path)
             spec = importlib.util.spec_from_loader(loader.name, loader)
-            script_lib = importlib.util.module_from_spec(spec)
-            loader.exec_module(script_lib)
+            core_lib = importlib.util.module_from_spec(spec)
+            loader.exec_module(core_lib)
         """)
     )
 
     file_handle.write(textwrap.dedent(f"""        
     if __name__ == '__main__':        
-        script_lib.handle_script_lib_main()
+        core.handle_script_lib_main()
     """))
 
 
@@ -194,11 +194,11 @@ def task_script_header():
         else:
             __script_location = os.path.dirname(os.path.abspath(__file__))
             os.environ["__script_location"] = __script_location
-        script_lib_path = os.path.join(os.path.dirname(__script_location), 'script_lib.py')        
-        loader = importlib.machinery.SourceFileLoader('script_lib', script_lib_path)
+        script_lib_path = os.path.join(os.path.dirname(__script_location), 'core_lib.py')        
+        loader = importlib.machinery.SourceFileLoader('core_lib', script_lib_path)
         spec = importlib.util.spec_from_loader(loader.name, loader)
-        script_lib = importlib.util.module_from_spec(spec)
-        loader.exec_module(script_lib)        
+        core_lib = importlib.util.module_from_spec(spec)
+        loader.exec_module(core_lib)        
     """)
 
 class UpstreamTasksNotCompleted(Exception):

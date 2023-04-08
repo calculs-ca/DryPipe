@@ -3,7 +3,7 @@ import os
 import traceback
 import requests
 
-from dry_pipe.script_lib import PortablePopen
+from dry_pipe.core_lib import PortablePopen
 
 
 def send_email_error_report_if_configured(subject_line, exception=None, details=None):

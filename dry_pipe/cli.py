@@ -14,7 +14,7 @@ import click
 from dry_pipe import DryPipe, Task
 from dry_pipe.internals import PythonCall
 from dry_pipe.pipeline import PipelineInstance, Pipeline
-from dry_pipe.script_lib import FileCreationDefaultModes, TaskProcess
+from dry_pipe.core_lib import FileCreationDefaultModes, TaskProcess
 
 logger = logging.getLogger(__name__)
 

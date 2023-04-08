@@ -4,8 +4,8 @@ import os.path
 import shutil
 from pathlib import Path
 
-from dry_pipe import TaskBuilder, TaskConf, script_lib
-from dry_pipe.script_lib import FileCreationDefaultModes, write_pipeline_lib_script, TaskOutput, TaskProcess
+from dry_pipe import TaskBuilder, TaskConf, core_lib
+from dry_pipe.core_lib import FileCreationDefaultModes, write_pipeline_lib_script, TaskOutput, TaskProcess
 from dry_pipe.task import TaskOutputs, TaskInputs
 
 
@@ -94,9 +94,9 @@ class StateFileTracker:
         with open(Path(self.pipeline_work_dir, "conf.json"), "w") as conf_file:
             conf_file.write(json.dumps(conf_dict, indent=4))
 
-        shutil.copy(script_lib.__file__, self.pipeline_work_dir)
+        shutil.copy(core_lib.__file__, self.pipeline_work_dir)
 
-        script_lib_file = os.path.join(self.pipeline_work_dir, "script_lib")
+        script_lib_file = os.path.join(self.pipeline_work_dir, "core")
         with open(script_lib_file, "w") as script_lib_file_handle:
             write_pipeline_lib_script(script_lib_file_handle)
         os.chmod(script_lib_file, FileCreationDefaultModes.pipeline_instance_scripts)

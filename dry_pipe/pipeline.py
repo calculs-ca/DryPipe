@@ -6,7 +6,7 @@ import pathlib
 
 from dry_pipe import TaskConf
 from dry_pipe.pipeline_runner import PipelineRunner
-from dry_pipe.script_lib import FileCreationDefaultModes
+from dry_pipe.core_lib import FileCreationDefaultModes
 from dry_pipe.state_machine import StateFileTracker, StateMachine
 from dry_pipe.task import Task
 

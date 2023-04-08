@@ -1,5 +1,5 @@
 
-from dry_pipe.script_lib import UpstreamTasksNotCompleted
+from dry_pipe.core_lib import UpstreamTasksNotCompleted
 import pipeline_tests_with_single_tasks
 import pipeline_tests_with_multiple_tasks
 

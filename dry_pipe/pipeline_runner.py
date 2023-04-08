@@ -5,7 +5,7 @@ from queue import SimpleQueue
 import time
 from threading import Thread
 
-from dry_pipe.script_lib import TaskProcess
+from dry_pipe.core_lib import TaskProcess
 from dry_pipe.state_machine import AllRunnableTasksCompletedOrInError
 
 

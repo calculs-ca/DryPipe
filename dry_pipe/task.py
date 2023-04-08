@@ -4,10 +4,10 @@ import pathlib
 
 import textwrap
 
-from dry_pipe.script_lib import FileCreationDefaultModes
+from dry_pipe.core_lib import FileCreationDefaultModes
 from dry_pipe import bash_shebang
 
-from dry_pipe.script_lib import task_script_header
+from dry_pipe.core_lib import task_script_header
 
 
 class Task:
@@ -117,7 +117,7 @@ class Task:
 
         with open(shell_script_file, "w") as f:
             f.write(task_script_header())
-            f.write('script_lib.handle_main()\n')
+            f.write('core_lib.handle_main()\n')
             f.write('logging.shutdown()\n')
 
         os.chmod(shell_script_file, FileCreationDefaultModes.pipeline_instance_scripts)
@@ -351,7 +351,7 @@ class TaskInputs:
         p = self._task_inputs.get(name)
 
         if p is None:
-            raise ValidationError(
+            raise Exception(
                 f"task {self.task} does not declare input '{name}' in it's consumes() clause.\n" +
                 f"Use task({self.task.key}).consumes({name}=...) to specify input"
             )
@@ -374,7 +374,7 @@ class TaskOutputs:
         p = self._task_outputs.get(name)
 
         if p is None:
-            raise ValidationError(
+            raise Exception(
                 f"task {self.task} does not declare output '{name}' in it's outputs() clause.\n" +
                 f"Use task({self.task.key}).outputs({name}=...) to specify outputs"
             )
