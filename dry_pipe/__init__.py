@@ -5,11 +5,9 @@ import os
 import re
 import sys
 import textwrap
-from fnmatch import fnmatch
 from pathlib import Path
 
 from dry_pipe.core_lib import PortablePopen, parse_ssh_specs, invoke_rsync, TaskInput, TaskOutput
-from dry_pipe.utils import bash_shebang
 
 from dry_pipe.task import Task, TaskStep
 

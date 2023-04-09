@@ -5,7 +5,6 @@ import pathlib
 import textwrap
 
 from dry_pipe.core_lib import FileCreationDefaultModes
-from dry_pipe import bash_shebang
 
 from dry_pipe.core_lib import task_script_header
 
@@ -49,46 +48,8 @@ class Task:
 
     def prepare(self, control_dir):
 
-        def out_log():
-            return os.path.join(control_dir, "out.log")
-
-        def err_log():
-            return os.path.join(control_dir, "err.log")
-
-        def script_file():
-            return os.path.join(control_dir, "task")
-
         def task_conf_file():
             return os.path.join(control_dir, "task-conf.json")
-
-        def sbatch_launch_script():
-            return os.path.join(control_dir, "sbatch-launcher.sh")
-
-        def control_dir_relative_to_pid():
-            return os.path.join(".drypipe", self.key)
-
-
-        is_remote = self.is_remote()
-        external_dep_file_list = []
-        external_dep_file_pipeline_instance_list = []
-        dependent_file_list = []
-        output_file_list = []
-
-        def collect_deps_and_outputs(dep_file, output_file, external_dep_type=None):
-            if dep_file is not None:
-                if os.path.isabs(dep_file):
-                    if external_dep_type is None:
-                        external_dep_file_list.append(dep_file)
-                    elif external_dep_type == "pipeline-instance":
-                        external_dep_file_pipeline_instance_list.append(dep_file)
-                    else:
-                        raise Exception(f"invalid remote_cache_bucket: {external_dep_type}")
-                else:
-                    dependent_file_list.append(dep_file)
-            elif output_file is not None:
-                output_file_list.append(output_file)
-            else:
-                raise Exception("collect_deps_and_outputs(None, None)")
 
         step_invocations = [
             self.task_steps[step_number].get_invocation(control_dir, self, step_number)
@@ -110,9 +71,6 @@ class Task:
 
             f.write(json.dumps(task_conf_json, indent=2))
 
-        if is_remote:
-            self._visit_input_and_output_files(collect_deps_and_outputs)
-
         shell_script_file = os.path.join(control_dir, "task")
 
         with open(shell_script_file, "w") as f:
@@ -122,135 +80,6 @@ class Task:
 
         os.chmod(shell_script_file, FileCreationDefaultModes.pipeline_instance_scripts)
 
-        if self.task_conf.is_slurm():
-            pid_name = os.path.basename(self.pipeline_instance.pipeline_instance_dir)
-
-            sbatch_file = os.path.join(control_dir, "sbatch-launcher.sh")
-
-            with open(sbatch_file, "w") as f:
-                f.write(f"{bash_shebang()}\n\n")
-
-                f.write(textwrap.dedent("""
-                    __script_location=$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )
-                                                                            
-                    __arg_1=$1
-                """))
-
-                f.write("\n".join([
-                    f"__job_id=$(sbatch \\",
-                    f"    {' '.join(self.task_conf.sbatch_options)} \\",
-                    f"    --account={self.task_conf.slurm_account} \\",
-                     "    --output=$__script_location/out.log \\",
-                     "    --error=$__script_location/err.log \\",
-                     "    --export=__script_location=$__script_location,__is_slurm=True,DRYPIPE_TASK_DEBUG=$DRYPIPE_TASK_DEBUG \\",
-                     "    --signal=B:USR1@50 \\",
-                     "    --parsable \\",
-                    f"    --job-name={self.key}-{pid_name} $SBATCH_EXTRA_ARGS \\",
-                     "    $__script_location/task)"
-                ]))
-
-                f.write("\n\n")
-
-                f.write("echo $__job_id > $__script_location/slurm_job_id\n")
-                f.write('echo "scancel --signal=SIGTERM $__job_id" > $__script_location/kill\n')
-                f.write('chmod u+x $__script_location/kill\n')
-
-            os.chmod(sbatch_file, FileCreationDefaultModes.pipeline_instance_scripts)
-
-        if is_remote:
-            local_deps = os.path.join(control_dir, "local-deps.txt")
-
-            def write_external_deps_file(dep_list, out_file_name):
-                if len(dep_list) > 0:
-                    out_file = os.path.join(control_dir, out_file_name)
-                    with open(out_file, "w") as _out_file:
-                        for d in dep_list:
-                            _out_file.write(d)
-                            _out_file.write("\n")
-                    return out_file
-                else:
-                    return None
-
-            external_files_deps_file = write_external_deps_file(
-                external_dep_file_list, "external-deps.txt"
-            )
-
-            external_files_deps_pipeline_instance_file = write_external_deps_file(
-                external_dep_file_pipeline_instance_list, "external-deps-pipeline-instance.txt"
-            )
-
-            with open(local_deps, "w") as f:
-
-                for dep_file in dependent_file_list:
-                    f.write(dep_file)
-                    f.write("\n")
-
-                step_number = 0
-                for step in self.task_steps:
-                    if step.shell_snippet is not None:
-                        f.write(f".drypipe/{self.key}/{step_number}")
-                        f.write("\n\n")
-                    step_number += 1
-
-                f.write(script_file)
-                f.write("\n")
-                f.write(self.task_conf_file())
-                f.write("\n")
-                if external_files_deps_file is not None:
-                    f.write(os.path.join(control_dir_relative_to_pid(), os.path.basename(external_files_deps_file)))
-                    f.write("\n")
-                if external_files_deps_pipeline_instance_file is not None:
-                    f.write(
-                        os.path.join(control_dir_relative_to_pid(), os.path.basename(external_files_deps_pipeline_instance_file))
-                    )
-                    f.write("\n")
-
-                if self.task_conf.is_slurm():
-                    f.write(sbatch_launch_script())
-                    f.write("\n")
-
-            remote_outputs = os.path.join(control_dir, "remote-outputs.txt")
-
-            with open(remote_outputs, "w") as f:
-
-                for dep_file in output_file_list:
-                    if not "*" in dep_file:
-                        f.write(dep_file)
-                        f.write("\n")
-
-                f.write(os.path.join(control_dir_relative_to_pid(), "out_sigs/"))
-                f.write("\n")
-                f.write(os.path.join(control_dir_relative_to_pid(), "output_vars"))
-                f.write("\n")
-                f.write(err_log())
-                f.write("\n")
-                f.write(out_log())
-                f.write("\n")
-
-            remote_output_filesets = os.path.join(control_dir, "remote-output-filesets.txt")
-            output_filesets = [
-                dep_file for dep_file in output_file_list if "*" in dep_file
-            ]
-
-            if len(output_filesets) > 0:
-                with open(remote_output_filesets, "w") as f:
-                    for dep_file in output_filesets:
-                        f.write("+ ")
-                        f.write(os.path.basename(dep_file))
-                        f.write("\n")
-
-    def is_remote(self):
-        return self.task_conf.is_remote()
-
-    def slurm_job_id(self):
-
-        slurm_job_id_file = self.v_abs_slurm_job_id_file()
-
-        if not os.path.exists(slurm_job_id_file):
-            return None
-
-        with open(slurm_job_id_file) as f:
-            return f.read().strip()
 
     def compute_hash_code(self):
         return "123"
@@ -329,7 +158,7 @@ class TaskStep:
 
 class TaskInputs:
 
-    def __init__(self, task, task_runner=None, task_inputs=None, pipeline_work_dir=None):
+    def __init__(self, task, task_runner=None, task_inputs=None):
         self.task = task
         self._task_inputs = task_inputs
         if task_runner is not None:
@@ -344,9 +173,6 @@ class TaskInputs:
 
 
     def __getattr__(self, name):
-
-        if self._task_inputs is None:
-            self._resolve()
 
         p = self._task_inputs.get(name)
 

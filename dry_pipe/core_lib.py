@@ -610,20 +610,6 @@ class TaskProcess:
             logger.exception(ex)
 
 
-    def _env_from_sourcing(self, env_file):
-
-        p = os.path.abspath(sys.executable)
-
-        dump_with_python_script = f'{p} -c "import os, json; print(json.dumps(dict(os.environ)))"'
-
-        logger.debug("will source file: %s", env_file)
-
-        with PortablePopen(['/bin/bash', '-c', f". {env_file} && {dump_with_python_script}"]) as p:
-            p.wait_and_raise_if_non_zero()
-            out = p.stdout_as_string()
-            return json.loads(out)
-
-
     def exec_cmd_before_launch(self, command_before_task):
 
         p = os.path.abspath(sys.executable)
@@ -1223,45 +1209,12 @@ def invoke_rsync(command):
                 raise RetryableRsyncException(msg)
 
 
-def terminate_all():
-    scancel_all()
-    segterm_all()
-
-
-def scancel_all():
-    pass
-
-
-def segterm_all():
-    pass
-
-
 def handle_script_lib_main():
 
     if sys.argv[1] == "start":
         #handle_main()
         task_runner = TaskProcess(sys.argv[2])
         task_runner.launch_task(wait_for_completion="--wait" in sys.argv)
-    elif "launch-task-from-remote" in sys.argv:
-        task_key = sys.argv[2]
-        is_slurm = "--is-slurm" in sys.argv
-        wait_for_completion = "--wait-for-completion" in sys.argv
-        drypipe_task_debug = "--drypipe-task-debug" in sys.argv
-        launch_task_from_remote(task_key, is_slurm, wait_for_completion, drypipe_task_debug)
-    elif "terminate-all" in sys.argv:
-        terminate_all()
-    elif "scancel-all" in sys.argv:
-        terminate_all()
-    elif "segterm-all" in sys.argv:
-        segterm_all()
-    elif "detect-slurm-crashes" in sys.argv:
-        user = sys.argv[2]
-        detect_slurm_crashes(user, "--is-debug" in sys.argv)
-        #detect_process_crashes()
-    elif "detect-crashes" in sys.argv:
-        user = sys.argv[2]
-        detect_slurm_crashes(user, "--is-debug" in sys.argv)
-        #detect_process_crashes()
     else:
         raise Exception('invalid args')
 
@@ -1458,60 +1411,3 @@ class TaskOutput:
             raise Exception(f"Task output {self.name} is not of type file, actual type is: {self.type} ")
 
         return self._resolved_value
-
-def launch_task_from_remote(task_key, is_slurm, wait_for_completion, drypipe_task_debug):
-
-    pipeline_instance_dir = os.path.dirname(os.path.dirname(sys.argv[0]))
-
-    control_dir = os.path.join(pipeline_instance_dir, '.drypipe', task_key)
-
-    if drypipe_task_debug:
-        os.environ["DRYPIPE_TASK_DEBUG"] = "True"
-
-    logger = create_task_logger(control_dir)
-
-    out_sigs_dir = os.path.join(control_dir, 'out_sigs')
-    touch(os.path.join(control_dir, 'output_vars'))
-
-    work_dir = os.path.join(pipeline_instance_dir, 'output', task_key)
-    scratch_dir = os.path.join(work_dir, "scratch")
-
-    for d in [work_dir, out_sigs_dir, scratch_dir]:
-        Path(d).mkdir(exist_ok=True, parents=True, mode=FileCreationDefaultModes.pipeline_instance_directories)
-
-    for state_file in glob.glob(os.path.join(control_dir, "state.*")):
-        os.remove(state_file)
-
-    touch(os.path.join(control_dir, 'state.launched.0'))
-
-    _delete_pid_and_slurm_job_id(control_dir)
-
-    env = os.environ
-
-    if is_slurm:
-        cmd = os.path.join(control_dir, 'sbatch-launcher.sh')
-        if wait_for_completion:
-            env = {**env, "SBATCH_EXTRA_ARGS": "--wait", "DRYPIPE_TASK_DEBUG": str(drypipe_task_debug)}
-            cmd = ["bash", "-c", cmd]
-    else:
-        if wait_for_completion:
-            back_ground = ""
-        else:
-            back_ground = "&"
-        scr = os.path.join(control_dir, 'task')
-        cmd = ["nohup", "bash", "-c", f"python3 {scr} {back_ground}"]
-
-    logger.info("launching from remote: %s", ' '.join(cmd) if isinstance(cmd, list) else cmd)
-
-    with open(os.path.join(control_dir, 'out.log'), 'w') as out:
-        with open(os.path.join(control_dir, 'err.log'), 'w') as err:
-            with PortablePopen(
-                cmd,
-                stdout=out,
-                stderr=err,
-                env=env
-            ) as p:
-                p.wait()
-                if p.popen.returncode != 0:
-                    logger.error(f"remote task launch failed: %s", sys.argv)
-                print(str(p.popen.returncode))

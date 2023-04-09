@@ -218,7 +218,7 @@ class StateFileTracker:
             class Task:
                 def __init__(self):
                     self.key = task_key
-                    self.inputs = TaskInputs(self, task_runner, pipeline_work_dir=pod)
+                    self.inputs = TaskInputs(self, task_runner)
 
                     task_outputs = {}
                     unparsed_out_vars = dict(task_runner.iterate_out_vars_from(var_file))
