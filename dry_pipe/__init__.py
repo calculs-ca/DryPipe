@@ -10,7 +10,6 @@ from pathlib import Path
 
 from dry_pipe.core_lib import PortablePopen, parse_ssh_specs, invoke_rsync, TaskInput, TaskOutput
 from dry_pipe.utils import bash_shebang
-from dry_pipe.internals import PythonCall, SubPipeline
 
 from dry_pipe.task import Task, TaskStep
 
@@ -284,7 +283,7 @@ class TaskBuilder:
                         raise Exception(
                             f"invalid arg to clause:\n ...calls({a})\nvalid arg is a script file (.sh suffix), " +
                             "or a code block with shebang (ex):\n" +
-                            f"{bash_shebang}"
+                            f"#!/usr/bin/env bash"
                             "echo '...something...'"
                         )
             if isinstance(a, PythonCall):
@@ -527,3 +526,32 @@ class TaskConf:
             self.python_interpreter_switches,
             extra_env=self.extra_env
         )
+
+
+class SubPipeline:
+    def __init__(self, pipeline, task_namespance_prefix, dsl):
+        self.pipeline = pipeline
+        self.task_namespance_prefix = task_namespance_prefix
+        self.dsl = dsl
+
+    def wait_for_tasks(self, *args):
+        args = [f"{self.task_namespance_prefix}{a}" for a in args]
+        return self.dsl.wait_for_tasks(*args)
+
+
+class PythonCall:
+
+    def __init__(self, func, tests=[]):
+        self.func = func
+        self.signature = inspect.signature(self.func)
+        self.tests = tests
+
+    def signature_spec(self):
+        raise Exception(f"implement me")
+
+    def mod_func(self):
+        mod = inspect.getmodule(self.func)
+        file_name = os.path.basename(mod.__file__)
+        func_name = self.func.__name__
+        importable_module_name = f"{mod.__package__}.{file_name[:-3]}:{func_name}"
+        return importable_module_name
