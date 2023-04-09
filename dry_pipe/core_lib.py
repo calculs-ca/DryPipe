@@ -210,23 +210,24 @@ class UpstreamTasksNotCompleted(Exception):
 class TaskProcess:
 
     @staticmethod
-    def run(control_dir, as_subprocess=True, wait_for_completion=False):
+    def run(control_dir, as_subprocess=True, wait_for_completion=False, run_python_calls_in_process=False):
 
         if not as_subprocess:
             TaskProcess(control_dir).launch_task(wait_for_completion, exit_process_when_done=False)
         else:
-            task_script = os.path.join(control_dir, "task")
+            pipeline_work_dir = os.path.dirname(control_dir)
+            pipeline_cli = os.path.join(pipeline_work_dir, "cli")
             if wait_for_completion:
-                cmd = [task_script, "--wait"]
+                cmd = [pipeline_cli, "start", control_dir, "--wait"]
             else:
-                cmd = [task_script]
+                cmd = [pipeline_cli, "start", control_dir]
 
             logger.debug("will launch task %s", ' '.join(cmd))
 
             with PortablePopen(
-                    cmd,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL
+                cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL
             ) as p:
                 p.wait()
                 if p.popen.returncode != 0:
@@ -1230,7 +1231,11 @@ def segterm_all():
 
 def handle_script_lib_main():
 
-    if "launch-task-from-remote" in sys.argv:
+    if sys.argv[1] == "start":
+        #handle_main()
+        task_runner = TaskProcess(sys.argv[2])
+        task_runner.launch_task(wait_for_completion="--wait" in sys.argv)
+    elif "launch-task-from-remote" in sys.argv:
         task_key = sys.argv[2]
         is_slurm = "--is-slurm" in sys.argv
         wait_for_completion = "--wait-for-completion" in sys.argv
