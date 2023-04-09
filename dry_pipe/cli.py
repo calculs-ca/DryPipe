@@ -14,7 +14,7 @@ import click
 from dry_pipe import DryPipe, Task
 from dry_pipe.internals import PythonCall
 from dry_pipe.pipeline import PipelineInstance, Pipeline
-from dry_pipe.core_lib import FileCreationDefaultModes, TaskProcess
+from dry_pipe.core_lib import FileCreationDefaultModes, TaskProcess, func_from_mod_func
 
 logger = logging.getLogger(__name__)
 
@@ -572,22 +572,6 @@ def _validate_task_generator_callable_with_single_dsl_arg_and_get_module_file(ta
     return f
 
 
-def _func_from_mod_func(mod_func):
-
-    mod, func_name = mod_func.split(":")
-
-    if not mod.startswith("."):
-        module = importlib.import_module(mod)
-    else:
-        module = importlib.import_module(mod[1:])
-
-    python_task = getattr(module, func_name, None)
-    if python_task is None:
-        raise Exception(f"function {func_name} not found in module {mod}")
-
-    return python_task
-
-
 @click.command()
 @click.pass_context
 @click.argument('test-case-mod-func', type=click.STRING)
@@ -649,7 +633,7 @@ def test(ctx, test_case_mod_func):
 @click.argument('mod-func', type=click.STRING)
 def call(ctx, mod_func):
 
-    python_task = _func_from_mod_func(mod_func)
+    python_task = func_from_mod_func(mod_func)
     control_dir = os.environ["__control_dir"]
     task_runner = TaskProcess(control_dir)
     task_runner.resolve_task_env()

@@ -1,5 +1,6 @@
 import fnmatch
 import glob
+import importlib
 import json
 import os
 import shutil
@@ -213,7 +214,7 @@ class TaskProcess:
     def run(control_dir, as_subprocess=True, wait_for_completion=False, run_python_calls_in_process=False):
 
         if not as_subprocess:
-            TaskProcess(control_dir).launch_task(wait_for_completion, exit_process_when_done=False)
+            TaskProcess(control_dir, run_python_calls_in_process).launch_task(wait_for_completion, exit_process_when_done=False)
         else:
             pipeline_work_dir = os.path.dirname(control_dir)
             pipeline_cli = os.path.join(pipeline_work_dir, "cli")
@@ -235,7 +236,7 @@ class TaskProcess:
                 else:
                     logger.debug("task ended with returncode: %s", p.popen.returncode)
 
-    def __init__(self, control_dir):
+    def __init__(self, control_dir, run_python_calls_in_process=False):
         self.control_dir = control_dir
         self.task_key = os.path.basename(control_dir)
         self.pipeline_work_dir = os.path.dirname(control_dir)
@@ -243,6 +244,8 @@ class TaskProcess:
         self.pipeline_output_dir = os.path.join(self.pipeline_instance_dir, "output")
         self.task_output_dir = os.path.join(self.pipeline_output_dir, self.task_key)
         self.task_conf = None
+        # For test cases:
+        self.run_python_calls_in_process = run_python_calls_in_process
 
     def _exit_process(self):
         self._delete_pid_and_slurm_job_id()
@@ -350,9 +353,6 @@ class TaskProcess:
                         exit(1)
 
                 self.write_out_vars(prev_out_vars)
-
-            #for pid_file in glob.glob(os.path.join(control_dir, "*.pid")):
-            #    os.remove(pid_file)
 
         except Exception as ex:
             traceback.print_exc()
@@ -883,7 +883,10 @@ class TaskProcess:
             call = step_invocation["call"]
 
             if call == "python":
-                self.run_python(step_invocation["module_function"], step_invocation.get("container"))
+                if not self.run_python_calls_in_process:
+                    self.run_python(step_invocation["module_function"], step_invocation.get("container"))
+                else:
+                    self._run_python_calls_in_process(step_invocation["module_function"])
             elif call == "bash":
                 self.run_script(os.path.expandvars(step_invocation["script"]),
                            step_invocation.get("container"))
@@ -893,6 +896,10 @@ class TaskProcess:
             state_file, step_number = self.transition_to_step_completed(state_file, step_number)
 
         self.transition_to_completed(state_file)
+
+    def _run_python_calls_in_process(self, module_function):
+        python_task = func_from_mod_func(module_function)
+        self.call_python(module_function, python_task)
 
     def launch_task(self, wait_for_completion, exit_process_when_done=True):
 
@@ -1264,6 +1271,22 @@ def handle_script_lib_main():
 class FileCreationDefaultModes:
     pipeline_instance_directories = 0o774
     pipeline_instance_scripts = 0o774
+
+def func_from_mod_func(mod_func):
+
+    mod, func_name = mod_func.split(":")
+
+    if not mod.startswith("."):
+        module = importlib.import_module(mod)
+    else:
+        module = importlib.import_module(mod[1:])
+
+    python_task = getattr(module, func_name, None)
+    if python_task is None:
+        raise Exception(f"function {func_name} not found in module {mod}")
+
+    return python_task
+
 
 
 class TaskInput:
