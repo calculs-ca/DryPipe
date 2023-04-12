@@ -370,6 +370,7 @@ def run_python(task_conf_dict, mod_func, container=None):
     has_failed = False
 
     logger.info("run_python: %s", ' '.join(cmd))
+    logger.info("PYTHONPATH: %s", os.environ.get("PYTHONPATH"))
 
     with open(os.environ['__out_log'], 'a') as out:
         with open(os.environ['__err_log'], 'a') as err:
@@ -736,11 +737,6 @@ def run_script(script, container=None):
 
         apptainer_bindings = []
 
-        root_dir_of_script = _root_dir(script)
-
-        if _fs_type(root_dir_of_script) in ["autofs", "nfs", "zfs"]:
-            apptainer_bindings.append(f"{root_dir_of_script}:{root_dir_of_script}")
-
         if os.environ.get("__is_slurm"):
             scratch_dir = os.environ['SLURM_TMPDIR']
             env['__scratch_dir'] = scratch_dir
@@ -759,7 +755,7 @@ def run_script(script, container=None):
             env["APPTAINER_BIND"] = f"{bindings_prefix}{','.join(apptainer_bindings)}"
 
         new_bind = env.get("APPTAINER_BIND")
-        if new_bind is not None:
+        if new_bind is None:
             logger.info("APPTAINER_BIND not set")
         else:
             logger.info("APPTAINER_BIND=%s", new_bind)
