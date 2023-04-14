@@ -356,14 +356,21 @@ def run_python(task_conf_dict, mod_func, container=None):
     ]
 
     if container is not None:
-        cmd = [
-            APPTAINER_COMMAND,
-            "exec",
-            "-B",
-            "$APPTAINER_BIND",
-            resolve_container_path(container)
-        ] + cmd
-
+        b = os.environ.get("APPTAINER_BIND")
+        if b is not None:
+            cmd = [
+                APPTAINER_COMMAND,
+                "exec",
+                "-B",
+                b,
+                resolve_container_path(container)
+            ] + cmd
+        else:
+            cmd = [
+                APPTAINER_COMMAND,
+                "exec",
+                resolve_container_path(container)
+            ] + cmd
     env = {**os.environ}
 
     if os.environ.get("__is_slurm"):
@@ -734,13 +741,22 @@ def run_script(script, container=None):
     cmd = ["bash", "-c", f". {script} 1>> {out} 2>> {err} ; {dump_env}"]
 
     if container is not None:
-        cmd = [
-            APPTAINER_COMMAND,
-            "exec",
-            "-B",
-            "$APPTAINER_BIND",
-            resolve_container_path(container),
-        ] + cmd
+
+        b = os.environ.get("APPTAINER_BIND")
+        if b is not None:
+            cmd = [
+                APPTAINER_COMMAND,
+                "exec",
+                "-B",
+                b,
+                resolve_container_path(container),
+            ] + cmd
+        else:
+            cmd = [
+                APPTAINER_COMMAND,
+                "exec",
+                resolve_container_path(container),
+            ] + cmd
 
         apptainer_bindings = []
 
