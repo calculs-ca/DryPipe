@@ -359,6 +359,8 @@ def run_python(task_conf_dict, mod_func, container=None):
         cmd = [
             APPTAINER_COMMAND,
             "exec",
+            "-B",
+            "$APPTAINER_BIND",
             resolve_container_path(container)
         ] + cmd
 
@@ -383,9 +385,12 @@ def run_python(task_conf_dict, mod_func, container=None):
                     logger.exception(ex)
                 finally:
                     if has_failed:
+                        msg = f"process return code: {p.popen.returncode}"
+                        err.write(f"{msg}\n")
                         step_number, control_dir, state_file, state_name = read_task_state()
                         _transition_state_file(state_file, "failed", step_number)
     if has_failed:
+        logger.error("will exit task process as result of failure")
         _exit_process()
 
 
@@ -732,6 +737,8 @@ def run_script(script, container=None):
         cmd = [
             APPTAINER_COMMAND,
             "exec",
+            "-B",
+            "$APPTAINER_BIND",
             resolve_container_path(container),
         ] + cmd
 
