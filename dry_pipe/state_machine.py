@@ -2,6 +2,7 @@ import fnmatch
 import json
 import os.path
 import shutil
+from os import DirEntry
 from pathlib import Path
 
 from dry_pipe import TaskBuilder, TaskConf, core_lib
@@ -39,6 +40,9 @@ class StateFile:
 
     def transition_to_pre_launch(self):
         self.path = os.path.join(self.tracker.pipeline_work_dir, self.task_key, "state._step-started")
+
+    def transition_to_crashed(self):
+        self.path = os.path.join(self.tracker.pipeline_work_dir, self.task_key, "state.crashed")
 
     def state_as_string(self):
         return os.path.basename(self.path)
@@ -113,6 +117,12 @@ class StateFileTracker:
         os.rename(self.state_files_in_memory[task_key].path, p)
         self.state_files_in_memory[task_key].path = p
 
+    def set_step_started_on_disk_and_in_memory(self, task_key, step_number):
+        p = os.path.join(self.pipeline_work_dir, task_key, f"state.step-started.{step_number}")
+        b4 = self.state_files_in_memory[task_key].path
+        os.rename(b4, p)
+        self.state_files_in_memory[task_key].path = p
+
     def register_pre_launch(self, state_file):
         previous_path = state_file.path
         state_file.transition_to_pre_launch()
@@ -129,34 +139,34 @@ class StateFileTracker:
     def lookup_state_file_from_memory(self, task_key):
         return self.state_files_in_memory[task_key]
 
-    def _find_state_file_in_task_control_dir(self, task_key):
+    def _find_state_file_path_in_task_control_dir(self, task_key) -> str :
         try:
             with os.scandir(os.path.join(self.pipeline_work_dir, task_key)) as i:
                 for f in i:
                     if f.name.startswith("state."):
-                        return f
+                        return f.path
         except FileNotFoundError:
             pass
         return None
 
     def load_state_file(self, task_key, slurm_array_id=None):
-        file = self._find_state_file_in_task_control_dir(task_key)
-        if file is None:
+        state_file_path = self._find_state_file_path_in_task_control_dir(task_key)
+        if state_file_path is None:
             raise Exception(f"no state file exists in {os.path.join(self.pipeline_work_dir, task_key)}")
-        state_file = StateFile(task_key, None, self, path=file, slurm_array_id=slurm_array_id)
+        state_file = StateFile(task_key, None, self, path=state_file_path, slurm_array_id=slurm_array_id)
         self.state_files_in_memory[task_key] = state_file
         return state_file
 
     def fetch_true_state_and_update_memory_if_changed(self, task_key):
         state_file = self.lookup_state_file_from_memory(task_key)
         if os.path.exists(state_file.path):
-            return None
+            return None, state_file
         else:
-            file = self._find_state_file_in_task_control_dir(task_key)
-            if file is None:
+            state_file_path = self._find_state_file_path_in_task_control_dir(task_key)
+            if state_file_path is None:
                 raise Exception(f"no state file exists in {os.path.join(self.pipeline_work_dir, task_key)}")
-            state_file.refresh(file.path)
-            return state_file
+            state_file.refresh(state_file_path)
+            return state_file, state_file
 
     def _load_task_conf(self, task_control_dir):
         with open(os.path.join(task_control_dir, "task-conf.json")) as tc:
@@ -196,19 +206,18 @@ class StateFileTracker:
                     if not fnmatch.fnmatch(task_key, glob_filter):
                         continue
 
-                state_file_dir_entry = self._find_state_file_in_task_control_dir(task_key)
+                state_file_dir_entry = self._find_state_file_path_in_task_control_dir(task_key)
                 if state_file_dir_entry is None:
                     raise Exception(f"no state file exists in {task_control_dir_entry.path}")
 
                 yield task_key, task_control_dir, state_file_dir_entry
 
-    def _load_task_from_state_file(self, task_key, task_control_dir, state_file_dir_entry, include_non_completed):
-        if state_file_dir_entry.name == "state.completed" or include_non_completed:
+    def _load_task_from_state_file(self, task_key, task_control_dir, state_file_path, include_non_completed):
+        if state_file_path.endswith("state.completed") or include_non_completed:
             state_file = StateFile(
-                task_key, None, self, path=state_file_dir_entry.path
+                task_key, None, self, path=state_file_path
             )
             var_file = os.path.join(task_control_dir, "output_vars")
-            is_complete = state_file_dir_entry.name == "state.completed"
 
             pod = self.pipeline_output_dir
 
@@ -240,9 +249,6 @@ class StateFileTracker:
                 def __str__(self):
                     return f"Task(key={self.key})"
 
-                #def task_conf_json(self):
-                #    return state_file.load_task_conf_json()
-
                 def is_completed(self):
                     return state_file.is_completed()
 
@@ -265,14 +271,14 @@ class StateFileTracker:
 
     def load_single_task_or_none(self, task_key, include_non_completed=False):
         task_control_dir = os.path.join(self.pipeline_work_dir, task_key)
-        state_file_dir_entry = self._find_state_file_in_task_control_dir(task_key)
-        if state_file_dir_entry is None:
+        state_file_path = self._find_state_file_path_in_task_control_dir(task_key)
+        if state_file_path is None:
             return None
         else:
             # update mem
             self.fetch_true_state_and_update_memory_if_changed(task_key)
             l = list(self._load_task_from_state_file(
-                task_key, task_control_dir, state_file_dir_entry, include_non_completed
+                task_key, task_control_dir, state_file_path, include_non_completed
             ))
             c = len(l)
             if c == 0:
@@ -283,9 +289,9 @@ class StateFileTracker:
                 raise Exception(f"expected zero or one task with key '{task_key}', got {c}")
 
     def load_state_files_for_run(self, glob_filter=None):
-        for task_key, task_control_dir, state_file_dir_entry in self._iterate_all_tasks_from_disk(glob_filter):
+        for task_key, task_control_dir, state_file_path in self._iterate_all_tasks_from_disk(glob_filter):
             state_file = StateFile(
-                task_key, None, self, path=state_file_dir_entry.path
+                task_key, None, self, path=state_file_path
             )
             self.state_files_in_memory[task_key] = state_file
             task_conf = self._load_task_conf(task_control_dir)
@@ -310,10 +316,10 @@ class StateFileTracker:
             return False, state_file_in_memory
         else:
             # we have a new task OR process was restarted
-            state_file_on_disc = self._find_state_file_in_task_control_dir(task.key)
-            if state_file_on_disc is not None:
+            state_file_path = self._find_state_file_path_in_task_control_dir(task.key)
+            if state_file_path is not None:
                 # process was restarted, task is NOT new
-                state_file_in_memory = self.load_from_existing_file_on_disc_and_resave_if_required(task, state_file_on_disc)
+                state_file_in_memory = self.load_from_existing_file_on_disc_and_resave_if_required(task, state_file_path)
                 self.state_files_in_memory[task.key] = state_file_in_memory
                 return False, state_file_in_memory
             else:
@@ -512,7 +518,7 @@ class StateMachine:
 
         def gen_newly_completed_task_keys():
             for task_key in self._keys_of_tasks_waiting_for_external_events:
-                true_state_file = self.state_file_tracker.fetch_true_state_and_update_memory_if_changed(task_key)
+                true_state_file, _ = self.state_file_tracker.fetch_true_state_and_update_memory_if_changed(task_key)
                 if true_state_file is not None:
                     if true_state_file.is_completed():
                         yield task_key

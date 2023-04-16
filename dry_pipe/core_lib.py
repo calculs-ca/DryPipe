@@ -130,6 +130,10 @@ class PortablePopen:
         for line in self.popen.stdout.readlines():
             yield line.decode("utf8")
 
+    def iterate_stdout_lines(self):
+        for line in self.popen.stdout:
+            yield line.decode("utf8")
+
     def safe_stderr_as_string(self):
         i = 0
         try:
