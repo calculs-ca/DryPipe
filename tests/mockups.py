@@ -75,10 +75,10 @@ class StateFileTrackerMockup:
             raise Exception(f"{task_key} should be in memory by now")
 
         if str(state_file_in_memory) == f"/{task_key}/{true_task_state}":
-            return None
+            return None, state_file_in_memory
         else:
             state_file_in_memory.refresh(f"/{task_key}/{true_task_state}")
-            return state_file_in_memory
+            return state_file_in_memory, state_file_in_memory
 
     def create_true_state_if_new_else_fetch_from_memory(self, task):
         """

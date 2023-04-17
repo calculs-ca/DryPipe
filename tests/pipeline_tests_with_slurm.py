@@ -1,15 +1,15 @@
 import glob
-import json
-import logging
 import os.path
+import shutil
 import textwrap
 import time
-import unittest
 from functools import reduce
 from pathlib import Path
+from typing import Tuple, List
 
 from base_pipeline_test import BasePipelineTest, TestWithDirectorySandbox
-from dry_pipe import DryPipe, PortablePopen
+from dry_pipe import DryPipe, PortablePopen, TaskConf
+from dry_pipe.slurm_adapter import SlurmArrayParentTask
 from dry_pipe.state_machine import StateFileTracker
 from mockups import TaskMockup
 from test_state_machine import StateMachineTester
@@ -247,71 +247,42 @@ class SlurmArrayHandingStateMachineTest(TestWithDirectorySandbox):
 
         tester.assert_set_of_next_tasks_ready("a-digest")
 
-        #tester.assert_set_of_next_tasks_ready(*[])
 
 
-
-        #tester.iterate_once_and_mutate_set_of_next_state_files_ready()
-
-
-        #i2 = tester.iterate_once_and_mutate_set_of_next_state_files_ready()
-
-        #tester.assert_set_of_next_tasks_ready(*[])
-
-        #tester.assert_set_of_next_tasks_ready('t_a_1', 't_a_2', 't_b_2', 't_b_1')
-        # because of pending queries, it's never over until it's over:
-        #for _ in [1,2,3,4,5]:
-        #    tester.iterate_once_and_mutate_set_of_next_state_files_ready()
-
-        #tester.assert_set_of_next_tasks_ready(*[])
-        #tester.state_file_tracker.set_completed_on_disk("t1")
-
-
-class SlurmArrayScenario(TestWithDirectorySandbox):
+class BaseSlurmArrayScenario(TestWithDirectorySandbox):
 
     def setUp(self):
+
+        d = Path(self.pipeline_instance_dir)
+        if d.exists():
+            shutil.rmtree(d)
+
+        self.parent_task_key, self.children_task_keys = self.get_slurm_array_task_keys()
+
         self.task_control_dir = os.path.join(
             self.pipeline_instance_dir,
             ".drypipe",
-            "parent-task"
+            self.parent_task_key
         )
 
         self.current_step = 0
+        self.current_squeue_call = 0
 
-        self.steps = []
+        self.tracker = StateFileTracker(pipeline_instance_dir=self.pipeline_instance_dir)
 
-        for s in self.scenario():
-            t = textwrap.dedent(s).strip()
-            states_by_task_key = {}
-            for squeue_for_task in t.split("\n"):
-                squeue_for_task = squeue_for_task.strip().split()
-                states_by_task_key[squeue_for_task[0]] = squeue_for_task[1:]
-            self.steps.append(states_by_task_key)
+        self.parent_task_state_file = self.tracker.create_true_state_if_new_else_fetch_from_memory(
+            TaskMockup(self.parent_task_key)
+        )
 
-        slurm_scenario = self
+        self.parent_task = SlurmArrayParentTask(self.parent_task_key, self.tracker, self.get_task_conf())
 
-        class SlurmArrayParentTask4Test(SlurmArrayParentTask):
-
-            def call_sbatch(self, command_args):
-                slurm_scenario.current_step
-
-            def call_squeue(self):
-                for task_key, state in slurm_scenario.steps[slurm_scenario.current_step].items():
-                    pass
-
-
-        self.parent_task = SlurmArrayParentTask4Test(self.task_control_dir)
+        for k in self.children_task_keys:
+            self.tracker.create_true_state_if_new_else_fetch_from_memory(TaskMockup(k))
+            self.tracker.set_ready_on_disk_and_in_memory(k)
 
         with open(self.parent_task.task_keys_file(), "w") as f:
-            for k in self.children_task_keys():
+            for k in self.children_task_keys:
                 f.write(f"{k}\n")
-
-    def children_task_keys(self):
-        task_keys = set()
-        for s in self.steps:
-            for k in s.keys():
-                task_keys.add(k)
-        return sorted(task_keys)
 
     def load_task_keys(self, f):
         def gen():
@@ -322,183 +293,143 @@ class SlurmArrayScenario(TestWithDirectorySandbox):
 
     def assert_task_keys_in_array_file(self, array_number: int, task_keys: set[str]):
         self.assertEqual(
-            self.load_task_keys(self.parent_task.i_th_arrays_file(array_number)),
+            self.load_task_keys(self.parent_task.i_th_array_file(array_number)),
             task_keys
         )
 
+    def set_states_on_disc(self, task_key_to_state_base_name):
+        for k, state_base_name in task_key_to_state_base_name.items():
+            self.tracker.set_step_state_on_disk_and_in_memory(k, state_base_name)
+
+    def assert_task_state_file_states(self, task_key_to_drypipe_state: dict[str, str]):
+
+        errors = []
+        for task_key, expected_state in task_key_to_drypipe_state.items():
+            _, state_file = self.tracker.fetch_true_state_and_update_memory_if_changed(task_key)
+            state_on_disc = state_file.state_as_string()
+            if state_on_disc != expected_state:
+                errors.append(f"expected {task_key} to be {expected_state}, got {state_on_disc}")
+
+        if len(errors) > 0:
+            raise Exception(f"\n".join(errors))
+
+    def get_task_conf(self):
+        return TaskConf(
+            executer_type="slurm",
+            slurm_account="zaz"
+        )
+
+    def get_slurm_array_task_keys(self)-> Tuple[str, List[str]]:
+        """
+        :return: parent_task_key->str, children_task_keys: List[str]
+        """
+        raise NotImplementedError()
+
+
+class SlurmArrayScenario1(BaseSlurmArrayScenario):
+
+    def get_slurm_array_task_keys(self):
+        return "parent_task", ["t1", "t2", "t3", "t4"]
 
     def test(self):
 
-        self.parent_task.prepare_and_launch_next_array()
+        size_of_array_launched = self.parent_task.prepare_and_launch_next_array(
+            call_sbatch_mockup=lambda: 1232
+        )
+
+        self.assertEqual(size_of_array_launched, 4)
+
+        self.assertTrue(
+            os.path.exists(self.parent_task.i_th_array_file(0))
+        )
+
+        self.assertTrue(
+            os.path.exists(self.parent_task.i_th_submitted_array_file(0, 1232))
+        )
 
         self.assert_task_keys_in_array_file(0, {"t1", "t2", "t3", "t4"})
-        self.parent_task.compare_squeue_with_state_files()
 
-
-
-    def scenario(self):
-        # s: started
-        # f: failed
-        # c: complete
-        return [
-            """
-            t1 s s c   
-            t2 s f f
-            t3 s s c
-            t4 s s t
-            """,
-            """   
-            t2 s c c
-            t4 s f f
-            """,
-            "t4 s s c"
-        ]
-
-
-
-class SlurmArrayParentTask:
-
-    def __init__(self, control_dir, logger=None):
-        #self.restart_at_step = restart_at_step
-        self.control_dir = control_dir
-        self.debug = True
-
-        #with open(self.control_dir, "task-conf.json") as tc:
-        #    self.task_conf = json.loads(tc.read())
-
-        self.tracker = StateFileTracker(
-            pipeline_instance_dir=os.path.dirname(os.path.dirname(control_dir))
+        size_of_array_launched = self.parent_task.prepare_and_launch_next_array(
+            call_sbatch_mockup=lambda: 234324234
         )
 
-        self.state_file = self.tracker.create_true_state_if_new_else_fetch_from_memory(
-            TaskMockup("parent-task")
+        self.assertEqual(size_of_array_launched, 0)
+
+        self.assert_task_state_file_states({
+            "t1": "state._step-started",
+            "t2": "state._step-started",
+            "t3": "state._step-started",
+            "t4": "state._step-started"
+        })
+
+        self.set_states_on_disc({
+            "t2": "state.step-started.0",
+            "t4": "state.step-started.0"
+        })
+
+        dict_unexpected_states = self.parent_task.mock_compare_and_reconcile_squeue_with_state_files([
+            "1232_0 PD",
+            "1232_1 R",
+            "1232_2 PD",
+            "1232_3 R"
+        ])
+        self.assertEqual(dict_unexpected_states, {})
+
+        dict_unexpected_states = self.parent_task.mock_compare_and_reconcile_squeue_with_state_files([
+            "1232_0 R",
+            "1232_1 F",
+            "1232_2 R",
+            "1232_3 R"
+        ])
+        self.assertEqual(dict_unexpected_states, {})
+
+        self.set_states_on_disc({
+            "t1": "state.completed",
+            "t2": "state.failed.0",
+            "t3": "state.completed",
+            "t4": "state.timed-out.0"
+        })
+
+        dict_unexpected_states = self.parent_task.mock_compare_and_reconcile_squeue_with_state_files([
+            "1232_0 CD",
+            "1232_1 F",
+            "1232_2 CD"
+            #"1232_3 TO"
+        ])
+        self.assertEqual(dict_unexpected_states, {})
+
+        # should launch nothing
+        size_of_array_launched = self.parent_task.prepare_and_launch_next_array()
+        self.assertEqual(size_of_array_launched, 0)
+
+
+        size_of_array_launched = self.parent_task.prepare_and_launch_next_array(
+            restart_failed=True,
+            call_sbatch_mockup=lambda: 5345
+        )
+        self.assertEqual(size_of_array_launched, 2)
+
+        self.assertTrue(
+            os.path.exists(self.parent_task.i_th_array_file(1))
         )
 
-        if logger is None:
-            self.logger = logging.getLogger('log nothing').addHandler(logging.NullHandler())
-        else:
-            self.logger = logger
+        self.assert_task_keys_in_array_file(1, {"t2","t4"})
 
-    def task_keys_file(self):
-        return os.path.join(self.control_dir, "task-keys.tsv")
+        self.assertTrue(
+            os.path.exists(self.parent_task.i_th_submitted_array_file(1, 5345))
+        )
 
-    def children_task_keys(self):
-        with open(self.task_keys_file()) as f:
-            for line in f:
-                yield line.strip()
+        self.assert_task_state_file_states({
+            "t1": "state.completed",
+            "t2": "state._step-started",
+            "t3": "state.completed",
+            "t4": "state._step-started"
+        })
 
-    def prepare_sbatch_command(self, task_key_file, array_size):
-
-        if array_size == 0:
-            raise Exception(f"should not start an empty array")
-        elif array_size == 1:
-            array_arg = "0"
-        else:
-            array_arg = f"0-{array_size - 1}"
-
-        return [
-            "sbatch",
-            f"--array={array_arg}",
-            f"--account={self.task_conf.slurm_account}",
-            f"--output={self.control_dir}/out.log",
-            f"--export={0}".format(",".join([
-                f"DRYPIPE_CONTROL_DIR={self.control_dir}",
-                f"DRYPIPE_TASK_KEY_FILE_BASENAME={os.path.basename(task_key_file)}",
-                f"DRYPIPE_TASK_DEBUG={self.debug}"
-            ])),
-            "--signal=B:USR1@50",
-            "--parsable",
-            f"{self.control_dir}/cli"
-        ]
-
-    def call_sbatch(self, command_args):
-        cmd = " ".join(command_args)
-        logging.info("will launch array: %s", cmd)
-        with PortablePopen(cmd, shell=True) as p:
-            p.wait_and_raise_if_non_zero()
-            return p.stdout_as_string().strip()
-
-    def call_squeue(self):
-        raise NotImplementedError()
-
-    def compare_squeue_with_state_files(self):
-        raise Exception("warning, scheduled tasks have been detected that have never launched")
-
-    def mv_failed_tasks_to_ready(self):
-        pass
-
-    def launch_array(self):
-        pass
-
-    def arrays_files(self):
-        return glob.glob(os.path.join(self.control_dir, "array.*.tsv"))
-
-    def i_th_arrays_file(self, array_number):
-        return os.path.join(self.control_dir, f"array.{array_number}.tsv")
-
-    def submitted_arrays_files(self):
-        return glob.glob(os.path.join(self.control_dir, "array.*.job.*"))
-
-    def new_array_job_array_file(self, array_number, job_id):
-        return os.path.join(self.control_dir, f"array.{array_number}.job.{job_id}")
-
-    def iterate_next_task_state_files(self, start_next_n):
-        i = 0
-        for k in self.children_task_keys():
-            state_file = self.tracker.fetch_true_state_and_update_memory_if_changed(k)
-            if state_file.is_in_pre_launch():
-                pass
-            elif state_file.is_ready():
-                yield state_file
-                i += 1
-            if start_next_n is not None and start_next_n >= i:
-                break
-
-    def prepare_and_launch_next_array(self, start_next_n=None, restart_failed=False):
-
-        arrays_files = list(self.arrays_files())
-
-        if len(arrays_files) > 0:
-            last_array_file_idx = max([
-                int(f.split(".")[1])
-                for f in arrays_files
-            ])
-        else:
-            last_array_file_idx = 0
-
-        if len(arrays_files) == 0:
-            next_task_key_file = os.path.join(self.control_dir, "array.0.tsv")
-            next_array_number = 0
-        else:
-            next_array_number = last_array_file_idx + 1
-            next_task_key_file = os.path.join(self.control_dir, f"array.{next_array_number}.tsv")
-
-        if restart_failed:
-            self.mv_failed_tasks_to_ready()
-
-        next_task_state_files = list(self.iterate_next_task_state_files(start_next_n))
-
-        if len(next_task_state_files) == 0:
-            print("no more tasks to run")
-        else:
-            with open(next_task_key_file) as _next_task_key_file:
-                for state_file in next_task_state_files:
-                    _next_task_key_file.write(f"{state_file.task_key}\n")
-
-            command_args = self.prepare_sbatch_command(next_task_key_file, len(next_task_state_files))
-            job_id = self.call_sbatch(command_args)
-            with open(self.new_array_job_array_file(next_array_number, job_id), "w") as f:
-                f.write(" ".join(command_args))
+        dict_unexpected_states = self.parent_task.mock_compare_and_reconcile_squeue_with_state_files([
+            "5345_1 R",
+            "5345_3 R"
+        ])
+        self.assertEqual(dict_unexpected_states, {})
 
 
-
-class SlurmArrayLaunchTest(TestWithDirectorySandbox):
-
-    def test_launch_slurm_array(self):
-        self.pipeline_instance_dir
-
-
-if __name__ == '__main__':
-    s = SlurmArrayScenario(None)
-
-    s.test()

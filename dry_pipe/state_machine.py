@@ -2,7 +2,6 @@ import fnmatch
 import json
 import os.path
 import shutil
-from os import DirEntry
 from pathlib import Path
 
 from dry_pipe import TaskBuilder, TaskConf, core_lib
@@ -52,6 +51,9 @@ class StateFile:
 
     def is_failed(self):
         return fnmatch.fnmatch(self.path, "*/state.failed.*")
+
+    def is_timed_out(self):
+        return fnmatch.fnmatch(self.path, "*/state.timed-out.*")
 
     def is_waiting(self):
         return self.path.endswith("state.waiting")
@@ -117,8 +119,8 @@ class StateFileTracker:
         os.rename(self.state_files_in_memory[task_key].path, p)
         self.state_files_in_memory[task_key].path = p
 
-    def set_step_started_on_disk_and_in_memory(self, task_key, step_number):
-        p = os.path.join(self.pipeline_work_dir, task_key, f"state.step-started.{step_number}")
+    def set_step_state_on_disk_and_in_memory(self, task_key, state_base_name):
+        p = os.path.join(self.pipeline_work_dir, task_key, state_base_name)
         b4 = self.state_files_in_memory[task_key].path
         os.rename(b4, p)
         self.state_files_in_memory[task_key].path = p
