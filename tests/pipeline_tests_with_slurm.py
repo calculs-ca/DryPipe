@@ -326,7 +326,7 @@ class BaseSlurmArrayScenario(TestWithDirectorySandbox):
         raise NotImplementedError()
 
 
-class SlurmArrayScenario1(BaseSlurmArrayScenario):
+class SlurmArrayNormalScenario1(BaseSlurmArrayScenario):
 
     def get_slurm_array_task_keys(self):
         return "parent_task", ["t1", "t2", "t3", "t4"]
@@ -355,6 +355,11 @@ class SlurmArrayScenario1(BaseSlurmArrayScenario):
 
         self.assertEqual(size_of_array_launched, 0)
 
+        self.assertEqual(
+            dict(self.parent_task.task_keys_in_i_th_array_file(0)),
+            {"t1": 0, "t2": 1, "t3": 2, "t4": 3}
+        )
+
         self.assert_task_state_file_states({
             "t1": "state._step-started",
             "t2": "state._step-started",
@@ -375,9 +380,12 @@ class SlurmArrayScenario1(BaseSlurmArrayScenario):
         ])
         self.assertEqual(dict_unexpected_states, {})
 
+        self.set_states_on_disc({
+            "t2": "state.failed.0"
+        })
+
         dict_unexpected_states = self.parent_task.mock_compare_and_reconcile_squeue_with_state_files([
             "1232_0 R",
-            "1232_1 F",
             "1232_2 R",
             "1232_3 R"
         ])
@@ -390,12 +398,7 @@ class SlurmArrayScenario1(BaseSlurmArrayScenario):
             "t4": "state.timed-out.0"
         })
 
-        dict_unexpected_states = self.parent_task.mock_compare_and_reconcile_squeue_with_state_files([
-            "1232_0 CD",
-            "1232_1 F",
-            "1232_2 CD"
-            #"1232_3 TO"
-        ])
+        dict_unexpected_states = self.parent_task.mock_compare_and_reconcile_squeue_with_state_files([])
         self.assertEqual(dict_unexpected_states, {})
 
         # should launch nothing
@@ -427,9 +430,57 @@ class SlurmArrayScenario1(BaseSlurmArrayScenario):
         })
 
         dict_unexpected_states = self.parent_task.mock_compare_and_reconcile_squeue_with_state_files([
-            "5345_1 R",
-            "5345_3 R"
+            "5345_0 R",
+            "5345_1 R"
         ])
         self.assertEqual(dict_unexpected_states, {})
 
 
+
+class SlurmArrayCrashScenario(BaseSlurmArrayScenario):
+
+    def get_slurm_array_task_keys(self):
+        return "parent_task", ["t1", "t2"]
+
+    def test(self):
+
+        size_of_array_launched = self.parent_task.prepare_and_launch_next_array(
+            call_sbatch_mockup=lambda: 1232
+        )
+
+        submitted_arrays_files_with_job_status = list(
+            self.parent_task.submitted_arrays_files_with_job_is_running_status()
+        )
+
+        for array_n, job_id, file, is_terminated in submitted_arrays_files_with_job_status:
+            self.assertEqual(array_n, 0)
+            self.assertEqual(job_id, "1232")
+            self.assertFalse(is_terminated)
+
+        self.assertEqual(len(submitted_arrays_files_with_job_status), 1)
+
+        self.assertEqual(2, size_of_array_launched)
+
+        self.assert_task_state_file_states({
+            "t1": "state._step-started",
+            "t2": "state._step-started"
+        })
+
+        dict_unexpected_states = self.parent_task.mock_compare_and_reconcile_squeue_with_state_files([])
+        self.assertEqual(dict_unexpected_states, {
+            't1': ('_step-started', 'R,PD', None),
+            't2': ('_step-started', 'R,PD', None)
+        })
+
+        self.assert_task_state_file_states({
+            "t1": "state.crashed",
+            "t2": "state.crashed"
+        })
+
+
+def all_low_level_tests_with_mockup_slurm():
+    return [
+        SlurmArrayHandingStateMachineTest,
+        SlurmArrayNormalScenario1,
+        SlurmArrayCrashScenario
+    ]

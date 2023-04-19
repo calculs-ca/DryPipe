@@ -5,6 +5,8 @@ from unittest import TextTestRunner, TestSuite, defaultTestLoader
 import pipeline_tests_with_single_tasks
 import pipeline_tests_with_multiple_tasks
 import task_launch_tests
+from dsl_tests import TaskChangeTrackingTests
+from pipeline_tests_with_slurm import all_low_level_tests_with_mockup_slurm
 from test_state_machine import StateMachineTests, StateFileTrackerTest, MockupStateFileTrackerTest
 
 
@@ -21,7 +23,9 @@ def low_level_tests():
         StateMachineTests,
         task_launch_tests.all_launch_tests(),
         pipeline_tests_with_single_tasks.all_tests(),
-        pipeline_tests_with_multiple_tasks.all_basic_tests()
+        pipeline_tests_with_multiple_tasks.all_basic_tests(),
+        all_low_level_tests_with_mockup_slurm(),
+        TaskChangeTrackingTests
     ]
 
 def quick_sanity_tests():
@@ -34,7 +38,8 @@ def quick_sanity_tests():
         pipeline_tests_with_single_tasks.PipelineWith4MixedStepsCrash,
         pipeline_tests_with_single_tasks.PipelineWithSinglePythonTask,
         pipeline_tests_with_multiple_tasks.PipelineWithTwoPythonTasks,
-        pipeline_tests_with_single_tasks.PipelineWithVarAndFileOutput
+        pipeline_tests_with_single_tasks.PipelineWithVarAndFileOutput,
+        all_low_level_tests_with_mockup_slurm(),
     ]
 
 

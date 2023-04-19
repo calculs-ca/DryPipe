@@ -13,5 +13,14 @@ def call(mod_func):
     task_runner.call_python(mod_func, python_task)
 
 
+
+class CliSession:
+
+    def __init__(self):
+        self.pipeline_instance_dir = None
+        self.pipeline_mod_func = None
+
+
+
 if __name__ == '__main__':
     call(sys.argv[2])

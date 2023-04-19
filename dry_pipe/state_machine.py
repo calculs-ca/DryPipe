@@ -70,8 +70,11 @@ class StateFile:
     def output_dir(self):
         return os.path.join(self.tracker.pipeline_output_dir, self.task_key)
 
+    def task_conf_file(self):
+        return os.path.join(self.control_dir(), "task-conf.json")
+
     def load_task_conf_json(self):
-        with open(os.path.join(self.control_dir(), "task-conf.json")) as tc:
+        with open(self.task_conf_file()) as tc:
             return json.loads(tc.read())
 
     def load_task_conf(self):
@@ -124,6 +127,11 @@ class StateFileTracker:
         b4 = self.state_files_in_memory[task_key].path
         os.rename(b4, p)
         self.state_files_in_memory[task_key].path = p
+
+    def transition_to_crashed(self, state_file):
+        previous_path = state_file.path
+        state_file.transition_to_crashed()
+        os.rename(previous_path, state_file.path)
 
     def register_pre_launch(self, state_file):
         previous_path = state_file.path
@@ -318,15 +326,16 @@ class StateFileTracker:
             return False, state_file_in_memory
         else:
             # we have a new task OR process was restarted
+            hash_code = task.compute_hash_code()
             state_file_path = self._find_state_file_path_in_task_control_dir(task.key)
             if state_file_path is not None:
                 # process was restarted, task is NOT new
                 state_file_in_memory = self.load_from_existing_file_on_disc_and_resave_if_required(task, state_file_path)
                 self.state_files_in_memory[task.key] = state_file_in_memory
+                task.save_if_hash_has_changed(state_file_in_memory, hash_code)
                 return False, state_file_in_memory
             else:
                 # task is new
-                hash_code = task.compute_hash_code()
                 state_file_in_memory = StateFile(task.key, hash_code, self)
                 state_file_in_memory.is_slurm_array_child = task.is_slurm_array_child
                 task.save(state_file_in_memory, hash_code)

@@ -437,6 +437,24 @@ class TaskConf:
                 self.remote_base_dir
             ])
 
+    def hash_values(self):
+        yield self.executer_type
+        if self.container is not None:
+            yield self.container
+        if self.extra_env is not None:
+            for k, v in self.extra_env.items():
+                yield k
+                yield v
+        if self.init_bash_command is not None:
+            yield self.init_bash_command
+        if self.sbatch_options is not None:
+            for o in self.sbatch_options:
+                yield str(o)
+        if self.slurm_account is not None:
+            yield self.slurm_account
+        if self.python_bin is not None:
+            yield self.python_bin
+
     def full_remote_path(self, pipeline_instance):
         return f"{self.remote_site_key}/{pipeline_instance.instance_dir_base_name()}"
 

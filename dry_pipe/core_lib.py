@@ -1300,6 +1300,19 @@ class TaskInput:
 
         self.file_name = file_name
 
+    def hash_values(self):
+        yield self.name
+        yield self.type
+        if self.name_in_upstream_task is not None:
+            yield self.name_in_upstream_task
+        if self.upstream_task_key is not None:
+            yield str(self.upstream_task_key)
+        if self.value is not None:
+            yield str(self.value)
+        if self.file_name is not None:
+            yield str(self.file_name)
+
+
     def parse(self, v):
         if self.type == "int":
             return int(v)
@@ -1360,6 +1373,14 @@ class TaskOutput:
         self.produced_file_name = produced_file_name
         self._resolved_value = None
         self.task_key = task_key
+
+    def hash_values(self):
+        yield self.name
+        yield self.type
+        if self.produced_file_name is not None:
+            yield self.produced_file_name
+        if self._resolved_value is not None:
+            yield str(self._resolved_value)
 
     def set_resolved_value(self, v):
         self._resolved_value = self.parse(v)

@@ -1,8 +1,8 @@
 import json
 import os
 import pathlib
+from hashlib import blake2b
 
-import textwrap
 
 from dry_pipe.core_lib import FileCreationDefaultModes
 
@@ -46,18 +46,96 @@ class Task:
     def _visit_input_and_output_files(self, collect_deps_and_outputs_func):
         raise Exception(f"to implement")
 
-    def prepare(self, control_dir):
+    def compute_hash_code(self):
 
-        def task_conf_file():
-            return os.path.join(control_dir, "task-conf.json")
+        format_version = "1"
+
+        d = blake2b(digest_size=20)
+
+        sep = ",".encode("utf8")
+        def h(s):
+            d.update(s.encode("utf8"))
+            d.update(sep)
+
+        h(format_version)
+
+        h(self.key)
+
+        for i in self.inputs:
+            for v in i.hash_values():
+                h(v)
+
+        for i in self.outputs:
+            for v in i.hash_values():
+                h(v)
+
+        for s in self.task_steps:
+            for v in s.hash_values():
+                h(v)
+
+        for v in self.task_conf.hash_values():
+            h(v)
+
+        if self.is_slurm_array_child:
+            h('t')
+        else:
+            h('f')
+
+        if self.max_simultaneous_jobs_in_slurm_array is not None:
+            h(str(self.max_simultaneous_jobs_in_slurm_array))
+
+        return d.hexdigest()
+
+    def save_if_hash_has_changed(self, state_file, hash_code):
+
+        def hash_changed():
+            with open(state_file.task_conf_file()) as f:
+                i = 0
+                for line in f:
+                    if '"digest"' in line:
+                        _, digest_in_file = line.split(":")
+                        digest_in_file = digest_in_file.replace(",", "").replace('"', '').strip()
+                        return hash_code != digest_in_file
+                    else:
+                        i += 1
+                    if i > 3:
+                        raise Exception(f"'digest' not found in {state_file.task_conf_file}, expected on line 2")
+
+        if hash_changed():
+            self.save(state_file, hash_code)
+
+    def save(self, state_file, hash_code):
+
+        pipeline_instance_dir = state_file.tracker.pipeline_instance_dir
+        control_dir = state_file.control_dir()
+        output_dir = state_file.output_dir()
+
+        class ShallowPipelineInstance:
+            def __init__(self):
+                self.pipeline_instance_dir = pipeline_instance_dir
+
+        self.pipeline_instance = ShallowPipelineInstance()
+
+        pathlib.Path(control_dir).mkdir(
+            parents=True, exist_ok=True, mode=FileCreationDefaultModes.pipeline_instance_directories)
+
+        pathlib.Path(output_dir).mkdir(
+            parents=True, exist_ok=True, mode=FileCreationDefaultModes.pipeline_instance_directories)
+
+        pathlib.Path(os.path.join(output_dir, "scratch")).mkdir(
+            parents=True, exist_ok=True, mode=FileCreationDefaultModes.pipeline_instance_directories)
 
         step_invocations = [
             self.task_steps[step_number].get_invocation(control_dir, self, step_number)
             for step_number in range(0, len(self.task_steps))
         ]
 
-        with open(task_conf_file(), "w") as f:
-            task_conf_json = self.task_conf.as_json()
+        with open(state_file.task_conf_file(), "w") as f:
+
+            task_conf_json = {
+                "digest": hash_code,
+                ** self.task_conf.as_json()
+            }
 
             task_conf_json["inputs"] = [
                 i.as_json() for i in self.inputs
@@ -81,32 +159,6 @@ class Task:
         os.chmod(shell_script_file, FileCreationDefaultModes.pipeline_instance_scripts)
 
 
-    def compute_hash_code(self):
-        return "123"
-
-    def save(self, state_file, hash_code):
-
-        pipeline_instance_dir = state_file.tracker.pipeline_instance_dir
-        control_dir = state_file.control_dir()
-        output_dir = state_file.output_dir()
-
-        class ShallowPipelineInstance:
-            def __init__(self):
-                self.pipeline_instance_dir = pipeline_instance_dir
-
-        self.pipeline_instance = ShallowPipelineInstance()
-
-        pathlib.Path(control_dir).mkdir(
-            parents=True, exist_ok=True, mode=FileCreationDefaultModes.pipeline_instance_directories)
-
-        pathlib.Path(output_dir).mkdir(
-            parents=True, exist_ok=True, mode=FileCreationDefaultModes.pipeline_instance_directories)
-
-        pathlib.Path(os.path.join(output_dir, "scratch")).mkdir(
-            parents=True, exist_ok=True, mode=FileCreationDefaultModes.pipeline_instance_directories)
-
-        self.prepare(control_dir)
-
 
 
 
@@ -117,6 +169,14 @@ class TaskStep:
         self.shell_script = shell_script
         self.python_call = python_call
         self.shell_snippet = shell_snippet
+
+    def hash_values(self):
+        if self.shell_script is not None:
+            yield self.shell_script
+        if self.python_call is not None:
+            yield self.python_call.mod_func()
+        if self.shell_snippet is not None:
+            yield self.shell_snippet
 
     def get_invocation(self, control_dir, task, step_number):
 

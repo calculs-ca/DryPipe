@@ -75,6 +75,56 @@ class SlurmArrayParentTask:
             for line in p.iterate_stdout_lines():
                 yield line
 
+    def compare_and_reconcile_squeue_with_state_files(self, mockup_squeue_call=None):
+
+        submitted_arrays_files = list(self.submitted_arrays_files_with_job_is_running_status())
+
+        assumed_active_job_ids = {
+            job_id
+            for array_n, job_id, file, is_terminated in submitted_arrays_files
+            if not is_terminated
+        }
+
+        job_ids_to_array_idx_to_squeue_state = self.call_squeue_and_index_response(
+            assumed_active_job_ids, mockup_squeue_call
+        )
+
+        actual_active_job_ids = job_ids_to_array_idx_to_squeue_state.keys()
+
+        ended_job_ids_since_last_call = assumed_active_job_ids - actual_active_job_ids
+
+        """
+        j1: t0, t1, t3
+        j2:     t1
+        """
+        task_key_to_job_id_array_idx = {}
+
+        for array_n, job_id, job_submission_file, is_assumed_terminated in submitted_arrays_files:
+            if not is_assumed_terminated:
+                for task_key, array_idx in self.task_keys_in_i_th_array_file(array_n):
+                    task_key_to_job_id_array_idx[task_key] = (job_id, array_idx)
+
+        dict_unexpected_states = {}
+
+        for task_key, (job_id, array_idx) in task_key_to_job_id_array_idx.items():
+            array_idx_to_squeue_state = job_ids_to_array_idx_to_squeue_state.get(job_id)
+            squeue_state = None
+            if array_idx_to_squeue_state is not None:
+                squeue_state = array_idx_to_squeue_state.get(array_idx)
+            unexpected_states = self.compare_and_reconcile_task_state_file_with_squeue_state(task_key, squeue_state)
+            if unexpected_states is not None:
+                dict_unexpected_states[task_key] = unexpected_states
+                drypipe_state_as_string, expected_squeue_state, actual_queue_state = unexpected_states
+
+        # flag new ended job_ids
+        for array_n, job_id, job_submission_file, is_assumed_terminated in submitted_arrays_files:
+            if not is_assumed_terminated:
+                if job_id in ended_job_ids_since_last_call:
+                    with open(job_submission_file, "a") as f:
+                        f.write("COMPLETED\n")
+
+        return dict_unexpected_states
+
     def call_squeue_and_index_response(self, submitted_job_ids, mockup_squeue_call=None) -> dict[str,dict[int,str]]:
 
         res: dict[str,dict[int,str]] = {}
@@ -127,44 +177,6 @@ class SlurmArrayParentTask:
 
         return self.compare_and_reconcile_squeue_with_state_files(mockup_squeue_call)
 
-    def compare_and_reconcile_squeue_with_state_files(self, mockup_squeue_call=None)-> dict[str, Tuple[str, str, str]]:
-
-        dict_unexpected_states = {}
-
-        submitted_job_ids: set[str] = self.submitted_job_ids()
-
-        indexed_squeue_response: dict[str, dict[int,str]] = \
-            self.call_squeue_and_index_response(submitted_job_ids, mockup_squeue_call)
-
-        ended_job_ids: set[str] = submitted_job_ids - indexed_squeue_response.keys()
-
-        for job_id, iter_array_idx_task_keys in self.submitted_job_ids_to_tuple_array_idx_task_keys(ended_job_ids):
-
-            for array_idx, task_key in iter_array_idx_task_keys:
-
-                squeue_state = None
-                squeue_results_for_job_id = indexed_squeue_response.get(job_id)
-                if squeue_results_for_job_id is not None:
-                    squeue_state = squeue_results_for_job_id.get(array_idx)
-
-                incoherent_states = self.compare_and_reconcile_task_state_file_with_squeue_state(
-                    task_key,
-                    squeue_state
-                )
-                if incoherent_states is not None:
-                    dict_unexpected_states[task_key] = incoherent_states
-                    drypipe_state_as_string, expected_squeue_state, actual_queue_state = incoherent_states
-                    if actual_queue_state is None:
-                        actual_queue_state = "nothing"
-                    self.logger.warning(
-                        "task %s in state %s and squeue returned %",
-                        task_key,
-                        drypipe_state_as_string,
-                        actual_queue_state
-                    )
-
-        return dict_unexpected_states
-
     def fetch_state_file(self, task_key):
         _, state_file = self.tracker.fetch_true_state_and_update_memory_if_changed(task_key)
         return state_file
@@ -172,6 +184,8 @@ class SlurmArrayParentTask:
     def compare_and_reconcile_task_state_file_with_squeue_state(self, task_key, squeue_state):
         state_file = self.fetch_state_file(task_key)
         drypipe_state_as_string = state_file.state_as_string()
+        # strip "state."
+        drypipe_state_as_string = drypipe_state_as_string[6:]
         if "." in drypipe_state_as_string:
             drypipe_state_as_string = drypipe_state_as_string.split(".")[0]
 
@@ -179,19 +193,19 @@ class SlurmArrayParentTask:
 
         if drypipe_state_as_string in ["completed", "failed", "killed", "timed-out"]:
             if squeue_state is not None:
-                return drypipe_state_as_string, None, drypipe_state_as_string
+                return drypipe_state_as_string, None, squeue_state
         elif drypipe_state_as_string in ["ready", "waiting"]:
             if squeue_state is not None:
-                return drypipe_state_as_string, None, drypipe_state_as_string
+                return drypipe_state_as_string, None, squeue_state
         elif drypipe_state_as_string.endswith("_step-started"):
             if squeue_state is None:
-                state_file.transition_to_crashed()
+                self.tracker.transition_to_crashed(state_file)
                 return drypipe_state_as_string,  "R,PD", None
             elif squeue_state not in ["R", "PD"]:
                 return drypipe_state_as_string, "R,PD", squeue_state
-        elif drypipe_state_as_string.endswith("state.step-started"):
+        elif drypipe_state_as_string.endswith("step-started"):
             if squeue_state is None:
-                state_file.transition_to_crashed()
+                self.tracker.transition_to_crashed(state_file)
                 return drypipe_state_as_string,  "R,PD", None
             elif squeue_state not in ["R", "PD"]:
                 return drypipe_state_as_string, "R,PD", squeue_state
@@ -211,6 +225,13 @@ class SlurmArrayParentTask:
     def i_th_array_file(self, array_number):
         return os.path.join(self.control_dir(), f"array.{array_number}.tsv")
 
+    def task_keys_in_i_th_array_file(self, array_number):
+        with open(self.i_th_array_file(array_number)) as f:
+            array_idx = 0
+            for line in f:
+                yield line.strip(), array_idx
+                array_idx += 1
+
     def submitted_arrays_files(self) -> Iterator[Tuple[int, str, str]]:
         def gen():
             for f in glob.glob(os.path.join(self.control_dir(), "array.*.job.*")):
@@ -221,6 +242,17 @@ class SlurmArrayParentTask:
 
         yield from sorted(gen(), key=lambda t: t[0])
 
+    def submitted_arrays_files_with_job_is_running_status(self) -> Iterator[Tuple[int, str, str, bool]]:
+        def s(file):
+            with open(file) as _file:
+                for line in _file:
+                    if line.strip() == "COMPLETED":
+                        return True
+            return False
+
+        for array_n, job_id, f in self.submitted_arrays_files():
+            status = s(f)
+            yield array_n, job_id, f, status
 
     def i_th_submitted_array_file(self, array_number, job_id):
         return os.path.join(self.control_dir(), f"array.{array_number}.job.{job_id}")
