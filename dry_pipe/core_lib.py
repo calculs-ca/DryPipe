@@ -483,7 +483,13 @@ class TaskProcess:
         yield "__control_dir", self.control_dir
         yield "__task_key", self.task_key
         yield "__task_output_dir", self.task_output_dir
-        yield "__scratch_dir", os.path.join(self.task_output_dir, "scratch")
+
+        scratch_dir = os.environ.get('SLURM_TMPDIR')
+        if scratch_dir is None:
+            yield "__scratch_dir", os.path.join(self.task_output_dir, "scratch")
+        else:
+            yield "__scratch_dir", scratch_dir
+
         yield "__output_var_file", os.path.join(self.control_dir, "output_vars")
         yield "__out_log", os.path.join(self.control_dir, "out.log")
         yield "__err_log", os.path.join(self.control_dir, "err.log")
@@ -541,9 +547,6 @@ class TaskProcess:
             ] + cmd
 
         env = self.env
-
-        if os.environ.get("__is_slurm"):
-            env['__scratch_dir'] = os.environ['SLURM_TMPDIR']
 
         has_failed = False
 
@@ -802,10 +805,9 @@ class TaskProcess:
             if _fs_type(root_dir_of_script) in ["autofs", "nfs", "zfs"]:
                 apptainer_bindings.append(f"{root_dir_of_script}:{root_dir_of_script}")
 
-            if os.environ.get("__is_slurm"):
-                scratch_dir = os.environ['SLURM_TMPDIR']
-                env['__scratch_dir'] = scratch_dir
-                root_of_scratch_dir = _root_dir(scratch_dir)
+            slurm_tmpdir = os.environ.get("SLURM_TMPDIR")
+            if slurm_tmpdir is not None:
+                root_of_scratch_dir = _root_dir(slurm_tmpdir)
                 apptainer_bindings.append(f"{root_of_scratch_dir}:{root_of_scratch_dir}")
 
             if len(apptainer_bindings) > 0:
