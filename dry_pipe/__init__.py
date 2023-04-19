@@ -257,13 +257,8 @@ class TaskBuilder:
         """
 
         task_conf = self.task_conf
-        container = kwargs.get("container")
-        if container is not None:
-            task_conf = task_conf.override_container(container)
-
-        executer_type = kwargs.get("executer_type")
-        if executer_type is not None:
-            task_conf = task_conf.override_executer(executer_type)
+        if "container" in kwargs:
+            task_conf = task_conf.override_container(kwargs["container"])
 
         task_step = None
 
