@@ -127,8 +127,10 @@ def prepare(pipeline, instance_dir, regen_all, env):
     for task in pipeline_instance.tasks:
 
         if regen_all:
-            task.prepare()
-            print(f"regenerated {task.key}")
+
+            if os.path.exists(os.path.join(instance_dir, ".drypipe", task.key)):
+                task.prepare()
+                print(f"regenerated {task.key}")
 
 
 @click.command()
