@@ -248,7 +248,13 @@ def iterate_task_env(task_conf_as_json=None, control_dir=None):
     yield "__task_key", task_key
     task_output_dir = os.path.join(pipeline_instance_dir, "output", task_key)
     yield "__task_output_dir", task_output_dir
-    yield "__scratch_dir", os.path.join(task_output_dir, "scratch")
+
+    scratch_dir = os.environ.get('SLURM_TMPDIR')
+    if scratch_dir is None:
+        yield "__scratch_dir", os.path.join(task_output_dir, "scratch")
+    else:
+        yield "__scratch_dir", scratch_dir
+
     yield "__output_var_file", os.path.join(control_dir, "output_vars")
     yield "__out_log", os.path.join(control_dir, "out.log")
     yield "__err_log", os.path.join(control_dir, "err.log")
@@ -373,8 +379,8 @@ def run_python(task_conf_dict, mod_func, container=None):
             ] + cmd
     env = {**os.environ}
 
-    if os.environ.get("__is_slurm"):
-        env['__scratch_dir'] = os.environ['SLURM_TMPDIR']
+    #if os.environ.get("__is_slurm"):
+    #    env['__scratch_dir'] = os.environ['SLURM_TMPDIR']
 
     has_failed = False
 
@@ -760,10 +766,10 @@ def run_script(script, container=None):
 
         apptainer_bindings = []
 
-        if os.environ.get("__is_slurm"):
-            scratch_dir = os.environ['SLURM_TMPDIR']
-            env['__scratch_dir'] = scratch_dir
-            root_of_scratch_dir = _root_dir(scratch_dir)
+        slurm_tmpdir = os.environ.get("SLURM_TMPDIR")
+        if slurm_tmpdir is not None:
+            env['__scratch_dir'] = slurm_tmpdir
+            root_of_scratch_dir = _root_dir(slurm_tmpdir)
             apptainer_bindings.append(f"{root_of_scratch_dir}:{root_of_scratch_dir}")
 
         if len(apptainer_bindings) > 0:
