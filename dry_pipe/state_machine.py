@@ -52,6 +52,9 @@ class StateFile:
     def is_failed(self):
         return fnmatch.fnmatch(self.path, "*/state.failed.*")
 
+    def is_crashed(self):
+        return fnmatch.fnmatch(self.path, "*/state.crashed.*")
+
     def is_timed_out(self):
         return fnmatch.fnmatch(self.path, "*/state.timed-out.*")
 

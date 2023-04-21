@@ -328,8 +328,8 @@ class TaskProcess:
 
         try:
             out_vars = python_task.func(* args, ** kwargs)
-        except Exception:
-            traceback.print_exc()
+        except Exception as ex:
+            task_logger.exception(ex)
             logging.shutdown()
             exit(1)
 
@@ -368,9 +368,14 @@ class TaskProcess:
     def resolve_task_env(self):
         script_location = self.control_dir
         with open(os.path.join(script_location, "task-conf.json")) as _task_conf:
-            self.task_conf = json.loads(_task_conf.read())
 
-            self.set_generic_task_env()
+            self.task_conf = json.loads(_task_conf.read())
+            self.env = {}
+
+            for k, v in self.iterate_task_env():
+                v = str(v)
+                logger.debug("env var %s = %s", k, v)
+                self.env[k] = v
 
             command_before_task = self.task_conf.get("command_before_task")
 
@@ -402,14 +407,6 @@ class TaskProcess:
             #for k, v in resolve_upstream_vars(task_conf_as_json):
             #    if v is not None:
             #        os.environ[k] = v
-
-    def set_generic_task_env(self):
-        self.env = {}
-
-        for k, v in self.iterate_task_env():
-            v = str(v)
-            logger.debug("env var %s = %s", k, v)
-            self.env[k] = v
 
     def resolve_upstream_and_constant_vars(self, log_error_if_upstream_task_not_completed=True):
 

@@ -6,6 +6,8 @@ from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.layout.containers import HSplit, Window
 from prompt_toolkit.layout.layout import Layout
 from prompt_toolkit.widgets import TextArea
+from prompt_toolkit.completion import Completer, Completion, ThreadedCompleter
+import time
 
 class ConsoleSession:
 
@@ -13,18 +15,39 @@ class ConsoleSession:
         self.pipeline_instance_dir = None
         self.pipeline_generator = None
         self.pipeline_status = None
+        self.trace = ""
 
     def command_start(self, arg):
         self.pipeline_status = "running"
+        return f"{arg} started"
 
     def command_load_pipeline(self, arg):
-        self.pipeline_status = "running"
+        self.pipeline_status = "zz:pop"
+        return f"{arg} loaded"
 
-    def command_stop_pipeline(self, arg):
-        self.pipeline_status = "running"
+    def command_stop_pipeline(self):
+        self.pipeline_status = "stopped"
+        return f"{self.pipeline_generator} stopped"
 
     def command_continue_pipeline(self, arg):
         self.pipeline_status = "running"
+        return f"{arg} restarted without generator"
+
+    def all_commands(self):
+        return [
+            a[8:]
+            for a in dir(self)
+            if a.startswith("command_")
+        ]
+
+    def invoke_command(self, buffer):
+        cmd = buffer.split()
+        command_name = cmd[0]
+        args = cmd[1:]
+        c = self.__getattribute__(f"command_{command_name}")
+        res = c(*args)
+        return res
+
 
 class DryPipeConsole:
 
@@ -34,22 +57,40 @@ class DryPipeConsole:
         self.session = ConsoleSession()
 
     def get_statusbar_text(self):
-        x = 5
-        y = 4356
         return [
             ("class:status", " zaz "),
-            (
-                "class:status.position",
-                f"{x}:{y}",
-            ),
+            ("class:status", self.session.trace),
             ("class:status", " - Press "),
             ("class:status.key", "Ctrl-C"),
-            ("class:status", " to exit, "),
-            ("class:status.key", "/"),
-            ("class:status", " for searching."),
+            ("class:status", " to exit, ")
         ]
 
     def _build_layout(self):
+
+        commands = self.session.all_commands()
+        console = self
+        class SlowCompleter(Completer):
+
+            def __init__(self):
+                self.loading = 0
+
+            def get_completions(self, document, complete_event):
+                # Keep count of how many completion generators are running.
+                self.loading += 1
+                word_before_cursor = document.get_word_before_cursor()
+
+                console.trace = f"{complete_event.completion_requested}"
+
+                try:
+                    for word in commands:
+                        if word.startswith(word_before_cursor):
+                            #time.sleep(0.2)  # Simulate slowness.
+                            yield Completion(word, -len(word_before_cursor))
+
+                finally:
+                    # We use try/finally because this generator can be closed if the
+                    # input text changes before all completions are generated.
+                    self.loading -= 1
 
         output_field = TextArea(style="bg:#000044 #ffffff", text="...")
         input_field = TextArea(
@@ -57,18 +98,21 @@ class DryPipeConsole:
             prompt="~> ",
             style="bg:#000000 #ffffff",
             multiline=False,
-            wrap_lines=False
+            wrap_lines=False,
+            completer=ThreadedCompleter(SlowCompleter())
         )
 
         input_field.accept_handler = lambda buff: self.accept(output_field, buff)
 
+        top_line = Window(
+            content=FormattedTextControl(lambda: self.get_statusbar_text()),
+            height=D.exact(1),
+            style="class:status",
+        )
+
         return Layout(
             HSplit([
-                Window(
-                    content=FormattedTextControl(lambda: self.get_statusbar_text()),
-                    height=D.exact(1),
-                    style="class:status",
-                ),
+                top_line,
                 output_field,
                 Window(height=1, char="_", style="#004400"),
                 input_field
@@ -78,7 +122,7 @@ class DryPipeConsole:
 
     def accept(self, output_field, buff):
 
-        output = f"eval<{buff.text}>"
+        output = self.session.invoke_command(buff.text)
 
         self.buffer_lines.append(output)
 
@@ -109,7 +153,14 @@ class DryPipeConsole:
             full_screen=True,
         )
 
+        def t():
+            while True:
+                application.invalidate()
+                time.sleep(0.1)
+
         application.run()
+
+        #application.create_background_task()
 
 
 if __name__ == "__main__":

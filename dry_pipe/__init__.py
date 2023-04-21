@@ -539,6 +539,13 @@ class TaskConf:
         )
 
 
+class ApptainerConf:
+
+    def __init__(self):
+        self.exec_args = [
+            "--no-mount"
+        ]
+
 class SubPipeline:
     def __init__(self, pipeline, task_namespance_prefix, dsl):
         self.pipeline = pipeline

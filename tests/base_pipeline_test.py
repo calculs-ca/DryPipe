@@ -42,22 +42,15 @@ class BasePipelineTest(TestWithDirectorySandbox):
         pipeline = Pipeline(lambda dsl: self.dag_gen(dsl), pipeline_code_dir=self.pipeline_code_dir)
         pipeline_instance = pipeline.create_pipeline_instance(self.pipeline_instance_dir)
 
-        if self.is_fail_test():
-            pipeline_instance.run_sync(
-                sleep=0,
-                queue_only_pattern=queue_only_pattern,
-                run_tasks_in_process=self.launches_tasks_in_process()
-            )
-            tasks_by_keys = {
-                t.key: t
-                for t in pipeline_instance.query("*", include_incomplete_tasks=True)
-            }
-        else:
-            tasks_by_keys = pipeline_instance.run_sync(
-                sleep=0,
-                queue_only_pattern=queue_only_pattern,
-                run_tasks_in_process=self.launches_tasks_in_process()
-            )
+        pipeline_instance.run_sync(
+            queue_only_pattern=queue_only_pattern,
+            run_tasks_in_process=self.launches_tasks_in_process()
+        )
+
+        tasks_by_keys = {
+            t.key: t
+            for t in pipeline_instance.query("*", include_incomplete_tasks=self.is_fail_test())
+        }
 
         self.validate(tasks_by_keys)
 

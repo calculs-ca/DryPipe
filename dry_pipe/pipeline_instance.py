@@ -1,3 +1,4 @@
+import time
 
 from dry_pipe.pipeline_runner import PipelineRunner
 from dry_pipe.state_machine import StateFileTracker, StateMachine
@@ -13,22 +14,27 @@ class PipelineInstance:
             "__containers_dir": pipeline.containers_dir
         })
 
-    def run_sync(self, queue_only_pattern=None, fail_silently=True, sleep=1, run_tasks_in_process=True):
+    def run_sync(self, queue_only_pattern=None, run_tasks_in_process=True):
 
         state_machine = StateMachine(
             self.state_file_tracker,
             lambda dsl: self.pipeline.task_generator(dsl),
             queue_only_pattern=queue_only_pattern
         )
-        pr = PipelineRunner(state_machine, run_tasks_in_process=run_tasks_in_process)
-        pr.run_sync(fail_silently=fail_silently, sleep=sleep)
+        pr = PipelineRunner(
+            state_machine,
+            run_tasks_in_process=run_tasks_in_process,
+            run_tasks_async=False,
+            sleep_schedule=[0, 0, 0, 1]
+        )
 
-        tasks_by_keys = {
-            t.key: t
-            for t in self.state_file_tracker.load_tasks_for_query()
-        }
-
-        return tasks_by_keys
+        for func, suggested_sleep in pr.iterate_work_rounds():
+            if func is not None:
+                func()
+            elif suggested_sleep is not None:
+                time.sleep(suggested_sleep)
+            else:
+                break
 
     def query(self, glob_pattern, include_incomplete_tasks=False):
         yield from self.state_file_tracker.load_tasks_for_query(
