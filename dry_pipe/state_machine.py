@@ -5,8 +5,7 @@ import shutil
 from pathlib import Path
 
 from dry_pipe import TaskBuilder, TaskConf, core_lib
-from dry_pipe.core_lib import FileCreationDefaultModes, write_pipeline_lib_script, TaskOutput, TaskProcess
-from dry_pipe.task import TaskOutputs, TaskInputs
+from dry_pipe.core_lib import FileCreationDefaultModes, write_pipeline_lib_script, TaskProcess
 
 
 # TODO: rename to TaskState
@@ -227,54 +226,9 @@ class StateFileTracker:
 
     def _load_task_from_state_file(self, task_key, task_control_dir, state_file_path, include_non_completed):
         if state_file_path.endswith("state.completed") or include_non_completed:
-            state_file = StateFile(
-                task_key, None, self, path=state_file_path
+            yield TaskProcess(task_control_dir).resolve_task(
+                StateFile(task_key, None, self, path=state_file_path)
             )
-            var_file = os.path.join(task_control_dir, "output_vars")
-
-            pod = self.pipeline_output_dir
-
-            task_runner = TaskProcess(task_control_dir)
-            task_runner.resolve_task_env()
-
-            class Task:
-                def __init__(self):
-                    self.key = task_key
-                    self.inputs = TaskInputs(self, task_runner)
-
-                    task_outputs = {}
-                    unparsed_out_vars = dict(task_runner.iterate_out_vars_from(var_file))
-
-                    for o in task_runner.task_conf["outputs"]:
-                        o = TaskOutput.from_json(o)
-                        if o.type != 'file':
-                            v = unparsed_out_vars.get(o.name)
-                            if v is not None:
-                                o.set_resolved_value(v)
-                            task_outputs[o.name] = o
-                        else:
-                            o.set_resolved_value(os.path.join(pod, task_key, o.produced_file_name))
-                            task_outputs[o.name] = o
-
-                    self.outputs = TaskOutputs(self, task_outputs)
-                    self.state_file = state_file
-
-                def __str__(self):
-                    return f"Task(key={self.key})"
-
-                def is_completed(self):
-                    return state_file.is_completed()
-
-                def is_waiting(self):
-                    return state_file.is_waiting()
-
-                def is_failed(self):
-                    return state_file.is_failed()
-
-                def state_name(self):
-                    return state_file.state_as_string()
-
-            yield Task()
 
     def load_tasks_for_query(self, glob_filter=None, include_non_completed=False):
         for task_key, task_control_dir, state_file_dir_entry in self._iterate_all_tasks_from_disk(glob_filter):
@@ -429,7 +383,12 @@ class StateMachine:
 
             class Match:
                 def __init__(self):
-                    self.tasks = query_with_required_state_matches
+                    self.tasks = sorted([
+                        TaskProcess(state_file.control_dir()).resolve_task(
+                            state_file
+                        )
+                        for state_file in query_with_required_state_matches
+                    ], key=lambda t: t.key)
 
             return Match(),
         else:

@@ -14,6 +14,7 @@ import logging.config
 import traceback
 from datetime import datetime
 from functools import reduce
+from hashlib import blake2b
 from pathlib import Path
 from threading import Thread
 
@@ -408,6 +409,57 @@ class TaskProcess:
             #    if v is not None:
             #        os.environ[k] = v
 
+    def resolve_task(self, state_file):
+
+        self.resolve_task_env()
+
+        var_file = os.path.join(self.control_dir, "output_vars")
+
+        task_inputs = {}
+
+        for task_input, k, v in self.resolve_upstream_and_constant_vars():
+            if v is not None:
+                task_inputs[k] = task_input.parse(v)
+
+        task_outputs = {}
+        to = self.task_conf.get("outputs")
+        if to is not None:
+            unparsed_out_vars = dict(self.iterate_out_vars_from(var_file))
+            for o in to:
+                o = TaskOutput.from_json(o)
+                if o.type != 'file':
+                    v = unparsed_out_vars.get(o.name)
+                    if v is not None:
+                        o.set_resolved_value(v)
+                    task_outputs[o.name] = o
+                else:
+                    o.set_resolved_value(os.path.join(self.pipeline_output_dir, self.task_key, o.produced_file_name))
+                    task_outputs[o.name] = o
+
+        class ResolvedTask:
+            def __init__(self):
+                self.key = state_file.task_key
+                self.inputs = TaskInputs(self, task_inputs)
+                self.outputs = TaskOutputs(self, task_outputs)
+                self.state_file = state_file
+
+            def __str__(self):
+                return f"Task(key={self.key})"
+
+            def is_completed(self):
+                return state_file.is_completed()
+
+            def is_waiting(self):
+                return state_file.is_waiting()
+
+            def is_failed(self):
+                return state_file.is_failed()
+
+            def state_name(self):
+                return state_file.state_as_string()
+
+        return ResolvedTask()
+
     def resolve_upstream_and_constant_vars(self, log_error_if_upstream_task_not_completed=True):
 
         for i in self.task_conf["inputs"]:
@@ -503,7 +555,7 @@ class TaskProcess:
 
         logger.debug("extra_env vars from task-conf.json")
 
-        extra_env = self.task_conf["extra_env"]
+        extra_env = self.task_conf.get("extra_env")
         if extra_env is not None:
             for k, v in extra_env.items():
                 yield k, os.path.expandvars(v)
@@ -518,10 +570,12 @@ class TaskProcess:
 
 
     def iterate_file_task_outputs(self):
-        for o in self.task_conf["outputs"]:
-            o = TaskOutput.from_json(o)
-            if o.is_file():
-                yield o, o.name, os.path.join(self.task_output_dir, o.produced_file_name)
+        outputs = self.task_conf.get("outputs")
+        if outputs is not None:
+            for o in outputs:
+                o = TaskOutput.from_json(o)
+                if o.is_file():
+                    yield o, o.name, os.path.join(self.task_output_dir, o.produced_file_name)
 
 
     def run_python(self, mod_func, container=None):
@@ -1281,7 +1335,7 @@ class TaskInput:
 
     def __init__(self, name, type, upstream_task_key=None, name_in_upstream_task=None, file_name=None, value=None):
 
-        if type not in ['file', 'str', 'int', 'float']:
+        if type not in ['file', 'str', 'int', 'float', 'task-list']:
             raise Exception(f"invalid type {type}")
 
         if type != 'file' and file_name is not None:
@@ -1298,18 +1352,32 @@ class TaskInput:
         self.value = value
 
         self.file_name = file_name
+        self._cached_task_list_hash_codes = None
+
+    def _digest_if_task_list(self):
+        if self._cached_task_list_hash_codes is None:
+            d = blake2b(digest_size=20)
+            for t in self.value:
+                d.update(t.key.encode("utf8"))
+
+            self._cached_task_list_hash_codes = d.hexdigest()
+
+        return self._cached_task_list_hash_codes
 
     def hash_values(self):
         yield self.name
         yield self.type
-        if self.name_in_upstream_task is not None:
-            yield self.name_in_upstream_task
-        if self.upstream_task_key is not None:
-            yield str(self.upstream_task_key)
-        if self.value is not None:
-            yield str(self.value)
-        if self.file_name is not None:
-            yield str(self.file_name)
+        if self.type == 'task-list':
+            yield self._digest_if_task_list()
+        else:
+            if self.name_in_upstream_task is not None:
+                yield self.name_in_upstream_task
+            if self.upstream_task_key is not None:
+                yield str(self.upstream_task_key)
+            if self.value is not None:
+                yield str(self.value)
+            if self.file_name is not None:
+                yield str(self.file_name)
 
 
     def parse(self, v):
@@ -1341,11 +1409,15 @@ class TaskInput:
         return f"{self.upstream_task_key}/{self.name_in_upstream_task}"
 
     def as_json(self):
-        return {
-            "name": self.name,
-            "type":self.type,
-            ** self._dict()
-        }
+
+        d = self._dict().copy()
+        d["name"] = self.name
+        d["type"] = self.type
+
+        if self.type == 'task-list':
+            d["value"] = self._digest_if_task_list()
+
+        return d
 
 
 class TaskOutput:
@@ -1435,3 +1507,63 @@ class TaskOutput:
             raise Exception(f"Task output {self.name} is not of type file, actual type is: {self.type} ")
 
         return self._resolved_value
+
+class TaskInputs:
+
+    def __init__(self, task, task_inputs):
+        self.task = task
+        self._task_inputs = task_inputs
+
+    def __iter__(self):
+        yield from self._task_inputs.values()
+
+    def as_json(self):
+        return [
+            o.as_json()
+            for o in  self._task_inputs.values()
+        ]
+
+    def hash_values(self):
+        for i in self._task_inputs.values():
+            yield from i.hash_values()
+
+    def __getattr__(self, name):
+
+        p = self._task_inputs.get(name)
+
+        if p is None:
+            raise Exception(
+                f"task {self.task} does not declare input '{name}' in it's consumes() clause.\n" +
+                f"Use task({self.task.key}).consumes({name}=...) to specify input"
+            )
+
+        return p
+
+
+class TaskOutputs:
+
+    def __init__(self, task, task_outputs):
+        self.task = task
+        self._task_outputs = task_outputs
+
+    def hash_values(self):
+        for o in self._task_outputs.values():
+            yield from o.hash_values()
+
+    def as_json(self):
+        return [
+            o.as_json()
+            for o in  self._task_outputs.values()
+        ]
+
+    def __getattr__(self, name):
+
+        p = self._task_outputs.get(name)
+
+        if p is None:
+            raise Exception(
+                f"task {self.task} does not declare output '{name}' in it's outputs() clause.\n" +
+                f"Use task({self.task.key}).outputs({name}=...) to specify outputs"
+            )
+
+        return p

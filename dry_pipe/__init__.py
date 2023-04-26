@@ -156,11 +156,10 @@ class TaskBuilder:
         return TaskBuilder(** {
             ** vars(self),
             ** {
-                "children_tasks": children_tasks,
                 "is_slurm_parent": True,
                 "max_simultaneous_jobs_in_slurm_array": max_simultaneous_jobs
             }
-        })
+        }).inputs(children_tasks=children_tasks)
 
     def inputs(self, *args, **kwargs):
         """
@@ -182,6 +181,8 @@ class TaskBuilder:
                     yield k, TaskInput(k, v.type, upstream_task_key=v.task_key, name_in_upstream_task=v.name)
                 elif isinstance(v, Path):
                     yield k, TaskInput(k, 'file', file_name=str(v))
+                elif isinstance(v, list):
+                    yield k, TaskInput(k, 'task-list', value=v)
                 else:
                     raise Exception(
                         f"_consumes can only take DryPipe.file() or _consumes(a_file=other_task.out.name_of_file()" +
@@ -295,7 +296,17 @@ class TaskBuilder:
         })
 
     def __call__(self):
-        return Task(self)
+        return Task(
+            self.key,
+            self._consumes,
+            self._produces,
+            self.pipeline_instance,
+            self.task_steps,
+            self.task_conf,
+            self.is_slurm_array_child,
+            self.max_simultaneous_jobs_in_slurm_array,
+            self.is_slurm_parent
+        )
 
 
 def host_has_sbatch():

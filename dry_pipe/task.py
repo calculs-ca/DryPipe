@@ -4,7 +4,7 @@ import pathlib
 from hashlib import blake2b
 
 
-from dry_pipe.core_lib import FileCreationDefaultModes
+from dry_pipe.core_lib import FileCreationDefaultModes, TaskInputs, TaskOutputs
 
 from dry_pipe.core_lib import task_script_header
 
@@ -17,16 +17,26 @@ class Task:
             return task_key
         return task_key.split(".")[0]
 
-    def __init__(self, task_builder):
-
-        self.key = task_builder.key
-        self.inputs = TaskInputs(self, task_inputs=task_builder._consumes.values())
-        self.outputs = TaskOutputs(self, task_outputs=task_builder._produces)
-        self.pipeline_instance = task_builder.pipeline_instance
-        self.task_steps = task_builder.task_steps
-        self.task_conf = task_builder.task_conf
-        self.is_slurm_array_child = task_builder.is_slurm_array_child
-        self.max_simultaneous_jobs_in_slurm_array = task_builder.max_simultaneous_jobs_in_slurm_array
+    def __init__(self,
+        key,
+        inputs,
+        outputs,
+        pipeline_instance,
+        task_steps,
+        task_conf,
+        is_slurm_array_child,
+        max_simultaneous_jobs_in_slurm_array,
+        is_slurm_parent
+    ):
+        self.key = key
+        self.inputs = TaskInputs(self, inputs)
+        self.outputs = TaskOutputs(self, outputs)
+        self.pipeline_instance = pipeline_instance
+        self.task_steps = task_steps
+        self.task_conf = task_conf
+        self.is_slurm_array_child = is_slurm_array_child
+        self.max_simultaneous_jobs_in_slurm_array = max_simultaneous_jobs_in_slurm_array
+        self.is_slurm_parent = is_slurm_parent
 
 
     """            
@@ -61,13 +71,11 @@ class Task:
 
         h(self.key)
 
-        for i in self.inputs:
-            for v in i.hash_values():
-                h(v)
+        for v in self.inputs.hash_values():
+            h(v)
 
-        for i in self.outputs:
-            for v in i.hash_values():
-                h(v)
+        for v in self.outputs.hash_values():
+            h(v)
 
         for s in self.task_steps:
             for v in s.hash_values():
@@ -137,14 +145,8 @@ class Task:
                 ** self.task_conf.as_json()
             }
 
-            task_conf_json["inputs"] = [
-                i.as_json() for i in self.inputs
-            ]
-
-            task_conf_json["outputs"] = [
-                o.as_json() for o in self.outputs
-            ]
-
+            task_conf_json["inputs"] = self.inputs.as_json()
+            task_conf_json["outputs"] = self.outputs.as_json()
             task_conf_json["step_invocations"] = step_invocations
 
             f.write(json.dumps(task_conf_json, indent=2))
@@ -158,8 +160,11 @@ class Task:
 
         os.chmod(shell_script_file, FileCreationDefaultModes.pipeline_instance_scripts)
 
-
-
+        if self.is_slurm_parent:
+            with open(os.path.join(control_dir, "task-keys.tsv"), "w") as tc:
+                for t in self.inputs.children_tasks.value:
+                    tc.write(t.key)
+                    tc.write("\n")
 
 
 class TaskStep:
@@ -214,55 +219,3 @@ class TaskStep:
             call["container"] = container
 
         return call
-
-
-class TaskInputs:
-
-    def __init__(self, task, task_runner=None, task_inputs=None):
-        self.task = task
-        self._task_inputs = task_inputs
-        if task_runner is not None:
-            self._task_inputs = {}
-
-            for task_input, k, v in task_runner.resolve_upstream_and_constant_vars():
-                if v is not None:
-                    self._task_inputs[k] = task_input.parse(v)
-
-    def __iter__(self):
-        yield from self._task_inputs
-
-
-    def __getattr__(self, name):
-
-        p = self._task_inputs.get(name)
-
-        if p is None:
-            raise Exception(
-                f"task {self.task} does not declare input '{name}' in it's consumes() clause.\n" +
-                f"Use task({self.task.key}).consumes({name}=...) to specify input"
-            )
-
-        return p
-
-
-class TaskOutputs:
-
-    def __init__(self, task, task_outputs=None):
-        self.task = task
-        self._task_outputs = task_outputs
-
-
-    def __iter__(self):
-        yield from self._task_outputs.values()
-
-    def __getattr__(self, name):
-
-        p = self._task_outputs.get(name)
-
-        if p is None:
-            raise Exception(
-                f"task {self.task} does not declare output '{name}' in it's outputs() clause.\n" +
-                f"Use task({self.task.key}).outputs({name}=...) to specify outputs"
-            )
-
-        return p
