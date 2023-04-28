@@ -301,14 +301,14 @@ class StateFile:
 class TaskProcess:
 
     @staticmethod
-    def run(control_dir, as_subprocess=True, wait_for_completion=False, run_python_calls_in_process=False):
+    def run(control_dir, as_subprocess=True, wait_for_completion=False, run_python_calls_in_process=False, limit=None):
 
         if not as_subprocess:
             TaskProcess(
                 control_dir,
                 run_python_calls_in_process,
                 as_subprocess=as_subprocess
-            ).launch_task(wait_for_completion, exit_process_when_done=False)
+            ).launch_task(wait_for_completion, exit_process_when_done=False, limit=limit)
         else:
             pipeline_work_dir = os.path.dirname(control_dir)
             pipeline_cli = os.path.join(pipeline_work_dir, "cli")
@@ -1032,7 +1032,7 @@ class TaskProcess:
         python_task = func_from_mod_func(module_function)
         self.call_python(module_function, python_task)
 
-    def run_array(self):
+    def run_array(self, limit):
 
         step_number, _, state_file, _ = self.read_task_state()
         ended_ok = False
@@ -1043,7 +1043,7 @@ class TaskProcess:
                 self.task_conf,
                 logger,
                 mockup_run_launch_local_processes=not self.as_subprocess
-            ).run(False, False, None)
+            ).run_array(False, False, limit)
             ended_ok = True
         except Exception as ex:
             self._transition_state_file(state_file, "failed", step_number)
@@ -1051,7 +1051,7 @@ class TaskProcess:
             if ended_ok:
                 self.transition_to_completed(state_file)
 
-    def launch_task(self, wait_for_completion, exit_process_when_done=True):
+    def launch_task(self, wait_for_completion, exit_process_when_done=True, limit=None):
 
         def task_func_wrapper():
             try:
@@ -1059,7 +1059,7 @@ class TaskProcess:
                 logger.debug("task func started")
                 is_slurm_parent = self.task_conf.get("is_slurm_parent")
                 if is_slurm_parent is not None and is_slurm_parent:
-                    self.run_array()
+                    self.run_array(limit)
                 else:
                     self._run_steps()
                 logger.info("task completed")
@@ -1071,7 +1071,7 @@ class TaskProcess:
                 if exit_process_when_done:
                     self._exit_process()
 
-        if wait_for_completion:
+        if wait_for_completion or not self.as_subprocess:
             task_func_wrapper()
         else:
             slurm_job_id = os.environ.get("SLURM_JOB_ID")
@@ -1925,10 +1925,10 @@ class SlurmArrayParentTask:
                 self.tracker.register_pre_launch(state_file)
                 yield state_file
                 i += 1
-            if start_next_n is not None and start_next_n >= i:
+            if start_next_n is not None and i >= start_next_n:
                 break
 
-    def prepare_and_launch_next_array(self, start_next_n=None, restart_failed=False, call_sbatch_mockup=None):
+    def prepare_and_launch_next_array(self, limit=None, restart_failed=False, call_sbatch_mockup=None):
 
         arrays_files = list(self.arrays_files())
 
@@ -1940,7 +1940,7 @@ class SlurmArrayParentTask:
 
         next_task_key_file = os.path.join(self.control_dir(), f"array.{next_array_number}.tsv")
 
-        next_task_state_files = list(self._iterate_next_task_state_files(start_next_n, restart_failed))
+        next_task_state_files = list(self._iterate_next_task_state_files(limit, restart_failed))
 
         if len(next_task_state_files) == 0:
             return 0
@@ -1987,9 +1987,9 @@ class SlurmArrayParentTask:
 
         return f"123400{launch_idx}"
 
-    def run(self, restart_failed, reset_failed, max_tasks):
+    def run_array(self, restart_failed, reset_failed, limit):
 
-        self.prepare_and_launch_next_array()
+        self.prepare_and_launch_next_array(limit)
 
         if self.mockup_run_launch_local_processes:
             return
@@ -2245,12 +2245,15 @@ class Cli:
 
         self.parsed_args = self.parser.parse_args(args)
 
-    def command(self):
-        return self.parsed_args.command
 
-    def create_task_process(self):
+    def invoke(self, test_mode=False):
 
-        return TaskProcess()
+        if self.parsed_args.command == 'submit-array':
+            TaskProcess.run(
+                os.path.join(self.parsed_args.pipeline_instance_dir, ".drypipe", self.parsed_args.task_key),
+                as_subprocess=not test_mode,
+                limit=self.parsed_args.limit
+            )
 
 
     def _add_common_args(self):
@@ -2302,6 +2305,10 @@ class Cli:
 
         run_parser.add_argument(
             '--slurm-account'
+        )
+
+        run_parser.add_argument(
+            '--task-key'
         )
 
         run_parser.add_argument(

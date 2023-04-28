@@ -4,7 +4,7 @@ import pathlib
 import shutil
 import yaml
 import logging.config
-from dry_pipe import DryPipe, script_lib
+from dry_pipe import DryPipe, core_lib
 
 
 def test_suite_base_dir():
@@ -54,14 +54,12 @@ class TestSandboxDir:
         self.sandbox_dir = sandbox_dir
 
         if other_func is None:
-            self.delete_and_recreate_sandbox()
+            self.delete_sandbox()
 
 
-    def delete_and_recreate_sandbox(self):
+    def delete_sandbox(self):
         if os.path.exists(self.sandbox_dir):
             shutil.rmtree(self.sandbox_dir)
-
-        pathlib.Path(self.sandbox_dir).mkdir(parents=True, exist_ok=False)
 
     def create_subdir(self, d):
         res = os.path.join(self.sandbox_dir, d)
@@ -99,7 +97,7 @@ class TestSandboxDir:
         drypipe_dir = mkdir('.drypipe')
         mkdir('output')
 
-        shutil.copy(script_lib.__file__, drypipe_dir)
+        shutil.copy(core_lib.__file__, drypipe_dir)
 
 
 

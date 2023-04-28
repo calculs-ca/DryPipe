@@ -5,16 +5,14 @@ from unittest import TextTestRunner, TestSuite, defaultTestLoader
 import pipeline_tests_with_single_tasks
 import pipeline_tests_with_multiple_tasks
 import task_launch_tests
+from cli_tests import CliArrayTests1
 from dsl_tests import TaskChangeTrackingTests
 from pipeline_tests_with_slurm import all_low_level_tests_with_mockup_slurm
 from test_state_machine import StateMachineTests, StateFileTrackerTest, MockupStateFileTrackerTest
 
 
 def ad_hoc():
-    return [
-        task_launch_tests.PipelineWithVariablePassingTaskLauncherTest,
-        task_launch_tests.EnsureFailOfLaunchWhenUnsatisfiedUpstreamDependencyTest,
-    ]
+    return all_low_level_tests_with_mockup_slurm()
 
 def low_level_tests():
     return [
@@ -25,7 +23,8 @@ def low_level_tests():
         pipeline_tests_with_single_tasks.all_tests(),
         pipeline_tests_with_multiple_tasks.all_basic_tests(),
         all_low_level_tests_with_mockup_slurm(),
-        TaskChangeTrackingTests
+        TaskChangeTrackingTests,
+        CliArrayTests1
     ]
 
 def quick_sanity_tests():
