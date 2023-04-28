@@ -130,14 +130,7 @@ class SlurmArrayHandingStateMachineTest(TestWithDirectorySandbox):
 
         tester.iterate_once_and_mutate_set_of_next_state_files_ready()
 
-        tester.assert_set_of_next_tasks_ready('z')
-
-        tester.set_completed_on_disk("z")
-
-        tester.iterate_once_and_mutate_set_of_next_state_files_ready()
-        tester.iterate_once_and_mutate_set_of_next_state_files_ready()
-
-        tester.assert_set_of_next_tasks_ready('t_array_parent')
+        tester.assert_set_of_next_tasks_ready('z', 't_array_parent')
 
         tester.set_completed_on_disk("t_a_1")
         tester.set_completed_on_disk("t_b_1")

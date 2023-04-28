@@ -456,14 +456,14 @@ class TaskProcess:
 
         logging.shutdown()
 
-    def resolve_task_env(self):
+    def resolve_task_env(self, ensure_all_upstream_deps_complete=True):
         script_location = self.control_dir
         with open(os.path.join(script_location, "task-conf.json")) as _task_conf:
 
             self.task_conf = json.loads(_task_conf.read())
             self.env = {}
 
-            for k, v in self.iterate_task_env():
+            for k, v in self.iterate_task_env(ensure_all_upstream_deps_complete):
                 v = str(v)
                 logger.debug("env var %s = %s", k, v)
                 self.env[k] = v
@@ -499,15 +499,15 @@ class TaskProcess:
             #    if v is not None:
             #        os.environ[k] = v
 
-    def resolve_task(self, state_file):
+    def resolve_task(self, state_file, ensure_all_upstream_deps_complete=True):
 
-        self.resolve_task_env()
+        self.resolve_task_env(ensure_all_upstream_deps_complete)
 
         var_file = os.path.join(self.control_dir, "output_vars")
 
         task_inputs = {}
 
-        for task_input, k, v in self.resolve_upstream_and_constant_vars():
+        for task_input, k, v in self.resolve_upstream_and_constant_vars(ensure_all_upstream_deps_complete):
             if v is not None:
                 task_inputs[k] = task_input.parse(v)
 
@@ -550,7 +550,7 @@ class TaskProcess:
 
         return ResolvedTask()
 
-    def resolve_upstream_and_constant_vars(self, log_error_if_upstream_task_not_completed=True):
+    def resolve_upstream_and_constant_vars(self, ensure_all_upstream_deps_complete=True):
 
         for i in self.task_conf["inputs"]:
             i = TaskInput.from_json(i)
@@ -565,12 +565,10 @@ class TaskProcess:
                             msg = f"upstream task {i.upstream_task_key} " + \
                                   f"not completed (state={state_file}), this task " + \
                                   f"dependency on {i.name_in_upstream_task} not satisfied"
-                            if not log_error_if_upstream_task_not_completed:
-                                logger.error(msg)
-                            else:
-                                raise UpstreamTasksNotCompleted(i.upstream_task_key, msg)
+                            raise UpstreamTasksNotCompleted(i.upstream_task_key, msg)
 
-                ensure_upstream_task_is_completed()
+                if ensure_all_upstream_deps_complete:
+                    ensure_upstream_task_is_completed()
 
                 if i.is_file():
                     yield i, i.name, os.path.join(self.pipeline_output_dir, i.upstream_task_key, i.file_name)
@@ -598,7 +596,7 @@ class TaskProcess:
                     var_name, value = line.split("=")
                     yield var_name.strip(), value.strip()
 
-    def iterate_task_env(self):
+    def iterate_task_env(self, ensure_all_upstream_deps_complete):
         pipeline_conf = Path(self.pipeline_work_dir, "conf.json")
         if os.path.exists(pipeline_conf):
             with open(pipeline_conf) as pc:
@@ -651,7 +649,7 @@ class TaskProcess:
                 yield k, os.path.expandvars(v)
 
         logger.debug("resolved and constant input vars")
-        for _, k, v in self.resolve_upstream_and_constant_vars():
+        for _, k, v in self.resolve_upstream_and_constant_vars(ensure_all_upstream_deps_complete):
             yield k, v
 
         logger.debug("file output vars")
@@ -2154,7 +2152,8 @@ class StateFileTracker:
     def _load_task_from_state_file(self, task_key, task_control_dir, state_file_path, include_non_completed):
         if state_file_path.endswith("state.completed") or include_non_completed:
             yield TaskProcess(task_control_dir).resolve_task(
-                StateFile(task_key, None, self, path=state_file_path)
+                StateFile(task_key, None, self, path=state_file_path),
+                ensure_all_upstream_deps_complete= not include_non_completed
             )
 
     def load_tasks_for_query(self, glob_filter=None, include_non_completed=False):

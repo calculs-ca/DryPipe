@@ -93,7 +93,7 @@ class StateMachine:
                 def __init__(self):
                     self.tasks = sorted([
                         TaskProcess(state_file.control_dir()).resolve_task(
-                            state_file
+                            state_file, ensure_all_upstream_deps_complete=False
                         )
                         for state_file in query_with_required_state_matches
                     ], key=lambda t: t.key)
@@ -161,6 +161,8 @@ class StateMachine:
             if is_new:
                 new_generated_tasks += 1
                 upstream_dep_keys = task.upstream_dep_keys()
+                if state_file.is_slurm_array_child:
+                    self.state_file_tracker.set_ready_on_disk_and_in_memory(state_file.task_key)
                 #state_file.touch_initial_state_file(False)
                 #if len(upstream_dep_keys) == 0:
                 #    self.state_file_tracker.set_ready_on_disk_and_in_memory(state_file.task_key)
@@ -180,11 +182,11 @@ class StateMachine:
 
         def register_pre_launch(state_file):
             self._keys_of_tasks_waiting_for_external_events.add(state_file.task_key)
-            if state_file.is_slurm_array_child:
-                self.state_file_tracker.set_ready_on_disk_and_in_memory(state_file.task_key)
-                # child tasks can also have upstream deps (!), we simply inhibit launches
-                pass
-            elif state_file.is_parent_task:
+            #if state_file.is_slurm_array_child:
+            #    self.state_file_tracker.set_ready_on_disk_and_in_memory(state_file.task_key)
+            #    # child tasks can also have upstream deps (!), we simply inhibit launches
+            #    pass
+            if state_file.is_parent_task:
                 with open(os.path.join(state_file.control_dir(), "task-keys.tsv")) as tc:
                     for k in tc:
                         k = k.strip()

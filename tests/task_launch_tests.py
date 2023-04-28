@@ -31,9 +31,16 @@ class EnsureFailOfLaunchWhenUnsatisfiedUpstreamDependencyTest(pipeline_tests_wit
 
     def test_run_pipeline(self):
 
-        pi = self.run_pipeline(queue_only_pattern="*")
+        #pi = self.run_pipeline(queue_only_pattern="*")
 
-        consume_and_produce_a_var = pi.lookup_single_task(
+        pipeline_instance = self.create_pipeline_instance()
+
+        pipeline_instance.run_sync(
+            queue_only_pattern="*",
+            run_tasks_in_process=self.launches_tasks_in_process()
+        )
+
+        consume_and_produce_a_var = pipeline_instance.lookup_single_task(
             "consume_and_produce_a_var",
             include_incomplete_tasks=True
         )

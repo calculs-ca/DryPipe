@@ -3,8 +3,8 @@ import shutil
 import unittest
 from pathlib import Path
 
-from dry_pipe.state_machine import StateMachine, StateFileTracker, AllRunnableTasksCompletedOrInError, \
-    InvalidQueryInTaskGenerator
+from dry_pipe.state_machine import StateMachine, AllRunnableTasksCompletedOrInError, InvalidQueryInTaskGenerator
+from dry_pipe.core_lib import StateFileTracker
 from mockups import TaskMockup, StateFileTrackerMockup
 from test_utils import TestSandboxDir
 

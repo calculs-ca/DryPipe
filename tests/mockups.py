@@ -2,7 +2,7 @@ import json
 import os
 from pathlib import Path
 
-from dry_pipe.state_machine import StateFile
+from dry_pipe.core_lib import StateFile
 
 
 class TaskMockup:
@@ -11,6 +11,7 @@ class TaskMockup:
         self._upstream_dep_keys = upstream_dep_keys
         self.inputs = [1, 5, 4]
         self.is_slurm_array_child = False
+        self.is_slurm_parent = False
 
     def upstream_dep_keys(self):
         return self._upstream_dep_keys
