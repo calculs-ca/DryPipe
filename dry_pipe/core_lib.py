@@ -880,8 +880,14 @@ class TaskProcess:
 
     def write_out_vars(self, out_vars):
 
+        def serialize(v):
+            if v is None:
+                return 'null'
+            else:
+                return v
+
         all_vars = [
-            f"{k}={v}" for k, v in out_vars.items()
+            f"{k}={serialize(v)}" for k, v in out_vars.items()
         ]
 
         output_vars = os.environ.get("__output_var_file")
@@ -1582,7 +1588,9 @@ class TaskOutput:
         return r
 
     def parse(self, v):
-        if self.type == "int":
+        if v == "null":
+            return None
+        elif self.type == "int":
             return int(v)
         elif self.type == "float":
             return float(v)
@@ -2271,7 +2279,7 @@ class Cli:
         elif self.parsed_args.command == 'run':
             pipeline = func_from_mod_func(self.parsed_args.generator)()
             pipeline_instance = pipeline.create_pipeline_instance(self.parsed_args.pipeline_instance_dir)
-            pipeline_instance.run_sync()
+            pipeline_instance.run_sync(queue_only_pattern=self.parsed_args.until[0])
 
     def _sub_parsers(self):
 
