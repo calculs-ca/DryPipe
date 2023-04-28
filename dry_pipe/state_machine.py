@@ -1,305 +1,13 @@
 import fnmatch
-import json
 import os.path
-import shutil
 from pathlib import Path
 
-from dry_pipe import TaskBuilder, TaskConf, core_lib
-from dry_pipe.core_lib import FileCreationDefaultModes, write_pipeline_lib_script, TaskProcess
+from dry_pipe import TaskBuilder, TaskConf
+from dry_pipe.core_lib import TaskProcess, StateFileTracker
 
 
 # TODO: rename to TaskState
-class StateFile:
 
-    def __init__(self, task_key, current_hash_code, tracker, path=None, slurm_array_id=None):
-        self.tracker = tracker
-        self.task_key = task_key
-        if path is not None:
-            self.path = path
-        else:
-            self.path = os.path.join(tracker.pipeline_work_dir, task_key, "state.waiting")
-        self.hash_code = current_hash_code
-        self.inputs = None
-        self.outputs = None
-        self.is_slurm_array_child = False
-        if slurm_array_id is not None:
-            self.slurm_array_id = slurm_array_id
-
-    def __str__(self):
-        return f"/{self.task_key}/{os.path.basename(self.path)}"
-
-    def refresh(self, new_path):
-        assert self.path != new_path
-        self.path = new_path
-        if self.path.endswith("state.completed"):
-            # load from file:
-            self.outputs = None
-            self.inputs = None
-
-    def transition_to_pre_launch(self):
-        self.path = os.path.join(self.tracker.pipeline_work_dir, self.task_key, "state._step-started")
-
-    def transition_to_crashed(self):
-        self.path = os.path.join(self.tracker.pipeline_work_dir, self.task_key, "state.crashed")
-
-    def state_as_string(self):
-        return os.path.basename(self.path)
-
-    def is_completed(self):
-        return self.path.endswith("state.completed")
-
-    def is_failed(self):
-        return fnmatch.fnmatch(self.path, "*/state.failed.*")
-
-    def is_crashed(self):
-        return fnmatch.fnmatch(self.path, "*/state.crashed.*")
-
-    def is_timed_out(self):
-        return fnmatch.fnmatch(self.path, "*/state.timed-out.*")
-
-    def is_waiting(self):
-        return self.path.endswith("state.waiting")
-
-    def is_ready(self):
-        return self.path.endswith("state.ready")
-
-    def is_in_pre_launch(self):
-        return fnmatch.fnmatch(self.path, "*/state._step-started")
-
-    def control_dir(self):
-        return os.path.join(self.tracker.pipeline_work_dir, self.task_key)
-
-    def output_dir(self):
-        return os.path.join(self.tracker.pipeline_output_dir, self.task_key)
-
-    def task_conf_file(self):
-        return os.path.join(self.control_dir(), "task-conf.json")
-
-    def load_task_conf_json(self):
-        with open(self.task_conf_file()) as tc:
-            return json.loads(tc.read())
-
-    def load_task_conf(self):
-        return TaskConf.from_json(self.load_task_conf_json())
-
-
-class StateFileTracker:
-
-    def __init__(self, pipeline_instance_dir):
-        self.pipeline_instance_dir = pipeline_instance_dir
-        self.pipeline_work_dir = os.path.join(pipeline_instance_dir, ".drypipe")
-        self.pipeline_output_dir = os.path.join(self.pipeline_instance_dir, "output")
-        self.state_files_in_memory: dict[str, StateFile] = {}
-        self.load_from_disk_count = 0
-        self.resave_count = 0
-        self.new_save_count = 0
-
-    def prepare_instance_dir(self, conf_dict):
-        Path(self.pipeline_instance_dir).mkdir(
-            exist_ok=False, mode=FileCreationDefaultModes.pipeline_instance_directories)
-        Path(self.pipeline_work_dir).mkdir(
-            exist_ok=False, mode=FileCreationDefaultModes.pipeline_instance_directories)
-        Path(self.pipeline_instance_dir, "output").mkdir(
-            exist_ok=False, mode=FileCreationDefaultModes.pipeline_instance_directories)
-
-        with open(Path(self.pipeline_work_dir, "conf.json"), "w") as conf_file:
-            conf_file.write(json.dumps(conf_dict, indent=4))
-
-        shutil.copy(core_lib.__file__, self.pipeline_work_dir)
-
-        script_lib_file = os.path.join(self.pipeline_work_dir, "cli")
-        with open(script_lib_file, "w") as script_lib_file_handle:
-            write_pipeline_lib_script(script_lib_file_handle)
-        os.chmod(script_lib_file, FileCreationDefaultModes.pipeline_instance_scripts)
-
-
-    def set_completed_on_disk(self, task_key):
-        os.rename(
-            self.state_files_in_memory[task_key].path,
-            os.path.join(self.pipeline_work_dir, task_key, "state.completed")
-        )
-
-    def set_ready_on_disk_and_in_memory(self, task_key):
-        p = os.path.join(self.pipeline_work_dir, task_key, "state.ready")
-        os.rename(self.state_files_in_memory[task_key].path, p)
-        self.state_files_in_memory[task_key].path = p
-
-    def set_step_state_on_disk_and_in_memory(self, task_key, state_base_name):
-        p = os.path.join(self.pipeline_work_dir, task_key, state_base_name)
-        b4 = self.state_files_in_memory[task_key].path
-        os.rename(b4, p)
-        self.state_files_in_memory[task_key].path = p
-
-    def transition_to_crashed(self, state_file):
-        previous_path = state_file.path
-        state_file.transition_to_crashed()
-        os.rename(previous_path, state_file.path)
-
-    def register_pre_launch(self, state_file):
-        previous_path = state_file.path
-        state_file.transition_to_pre_launch()
-        os.rename(previous_path, state_file.path)
-
-    def completed_task_keys(self):
-        for k, state_file in self.state_files_in_memory.items():
-            if state_file.is_completed():
-                yield k
-
-    def all_state_files(self):
-        return self.state_files_in_memory.values()
-
-    def lookup_state_file_from_memory(self, task_key):
-        return self.state_files_in_memory[task_key]
-
-    def _find_state_file_path_in_task_control_dir(self, task_key) -> str :
-        try:
-            with os.scandir(os.path.join(self.pipeline_work_dir, task_key)) as i:
-                for f in i:
-                    if f.name.startswith("state."):
-                        return f.path
-        except FileNotFoundError:
-            pass
-        return None
-
-    def load_state_file(self, task_key, slurm_array_id=None):
-        state_file_path = self._find_state_file_path_in_task_control_dir(task_key)
-        if state_file_path is None:
-            raise Exception(f"no state file exists in {os.path.join(self.pipeline_work_dir, task_key)}")
-        state_file = StateFile(task_key, None, self, path=state_file_path, slurm_array_id=slurm_array_id)
-        self.state_files_in_memory[task_key] = state_file
-        return state_file
-
-    def fetch_true_state_and_update_memory_if_changed(self, task_key):
-        state_file = self.lookup_state_file_from_memory(task_key)
-        if os.path.exists(state_file.path):
-            return None, state_file
-        else:
-            state_file_path = self._find_state_file_path_in_task_control_dir(task_key)
-            if state_file_path is None:
-                raise Exception(f"no state file exists in {os.path.join(self.pipeline_work_dir, task_key)}")
-            state_file.refresh(state_file_path)
-            return state_file, state_file
-
-    def _load_task_conf(self, task_control_dir):
-        with open(os.path.join(task_control_dir, "task-conf.json")) as tc:
-            return json.loads(tc.read())
-
-    def load_from_existing_file_on_disc_and_resave_if_required(self, task, state_file_path):
-
-        task_control_dir = os.path.dirname(state_file_path)
-        task_key = os.path.basename(task_control_dir)
-        pipeline_work_dir = os.path.dirname(task_control_dir)
-        assert task.key == task_key
-        task_conf = self._load_task_conf(task_control_dir)
-        current_hash_code = task.compute_hash_code()
-        state_file = StateFile(task_key, current_hash_code, self, path=state_file_path)
-        if state_file.is_completed():
-            pass
-            #load inputs and outputs
-        else:
-            if task_conf["hash_code"] != state_file.hash_code:
-                task.save(state_file, current_hash_code)
-                state_file.hash_code = current_hash_code
-                self.resave_count += 1
-        self.load_from_disk_count += 1
-        return state_file
-
-    def _iterate_all_tasks_from_disk(self, glob_filter):
-        with os.scandir(self.pipeline_work_dir) as pwd_i:
-            for task_control_dir_entry in pwd_i:
-                if not task_control_dir_entry.is_dir():
-                    continue
-                if task_control_dir_entry.name == "__pycache__":
-                    continue
-                task_control_dir = task_control_dir_entry.path
-                task_key = os.path.basename(task_control_dir)
-
-                if glob_filter is not None:
-                    if not fnmatch.fnmatch(task_key, glob_filter):
-                        continue
-
-                state_file_dir_entry = self._find_state_file_path_in_task_control_dir(task_key)
-                if state_file_dir_entry is None:
-                    raise Exception(f"no state file exists in {task_control_dir_entry.path}")
-
-                yield task_key, task_control_dir, state_file_dir_entry
-
-    def _load_task_from_state_file(self, task_key, task_control_dir, state_file_path, include_non_completed):
-        if state_file_path.endswith("state.completed") or include_non_completed:
-            yield TaskProcess(task_control_dir).resolve_task(
-                StateFile(task_key, None, self, path=state_file_path)
-            )
-
-    def load_tasks_for_query(self, glob_filter=None, include_non_completed=False):
-        for task_key, task_control_dir, state_file_dir_entry in self._iterate_all_tasks_from_disk(glob_filter):
-            yield from self._load_task_from_state_file(
-                task_key, task_control_dir, state_file_dir_entry, include_non_completed
-            )
-
-    def load_single_task_or_none(self, task_key, include_non_completed=False):
-        task_control_dir = os.path.join(self.pipeline_work_dir, task_key)
-        state_file_path = self._find_state_file_path_in_task_control_dir(task_key)
-        if state_file_path is None:
-            return None
-        else:
-            # update mem
-            self.fetch_true_state_and_update_memory_if_changed(task_key)
-            l = list(self._load_task_from_state_file(
-                task_key, task_control_dir, state_file_path, include_non_completed
-            ))
-            c = len(l)
-            if c == 0:
-                return None
-            elif c == 1:
-                return l[0]
-            else:
-                raise Exception(f"expected zero or one task with key '{task_key}', got {c}")
-
-    def load_state_files_for_run(self, glob_filter=None):
-        for task_key, task_control_dir, state_file_path in self._iterate_all_tasks_from_disk(glob_filter):
-            state_file = StateFile(
-                task_key, None, self, path=state_file_path
-            )
-            self.state_files_in_memory[task_key] = state_file
-            task_conf = self._load_task_conf(task_control_dir)
-            if state_file.is_completed():
-                yield True, state_file, None
-            else:
-                upstream_task_keys = set()
-                for i in task_conf["inputs"]:
-                    k = i.get("upstream_task_key")
-                    if k is not None:
-                        upstream_task_keys.add(k)
-                yield False, state_file, upstream_task_keys
-
-    def create_true_state_if_new_else_fetch_from_memory(self, task):
-        """
-        :return: (task_is_new, state_file)
-        """
-        state_file_in_memory = self.state_files_in_memory.get(task.key)
-        if state_file_in_memory is not None:
-            # state_file_in_memory is assumed up to date, since task declarations don't change between runs
-            # by design, DAG generators that violate this assumption are considered at fault
-            return False, state_file_in_memory
-        else:
-            # we have a new task OR process was restarted
-            hash_code = task.compute_hash_code()
-            state_file_path = self._find_state_file_path_in_task_control_dir(task.key)
-            if state_file_path is not None:
-                # process was restarted, task is NOT new
-                state_file_in_memory = self.load_from_existing_file_on_disc_and_resave_if_required(task, state_file_path)
-                self.state_files_in_memory[task.key] = state_file_in_memory
-                task.save_if_hash_has_changed(state_file_in_memory, hash_code)
-                return False, state_file_in_memory
-            else:
-                # task is new
-                state_file_in_memory = StateFile(task.key, hash_code, self)
-                state_file_in_memory.is_slurm_array_child = task.is_slurm_array_child
-                task.save(state_file_in_memory, hash_code)
-                self.state_files_in_memory[task.key] = state_file_in_memory
-                Path(state_file_in_memory.path).touch(exist_ok=False)
-                self.new_save_count += 1
-                return True, state_file_in_memory
 
 class AllRunnableTasksCompletedOrInError(Exception):
     pass
@@ -363,7 +71,7 @@ class StateMachine:
             if state == "completed":
                 return state_file.is_completed()
             elif state == "ready":
-                return state_file.is_ready()
+                return state_file.is_ready_or_passed()
             else:
                 raise Exception(f"invalid state: {state}, must be 'completed', or 'ready'")
 
@@ -452,9 +160,13 @@ class StateMachine:
             is_new, state_file = self.state_file_tracker.create_true_state_if_new_else_fetch_from_memory(task)
             if is_new:
                 new_generated_tasks += 1
+                upstream_dep_keys = task.upstream_dep_keys()
+                #state_file.touch_initial_state_file(False)
+                #if len(upstream_dep_keys) == 0:
+                #    self.state_file_tracker.set_ready_on_disk_and_in_memory(state_file.task_key)
                 if not self._queue_only_func(task.key):
                     if self._register_upstream_task_dependencies_if_any_and_return_ready_status(
-                        task.key, task.upstream_dep_keys()
+                        task.key, upstream_dep_keys
                     ):
                         yield state_file
 
@@ -470,6 +182,16 @@ class StateMachine:
             self._keys_of_tasks_waiting_for_external_events.add(state_file.task_key)
             if state_file.is_slurm_array_child:
                 self.state_file_tracker.set_ready_on_disk_and_in_memory(state_file.task_key)
+                # child tasks can also have upstream deps (!), we simply inhibit launches
+                pass
+            elif state_file.is_parent_task:
+                with open(os.path.join(state_file.control_dir(), "task-keys.tsv")) as tc:
+                    for k in tc:
+                        k = k.strip()
+                        if k != "":
+                            self._keys_of_tasks_waiting_for_external_events.add(k)
+                            #self.state_file_tracker.fetch_true_state_and_update_memory_if_changed(k)
+                yield state_file
             else:
                 self.state_file_tracker.register_pre_launch(state_file)
                 yield state_file
@@ -487,22 +209,24 @@ class StateMachine:
                 "load_from_instance_dir() must be invoked before calling this method"
             )
 
-        newly_failed_task_keys = []
+        def populate_task_keys_of_dep_graph_changing_status_changes():
+            newly_completed_task_keys = []
+            newly_failed_task_keys = []
 
-        def gen_newly_completed_task_keys():
             for task_key in self._keys_of_tasks_waiting_for_external_events:
                 true_state_file, _ = self.state_file_tracker.fetch_true_state_and_update_memory_if_changed(task_key)
                 if true_state_file is not None:
                     if true_state_file.is_completed():
-                        yield task_key
+                        newly_completed_task_keys.append(task_key)
                     elif true_state_file.is_failed():
                         self._keys_of_failed_tasks.add(true_state_file.task_key)
                         newly_failed_task_keys.append(true_state_file.task_key)
 
-        newly_completed_task_keys = list(gen_newly_completed_task_keys())
+            self._keys_of_tasks_waiting_for_external_events.difference_update(newly_completed_task_keys)
+            self._keys_of_tasks_waiting_for_external_events.difference_update(newly_failed_task_keys)
+            return newly_completed_task_keys
 
-        self._keys_of_tasks_waiting_for_external_events.difference_update(newly_completed_task_keys)
-        self._keys_of_tasks_waiting_for_external_events.difference_update(newly_failed_task_keys)
+        newly_completed_task_keys = populate_task_keys_of_dep_graph_changing_status_changes()
 
         # track state_file changes, update dependency map, and yield newly ready tasks
         for key_of_waiting_task in list(self._keys_of_waiting_tasks_to_set_of_incomplete_upstream_task_keys.keys()):

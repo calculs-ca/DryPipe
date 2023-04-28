@@ -1,3 +1,4 @@
+import argparse
 import fnmatch
 import glob
 import importlib
@@ -11,12 +12,14 @@ import tarfile
 import textwrap
 import logging
 import logging.config
+import time
 import traceback
 from datetime import datetime
 from functools import reduce
 from hashlib import blake2b
 from pathlib import Path
 from threading import Thread
+from typing import List, Iterator, Tuple
 
 #APPTAINER_COMMAND="apptainer"
 APPTAINER_COMMAND="singularity"
@@ -212,6 +215,88 @@ class UpstreamTasksNotCompleted(Exception):
         self.upstream_task_key = upstream_task_key
         self.msg = msg
 
+class StateFile:
+
+    def __init__(self, task_key, current_hash_code, tracker, path=None, slurm_array_id=None):
+        self.tracker = tracker
+        self.task_key = task_key
+        if path is not None:
+            self.path = path
+        else:
+            self.path = os.path.join(tracker.pipeline_work_dir, task_key, "state.waiting")
+        self.hash_code = current_hash_code
+        self.inputs = None
+        self.outputs = None
+        self.is_slurm_array_child = False
+        if slurm_array_id is not None:
+            self.slurm_array_id = slurm_array_id
+        self.is_parent_task = False
+
+    def __repr__(self):
+        return f"/{self.task_key}/{os.path.basename(self.path)}"
+
+    def refresh(self, new_path):
+        assert self.path != new_path
+        self.path = new_path
+        if self.path.endswith("state.completed"):
+            # load from file:
+            self.outputs = None
+            self.inputs = None
+
+    def transition_to_pre_launch(self):
+        self.path = os.path.join(self.tracker.pipeline_work_dir, self.task_key, "state._step-started")
+
+    def transition_to_crashed(self):
+        self.path = os.path.join(self.tracker.pipeline_work_dir, self.task_key, "state.crashed")
+
+    def transition_to_ready(self):
+        self.path = os.path.join(self.tracker.pipeline_work_dir, self.task_key, "state.crashed")
+
+    def state_as_string(self):
+        return os.path.basename(self.path)
+
+    def is_completed(self):
+        return self.path.endswith("state.completed")
+
+    def is_failed(self):
+        return fnmatch.fnmatch(self.path, "*/state.failed.*")
+
+    def is_crashed(self):
+        return fnmatch.fnmatch(self.path, "*/state.crashed.*")
+
+    def is_timed_out(self):
+        return fnmatch.fnmatch(self.path, "*/state.timed-out.*")
+
+    def is_waiting(self):
+        return self.path.endswith("state.waiting")
+
+    def is_ready(self):
+        return self.path.endswith("state.ready")
+
+    def is_ready_or_passed(self):
+        return not self.is_waiting()
+
+    def is_in_pre_launch(self):
+        return fnmatch.fnmatch(self.path, "*/state._step-started")
+
+    def control_dir(self):
+        return os.path.join(self.tracker.pipeline_work_dir, self.task_key)
+
+    def output_dir(self):
+        return os.path.join(self.tracker.pipeline_output_dir, self.task_key)
+
+    def task_conf_file(self):
+        return os.path.join(self.control_dir(), "task-conf.json")
+
+    def load_task_conf_json(self):
+        with open(self.task_conf_file()) as tc:
+            return json.loads(tc.read())
+
+    def touch_initial_state_file(self, is_ready):
+        if is_ready:
+            self.transition_to_ready()
+        Path(self.path).touch(exist_ok=False)
+
 
 class TaskProcess:
 
@@ -219,7 +304,11 @@ class TaskProcess:
     def run(control_dir, as_subprocess=True, wait_for_completion=False, run_python_calls_in_process=False):
 
         if not as_subprocess:
-            TaskProcess(control_dir, run_python_calls_in_process).launch_task(wait_for_completion, exit_process_when_done=False)
+            TaskProcess(
+                control_dir,
+                run_python_calls_in_process,
+                as_subprocess=as_subprocess
+            ).launch_task(wait_for_completion, exit_process_when_done=False)
         else:
             pipeline_work_dir = os.path.dirname(control_dir)
             pipeline_cli = os.path.join(pipeline_work_dir, "cli")
@@ -241,7 +330,7 @@ class TaskProcess:
                 else:
                     logger.debug("task ended with returncode: %s", p.popen.returncode)
 
-    def __init__(self, control_dir, run_python_calls_in_process=False):
+    def __init__(self, control_dir, run_python_calls_in_process=False, as_subprocess=True):
         self.control_dir = control_dir
         self.task_key = os.path.basename(control_dir)
         self.pipeline_work_dir = os.path.dirname(control_dir)
@@ -251,6 +340,7 @@ class TaskProcess:
         self.task_conf = None
         # For test cases:
         self.run_python_calls_in_process = run_python_calls_in_process
+        self.as_subprocess = as_subprocess
 
     def _exit_process(self):
         self._delete_pid_and_slurm_job_id()
@@ -944,13 +1034,36 @@ class TaskProcess:
         python_task = func_from_mod_func(module_function)
         self.call_python(module_function, python_task)
 
+    def run_array(self):
+
+        step_number, _, state_file, _ = self.read_task_state()
+        ended_ok = False
+        try:
+            SlurmArrayParentTask(
+                self.task_key,
+                StateFileTracker(self.pipeline_instance_dir),
+                self.task_conf,
+                logger,
+                mockup_run_launch_local_processes=not self.as_subprocess
+            ).run(False, False, None)
+            ended_ok = True
+        except Exception as ex:
+            self._transition_state_file(state_file, "failed", step_number)
+        finally:
+            if ended_ok:
+                self.transition_to_completed(state_file)
+
     def launch_task(self, wait_for_completion, exit_process_when_done=True):
 
         def task_func_wrapper():
             try:
                 self.resolve_task_env()
                 logger.debug("task func started")
-                self._run_steps()
+                is_slurm_parent = self.task_conf.get("is_slurm_parent")
+                if is_slurm_parent is not None and is_slurm_parent:
+                    self.run_array()
+                else:
+                    self._run_steps()
                 logger.info("task completed")
             except Exception as ex:
                 if not exit_process_when_done:
@@ -1567,3 +1680,650 @@ class TaskOutputs:
             )
 
         return p
+
+
+class SlurmArrayParentTask:
+
+    def __init__(self, task_key, tracker, task_conf=None, logger=None, mockup_run_launch_local_processes=False):
+        self.task_key = task_key
+        self.debug = True
+        self.task_conf = task_conf
+        self.tracker = tracker
+        self.mockup_run_launch_local_processes = mockup_run_launch_local_processes
+        if logger is None:
+            self.logger = logging.getLogger('log nothing')
+            self.logger.addHandler(logging.NullHandler())
+        else:
+            self.logger = logger
+
+    def control_dir(self):
+        return os.path.join(self.tracker.pipeline_work_dir,  self.task_key)
+
+    def task_keys_file(self):
+        return os.path.join(self.control_dir(),  "task-keys.tsv")
+
+    def children_task_keys(self):
+        with open(self.task_keys_file()) as f:
+            for line in f:
+                yield line.strip()
+
+    def prepare_sbatch_command(self, task_key_file, array_size):
+
+        if array_size == 0:
+            raise Exception(f"should not start an empty array")
+        elif array_size == 1:
+            array_arg = "0"
+        else:
+            array_arg = f"0-{array_size - 1}"
+
+        return [
+            "sbatch",
+            f"--array={array_arg}",
+            f"--account={self.task_conf.get('slurm_account')}",
+            f"--output={self.control_dir()}/out.log",
+            f"--export={0}".format(",".join([
+                f"DRYPIPE_CONTROL_DIR={self.control_dir()}",
+                f"DRYPIPE_TASK_KEY_FILE_BASENAME={os.path.basename(task_key_file)}",
+                f"DRYPIPE_TASK_DEBUG={self.debug}"
+            ])),
+            "--signal=B:USR1@50",
+            "--parsable",
+            f"{self.control_dir()}/cli"
+        ]
+
+    def call_sbatch(self, command_args):
+        cmd = " ".join(command_args)
+        logging.info("will launch array: %s", cmd)
+        with PortablePopen(cmd, shell=True) as p:
+            p.wait_and_raise_if_non_zero()
+            return p.stdout_as_string().strip()
+
+    def call_squeue(self, submitted_job_ids):
+        job_ids_as_str = ",".join(list(submitted_job_ids))
+        # see JOB STATE CODES: https://slurm.schedmd.com/squeue.html
+        with PortablePopen(f'squeue -r --format="%i %t" --states=all --jobs={job_ids_as_str}', shell=True) as p:
+            p.wait_and_raise_if_non_zero()
+            for line in p.iterate_stdout_lines():
+                yield line
+
+    def compare_and_reconcile_squeue_with_state_files(self, mockup_squeue_call=None):
+
+        submitted_arrays_files = list(self.submitted_arrays_files_with_job_is_running_status())
+
+        assumed_active_job_ids = {
+            job_id
+            for array_n, job_id, file, is_terminated in submitted_arrays_files
+            if not is_terminated
+        }
+
+        if len(assumed_active_job_ids) == 0:
+            return None
+
+        job_ids_to_array_idx_to_squeue_state = self.call_squeue_and_index_response(
+            assumed_active_job_ids, mockup_squeue_call
+        )
+
+        actual_active_job_ids = job_ids_to_array_idx_to_squeue_state.keys()
+
+        ended_job_ids_since_last_call = assumed_active_job_ids - actual_active_job_ids
+
+        """
+        j1: t0, t1, t3
+        j2:     t1
+        """
+        task_key_to_job_id_array_idx = {}
+
+        for array_n, job_id, job_submission_file, is_assumed_terminated in submitted_arrays_files:
+            if not is_assumed_terminated:
+                for task_key, array_idx in self.task_keys_in_i_th_array_file(array_n):
+                    task_key_to_job_id_array_idx[task_key] = (job_id, array_idx)
+
+        dict_unexpected_states = {}
+
+        for task_key, (job_id, array_idx) in task_key_to_job_id_array_idx.items():
+            array_idx_to_squeue_state = job_ids_to_array_idx_to_squeue_state.get(job_id)
+            squeue_state = None
+            if array_idx_to_squeue_state is not None:
+                squeue_state = array_idx_to_squeue_state.get(array_idx)
+            unexpected_states = self.compare_and_reconcile_task_state_file_with_squeue_state(task_key, squeue_state)
+            if unexpected_states is not None:
+                dict_unexpected_states[task_key] = unexpected_states
+                drypipe_state_as_string, expected_squeue_state, actual_queue_state = unexpected_states
+                self.logger.warning(
+                    "unexpected squeue state %s, expected %s for task %s",
+                    actual_queue_state, expected_squeue_state, task_key
+                )
+
+        # flag new ended job_ids
+        for array_n, job_id, job_submission_file, is_assumed_terminated in submitted_arrays_files:
+            if not is_assumed_terminated:
+                if job_id in ended_job_ids_since_last_call:
+                    with open(job_submission_file, "a") as f:
+                        f.write("COMPLETED\n")
+
+        return dict_unexpected_states
+
+    def call_squeue_and_index_response(self, submitted_job_ids, mockup_squeue_call=None) -> dict[str,dict[int,str]]:
+
+        res: dict[str,dict[int,str]] = {}
+
+        if self.mockup_run_launch_local_processes:
+            squeue_func = lambda: []
+        elif mockup_squeue_call is None:
+            squeue_func = lambda: self.call_squeue(submitted_job_ids)
+        else:
+            squeue_func = lambda: mockup_squeue_call(submitted_job_ids)
+
+        for line in squeue_func():
+            line = line.strip()
+            job_id_array_idx, squeue_state = line.split()
+            job_id, array_idx = job_id_array_idx.split("_")
+
+            array_idx_to_state_dict = res.get(job_id)
+            if array_idx_to_state_dict is None:
+                array_idx_to_state_dict = {}
+                res[job_id] = array_idx_to_state_dict
+
+            array_idx = int(array_idx)
+            array_idx_to_state_dict[array_idx] = squeue_state
+        return res
+
+    def mock_compare_and_reconcile_squeue_with_state_files(self, mock_squeue_lines: List[str]):
+        def mockup_squeue_call(submitted_job_ids):
+            yield from mock_squeue_lines
+
+        return self.compare_and_reconcile_squeue_with_state_files(mockup_squeue_call)
+
+    def fetch_state_file(self, task_key):
+        _, state_file = self.tracker.fetch_true_state_and_update_memory_if_changed(task_key)
+        return state_file
+
+    def compare_and_reconcile_task_state_file_with_squeue_state(self, task_key, squeue_state):
+        state_file = self.fetch_state_file(task_key)
+        drypipe_state_as_string = state_file.state_as_string()
+        # strip "state."
+        drypipe_state_as_string = drypipe_state_as_string[6:]
+        if "." in drypipe_state_as_string:
+            drypipe_state_as_string = drypipe_state_as_string.split(".")[0]
+
+        # see JOB STATE CODES at https://slurm.schedmd.com/squeue.html
+
+        if drypipe_state_as_string in ["completed", "failed", "killed", "timed-out"]:
+            if squeue_state is not None:
+                return drypipe_state_as_string, None, squeue_state
+        elif drypipe_state_as_string in ["ready", "waiting"]:
+            if squeue_state is not None:
+                return drypipe_state_as_string, None, squeue_state
+        elif drypipe_state_as_string.endswith("_step-started"):
+            if squeue_state is None:
+                self.tracker.transition_to_crashed(state_file)
+                return drypipe_state_as_string,  "R,PD", None
+            elif squeue_state not in ["R", "PD"]:
+                return drypipe_state_as_string, "R,PD", squeue_state
+        elif drypipe_state_as_string.endswith("step-started"):
+            if squeue_state is None:
+                self.tracker.transition_to_crashed(state_file)
+                return drypipe_state_as_string,  "R,PD", None
+            elif squeue_state not in ["R", "PD"]:
+                return drypipe_state_as_string, "R,PD", squeue_state
+
+
+    def arrays_files(self) -> Iterator[Tuple[int, str]]:
+
+        def gen():
+            for f in glob.glob(os.path.join(self.control_dir(), "array.*.tsv")):
+                b = os.path.basename(f)
+                idx = b.split(".")[1]
+                idx = int(idx)
+                yield idx, f
+
+        yield from sorted(gen(), key= lambda t: t[0])
+
+    def i_th_array_file(self, array_number):
+        return os.path.join(self.control_dir(), f"array.{array_number}.tsv")
+
+    def task_keys_in_i_th_array_file(self, array_number):
+        with open(self.i_th_array_file(array_number)) as f:
+            array_idx = 0
+            for line in f:
+                yield line.strip(), array_idx
+                array_idx += 1
+
+    def submitted_arrays_files(self) -> Iterator[Tuple[int, str, str]]:
+        def gen():
+            for f in glob.glob(os.path.join(self.control_dir(), "array.*.job.*")):
+                b = os.path.basename(f)
+                _, array_n, _, job_id = b.split(".")
+                array_n = int(array_n.strip())
+                yield array_n, job_id, f
+
+        yield from sorted(gen(), key=lambda t: t[0])
+
+    def submitted_arrays_files_with_job_is_running_status(self) -> Iterator[Tuple[int, str, str, bool]]:
+        def s(file):
+            with open(file) as _file:
+                for line in _file:
+                    if line.strip() == "COMPLETED":
+                        return True
+            return False
+
+        for array_n, job_id, f in self.submitted_arrays_files():
+            status = s(f)
+            yield array_n, job_id, f, status
+
+    def i_th_submitted_array_file(self, array_number, job_id):
+        return os.path.join(self.control_dir(), f"array.{array_number}.job.{job_id}")
+
+    def _iterate_next_task_state_files(self, start_next_n, restart_failed):
+        i = 0
+        for k in self.children_task_keys():
+            state_file = self.tracker.load_state_file(k)
+            if state_file.is_in_pre_launch():
+                pass
+            elif state_file.is_ready():
+                yield state_file
+                i += 1
+            elif restart_failed and (state_file.is_failed() or state_file.is_timed_out()):
+                self.tracker.register_pre_launch(state_file)
+                yield state_file
+                i += 1
+            if start_next_n is not None and start_next_n >= i:
+                break
+
+    def prepare_and_launch_next_array(self, start_next_n=None, restart_failed=False, call_sbatch_mockup=None):
+
+        arrays_files = list(self.arrays_files())
+
+        if len(arrays_files) == 0:
+            next_array_number = 0
+        else:
+            last_array_file_idx = arrays_files[-1][0]
+            next_array_number = last_array_file_idx + 1
+
+        next_task_key_file = os.path.join(self.control_dir(), f"array.{next_array_number}.tsv")
+
+        next_task_state_files = list(self._iterate_next_task_state_files(start_next_n, restart_failed))
+
+        if len(next_task_state_files) == 0:
+            return 0
+        else:
+            with open(next_task_key_file, "w") as _next_task_key_file:
+                for state_file in next_task_state_files:
+                    _next_task_key_file.write(f"{state_file.task_key}\n")
+                    self.tracker.register_pre_launch(state_file)
+
+            command_args = self.prepare_sbatch_command(next_task_key_file, len(next_task_state_files))
+
+            if call_sbatch_mockup is not None:
+                call_sbatch_func = call_sbatch_mockup
+            elif self.mockup_run_launch_local_processes:
+                call_sbatch_func = lambda: self._sbatch_mockup_launch_as_local_proceses()
+            else:
+                call_sbatch_func = lambda: self.call_sbatch(command_args)
+
+            job_id = call_sbatch_func()
+            if job_id is None:
+                raise Exception(f"sbatch returned None:\n {command_args}")
+            with open(self.i_th_submitted_array_file(next_array_number, job_id), "w") as f:
+                f.write(" ".join(command_args))
+
+            return len(next_task_state_files)
+
+    def _sbatch_mockup_launch_as_local_proceses(self):
+
+        launch_idx, next_array_file = list(self.arrays_files())[-1]
+
+        def gen_task_keys_to_launch():
+            with open(next_array_file) as af:
+                for line in af:
+                    line = line.strip()
+                    if line != "":
+                        yield line
+
+        for task_key in gen_task_keys_to_launch():
+            TaskProcess.run(
+                os.path.join(self.tracker.pipeline_work_dir, task_key),
+                as_subprocess=True,
+                wait_for_completion=True
+            )
+
+        return f"123400{launch_idx}"
+
+    def run(self, restart_failed, reset_failed, max_tasks):
+
+        self.prepare_and_launch_next_array()
+
+        if self.mockup_run_launch_local_processes:
+            return
+
+        pause_in_seconds = [5, 5, 60, 600]
+        pause_idx = 0
+        max_idx = len(pause_in_seconds) - 1
+        while self.compare_and_reconcile_squeue_with_state_files() is not None:
+            time.sleep(pause_in_seconds[pause_idx])
+            if pause_idx < max_idx:
+                pause_idx += 1
+
+        for task_key in self.children_task_keys():
+            state_file = self.fetch_state_file(task_key)
+            if not state_file.is_completed():
+                raise Exception(f"at least one child task has not completed: {state_file.path}")
+
+
+class StateFileTracker:
+
+    def __init__(self, pipeline_instance_dir):
+        self.pipeline_instance_dir = pipeline_instance_dir
+        self.pipeline_work_dir = os.path.join(pipeline_instance_dir, ".drypipe")
+        self.pipeline_output_dir = os.path.join(self.pipeline_instance_dir, "output")
+        self.state_files_in_memory: dict[str, StateFile] = {}
+        self.load_from_disk_count = 0
+        self.resave_count = 0
+        self.new_save_count = 0
+
+    def prepare_instance_dir(self, conf_dict):
+        Path(self.pipeline_instance_dir).mkdir(
+            exist_ok=False, mode=FileCreationDefaultModes.pipeline_instance_directories)
+        Path(self.pipeline_work_dir).mkdir(
+            exist_ok=False, mode=FileCreationDefaultModes.pipeline_instance_directories)
+        Path(self.pipeline_instance_dir, "output").mkdir(
+            exist_ok=False, mode=FileCreationDefaultModes.pipeline_instance_directories)
+
+        with open(Path(self.pipeline_work_dir, "conf.json"), "w") as conf_file:
+            conf_file.write(json.dumps(conf_dict, indent=4))
+
+        shutil.copy(__file__, self.pipeline_work_dir)
+
+        script_lib_file = os.path.join(self.pipeline_work_dir, "cli")
+        with open(script_lib_file, "w") as script_lib_file_handle:
+            write_pipeline_lib_script(script_lib_file_handle)
+        os.chmod(script_lib_file, FileCreationDefaultModes.pipeline_instance_scripts)
+
+
+    def set_completed_on_disk(self, task_key):
+        os.rename(
+            self.state_files_in_memory[task_key].path,
+            os.path.join(self.pipeline_work_dir, task_key, "state.completed")
+        )
+
+    def set_ready_on_disk_and_in_memory(self, task_key):
+        p = os.path.join(self.pipeline_work_dir, task_key, "state.ready")
+        os.rename(self.state_files_in_memory[task_key].path, p)
+        self.state_files_in_memory[task_key].path = p
+
+    def set_step_state_on_disk_and_in_memory(self, task_key, state_base_name):
+        p = os.path.join(self.pipeline_work_dir, task_key, state_base_name)
+        b4 = self.state_files_in_memory[task_key].path
+        os.rename(b4, p)
+        self.state_files_in_memory[task_key].path = p
+
+    def transition_to_crashed(self, state_file):
+        previous_path = state_file.path
+        state_file.transition_to_crashed()
+        os.rename(previous_path, state_file.path)
+
+    def register_pre_launch(self, state_file):
+        previous_path = state_file.path
+        state_file.transition_to_pre_launch()
+        os.rename(previous_path, state_file.path)
+
+    def completed_task_keys(self):
+        for k, state_file in self.state_files_in_memory.items():
+            if state_file.is_completed():
+                yield k
+
+    def all_state_files(self):
+        return self.state_files_in_memory.values()
+
+    def lookup_state_file_from_memory(self, task_key):
+        return self.state_files_in_memory[task_key]
+
+    def _find_state_file_path_in_task_control_dir(self, task_key) -> str :
+        try:
+            with os.scandir(os.path.join(self.pipeline_work_dir, task_key)) as i:
+                for f in i:
+                    if f.name.startswith("state."):
+                        return f.path
+        except FileNotFoundError:
+            pass
+        return None
+
+    def load_state_file(self, task_key, slurm_array_id=None):
+        state_file_path = self._find_state_file_path_in_task_control_dir(task_key)
+        if state_file_path is None:
+            raise Exception(f"no state file exists in {os.path.join(self.pipeline_work_dir, task_key)}")
+        state_file = StateFile(task_key, None, self, path=state_file_path, slurm_array_id=slurm_array_id)
+        self.state_files_in_memory[task_key] = state_file
+        return state_file
+
+    def fetch_true_state_and_update_memory_if_changed(self, task_key):
+        state_file = self.lookup_state_file_from_memory(task_key)
+        if os.path.exists(state_file.path):
+            return None, state_file
+        else:
+            state_file_path = self._find_state_file_path_in_task_control_dir(task_key)
+            if state_file_path is None:
+                raise Exception(f"no state file exists in {os.path.join(self.pipeline_work_dir, task_key)}")
+            state_file.refresh(state_file_path)
+            return state_file, state_file
+
+    def _load_task_conf(self, task_control_dir):
+        with open(os.path.join(task_control_dir, "task-conf.json")) as tc:
+            return json.loads(tc.read())
+
+    def load_from_existing_file_on_disc_and_resave_if_required(self, task, state_file_path):
+
+        task_control_dir = os.path.dirname(state_file_path)
+        task_key = os.path.basename(task_control_dir)
+        pipeline_work_dir = os.path.dirname(task_control_dir)
+        assert task.key == task_key
+        task_conf = self._load_task_conf(task_control_dir)
+        current_hash_code = task.compute_hash_code()
+        state_file = StateFile(task_key, current_hash_code, self, path=state_file_path)
+        if state_file.is_completed():
+            pass
+            #load inputs and outputs
+        else:
+            if task_conf["hash_code"] != state_file.hash_code:
+                task.save(state_file, current_hash_code)
+                state_file.hash_code = current_hash_code
+                self.resave_count += 1
+        self.load_from_disk_count += 1
+        return state_file
+
+    def _iterate_all_tasks_from_disk(self, glob_filter):
+        with os.scandir(self.pipeline_work_dir) as pwd_i:
+            for task_control_dir_entry in pwd_i:
+                if not task_control_dir_entry.is_dir():
+                    continue
+                if task_control_dir_entry.name == "__pycache__":
+                    continue
+                task_control_dir = task_control_dir_entry.path
+                task_key = os.path.basename(task_control_dir)
+
+                if glob_filter is not None:
+                    if not fnmatch.fnmatch(task_key, glob_filter):
+                        continue
+
+                state_file_dir_entry = self._find_state_file_path_in_task_control_dir(task_key)
+                if state_file_dir_entry is None:
+                    raise Exception(f"no state file exists in {task_control_dir_entry.path}")
+
+                yield task_key, task_control_dir, state_file_dir_entry
+
+    def _load_task_from_state_file(self, task_key, task_control_dir, state_file_path, include_non_completed):
+        if state_file_path.endswith("state.completed") or include_non_completed:
+            yield TaskProcess(task_control_dir).resolve_task(
+                StateFile(task_key, None, self, path=state_file_path)
+            )
+
+    def load_tasks_for_query(self, glob_filter=None, include_non_completed=False):
+        for task_key, task_control_dir, state_file_dir_entry in self._iterate_all_tasks_from_disk(glob_filter):
+            yield from self._load_task_from_state_file(
+                task_key, task_control_dir, state_file_dir_entry, include_non_completed
+            )
+
+    def load_single_task_or_none(self, task_key, include_non_completed=False):
+        task_control_dir = os.path.join(self.pipeline_work_dir, task_key)
+        state_file_path = self._find_state_file_path_in_task_control_dir(task_key)
+        if state_file_path is None:
+            return None
+        else:
+            # update mem
+            self.fetch_true_state_and_update_memory_if_changed(task_key)
+            l = list(self._load_task_from_state_file(
+                task_key, task_control_dir, state_file_path, include_non_completed
+            ))
+            c = len(l)
+            if c == 0:
+                return None
+            elif c == 1:
+                return l[0]
+            else:
+                raise Exception(f"expected zero or one task with key '{task_key}', got {c}")
+
+    def load_state_files_for_run(self, glob_filter=None):
+        for task_key, task_control_dir, state_file_path in self._iterate_all_tasks_from_disk(glob_filter):
+            state_file = StateFile(
+                task_key, None, self, path=state_file_path
+            )
+            self.state_files_in_memory[task_key] = state_file
+            task_conf = self._load_task_conf(task_control_dir)
+            if state_file.is_completed():
+                yield True, state_file, None
+            else:
+                upstream_task_keys = set()
+                for i in task_conf["inputs"]:
+                    k = i.get("upstream_task_key")
+                    if k is not None:
+                        upstream_task_keys.add(k)
+                yield False, state_file, upstream_task_keys
+
+    def create_true_state_if_new_else_fetch_from_memory(self, task):
+        """
+        :return: (task_is_new, state_file)
+        """
+        state_file_in_memory = self.state_files_in_memory.get(task.key)
+        if state_file_in_memory is not None:
+            # state_file_in_memory is assumed up to date, since task declarations don't change between runs
+            # by design, DAG generators that violate this assumption are considered at fault
+            return False, state_file_in_memory
+        else:
+            # we have a new task OR process was restarted
+            hash_code = task.compute_hash_code()
+            state_file_path = self._find_state_file_path_in_task_control_dir(task.key)
+            if state_file_path is not None:
+                # process was restarted, task is NOT new
+                state_file_in_memory = self.load_from_existing_file_on_disc_and_resave_if_required(task, state_file_path)
+                self.state_files_in_memory[task.key] = state_file_in_memory
+                task.save_if_hash_has_changed(state_file_in_memory, hash_code)
+                return False, state_file_in_memory
+            else:
+                # task is new
+                state_file_in_memory = StateFile(task.key, hash_code, self)
+                state_file_in_memory.is_slurm_array_child = task.is_slurm_array_child
+                if task.is_slurm_parent:
+                    state_file_in_memory.is_parent_task = True
+                task.save(state_file_in_memory, hash_code)
+                state_file_in_memory.touch_initial_state_file(False)
+                self.state_files_in_memory[task.key] = state_file_in_memory
+                self.new_save_count += 1
+                return True, state_file_in_memory
+
+
+
+class Cli:
+
+    def __init__(self, args, invocation_script=None, env=None):
+        self.parser = argparse.ArgumentParser(
+            description="DryPipe CLI"
+        )
+
+        #TODO: use invocation_script to guess pipeline_instance_dir
+
+        self._add_common_args()
+        self._sub_parsers()
+
+        self.parsed_args = self.parser.parse_args(args)
+
+    def command(self):
+        return self.parsed_args.command
+
+    def create_task_process(self):
+
+        return TaskProcess()
+
+
+    def _add_common_args(self):
+        self.parser.add_argument(
+            '--pipeline-instance-dir',
+            help='pipeline instance dir, alternatively set env var DRYPIPE_PIPELINE_INSTANCE_DIR'
+        )
+        self.parser.add_argument(
+            '--verbose'
+        )
+        self.parser.add_argument(
+            '--dry-run',
+            help="don't actualy run, but print what will run (implicit --verbose)",
+        )
+
+    def _sub_parsers(self):
+
+
+        self.subparsers = self.parser.add_subparsers(required=True, dest='command')
+        #self.add_run_args(self.subparsers.add_parser('run', parents=[self.parser]))
+        #self.add_run_args(self.subparsers.add_parser('status', parents=[self.parser]))
+        self.add_array_args(self.subparsers.add_parser('submit-array'))
+
+    def add_status_args(self):
+        pass
+
+    def add_run_args(self, run_parser):
+
+        run_parser.add_argument(
+            '--until', type=int, help='tasks matching PATTERN will not be started', action='append', metavar='PATTERN'
+        )
+
+
+    def add_array_args(self, run_parser):
+        run_parser.add_argument(
+            '--filter',
+            help=textwrap.dedent(
+            """
+            reduce the set of task that will run, with task-key match pattern: TASK_KEY(:STEP_NUMBER)?
+            ex:
+                --filter=my_taskABC
+                --filter=my_taskABC:3            
+            """)
+        )
+
+        run_parser.add_argument(
+            '--limit', type=int, help='limit submitted array size to N tasks', metavar='N'
+        )
+
+        run_parser.add_argument(
+            '--slurm-account'
+        )
+
+        run_parser.add_argument(
+            '--slurm-args',
+            help="string that will be passed as argument to the sbatch invocation"
+        )
+
+        run_parser.add_argument(
+            '--restart-at-step',
+            help='task key',
+        )
+
+        run_parser.add_argument(
+            '--restart-failed',
+            action='store_true', default=False,
+            help='re submit failed tasks in array, restart from last failed step, keep previous output'
+        )
+
+        run_parser.add_argument(
+            '--reset-failed',
+            action='store_true', default=False,
+            help='delete and re submit failed tasks in array'
+        )
+

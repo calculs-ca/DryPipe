@@ -36,11 +36,14 @@ class BasePipelineTest(TestWithDirectorySandbox):
         TaskProcess.run(state_file.control_dir(), as_subprocess=False, wait_for_completion=True)
         self.assertEqual(os.environ, env_copy)
 
+    def create_pipeline_instance(self):
+        pipeline = Pipeline(lambda dsl: self.dag_gen(dsl), pipeline_code_dir=self.pipeline_code_dir)
+        pipeline_instance = pipeline.create_pipeline_instance(self.pipeline_instance_dir)
+        return pipeline_instance
 
     def run_pipeline(self, queue_only_pattern=None):
 
-        pipeline = Pipeline(lambda dsl: self.dag_gen(dsl), pipeline_code_dir=self.pipeline_code_dir)
-        pipeline_instance = pipeline.create_pipeline_instance(self.pipeline_instance_dir)
+        pipeline_instance = self.create_pipeline_instance()
 
         pipeline_instance.run_sync(
             queue_only_pattern=queue_only_pattern,

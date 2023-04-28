@@ -145,6 +145,9 @@ class Task:
                 ** self.task_conf.as_json()
             }
 
+            if self.is_slurm_parent:
+                task_conf_json["is_slurm_parent"] = True
+
             task_conf_json["inputs"] = self.inputs.as_json()
             task_conf_json["outputs"] = self.outputs.as_json()
             task_conf_json["step_invocations"] = step_invocations
