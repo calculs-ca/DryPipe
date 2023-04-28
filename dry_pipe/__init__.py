@@ -85,8 +85,12 @@ class DryPipe:
         from dry_pipe.pipeline import Pipeline
 
         return Pipeline(
-            generator_of_tasks, pipeline_code_dir, task_conf, containers_dir, env_vars, remote_task_confs,
-            task_groupers, pipeline_code_dir_ls_command
+            generator_of_tasks,
+            pipeline_code_dir,
+            task_conf,
+            containers_dir,
+            task_groupers,
+            pipeline_code_dir_ls_command
         )
 
     @staticmethod

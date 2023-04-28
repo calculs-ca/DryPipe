@@ -2019,6 +2019,9 @@ class StateFileTracker:
         self.resave_count = 0
         self.new_save_count = 0
 
+    def instance_exists(self):
+        return os.path.exists(self.pipeline_work_dir)
+
     def prepare_instance_dir(self, conf_dict):
         Path(self.pipeline_instance_dir).mkdir(
             exist_ok=False, mode=FileCreationDefaultModes.pipeline_instance_directories)
@@ -2233,14 +2236,25 @@ class StateFileTracker:
 
 class Cli:
 
-    def __init__(self, args, invocation_script=None, env=None):
+    def __init__(self, args, invocation_script=None, env={}):
+        self.env = env
         self.parser = argparse.ArgumentParser(
             description="DryPipe CLI"
         )
 
-        #TODO: use invocation_script to guess pipeline_instance_dir
+        self.parser.add_argument(
+            '--pipeline-instance-dir',
+            help='pipeline instance directory, can also be set with environment var DRYPIPE_PIPELINE_INSTANCE_DIR',
+            default=self.env.get("DRYPIPE_PIPELINE_INSTANCE_DIR")
+        )
+        self.parser.add_argument(
+            '--verbose'
+        )
+        self.parser.add_argument(
+            '--dry-run',
+            help="don't actualy run, but print what will run (implicit --verbose)",
+        )
 
-        self._add_common_args()
         self._sub_parsers()
 
         self.parsed_args = self.parser.parse_args(args)
@@ -2254,26 +2268,16 @@ class Cli:
                 as_subprocess=not test_mode,
                 limit=self.parsed_args.limit
             )
-
-
-    def _add_common_args(self):
-        self.parser.add_argument(
-            '--pipeline-instance-dir',
-            help='pipeline instance dir, alternatively set env var DRYPIPE_PIPELINE_INSTANCE_DIR'
-        )
-        self.parser.add_argument(
-            '--verbose'
-        )
-        self.parser.add_argument(
-            '--dry-run',
-            help="don't actualy run, but print what will run (implicit --verbose)",
-        )
+        elif self.parsed_args.command == 'run':
+            pipeline = func_from_mod_func(self.parsed_args.generator)()
+            pipeline_instance = pipeline.create_pipeline_instance(self.parsed_args.pipeline_instance_dir)
+            pipeline_instance.run_sync()
 
     def _sub_parsers(self):
 
 
         self.subparsers = self.parser.add_subparsers(required=True, dest='command')
-        #self.add_run_args(self.subparsers.add_parser('run', parents=[self.parser]))
+        self.add_run_args(self.subparsers.add_parser('run'))
         #self.add_run_args(self.subparsers.add_parser('status', parents=[self.parser]))
         self.add_array_args(self.subparsers.add_parser('submit-array'))
 
@@ -2283,7 +2287,16 @@ class Cli:
     def add_run_args(self, run_parser):
 
         run_parser.add_argument(
-            '--until', type=int, help='tasks matching PATTERN will not be started', action='append', metavar='PATTERN'
+            '--generator',
+            help='<module>:<function> task generator function, can also be set with environment var DRYPIPE_PIPELINE_GENERATOR',
+            metavar="GENERATOR",
+            default=self.env.get("DRYPIPE_PIPELINE_GENERATOR")
+        )
+
+        run_parser.add_argument(
+            '--until', help='tasks matching PATTERN will not be started',
+            action='append',
+            metavar='PATTERN'
         )
 
 

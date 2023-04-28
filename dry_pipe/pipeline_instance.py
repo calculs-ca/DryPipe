@@ -10,10 +10,11 @@ class PipelineInstance:
     def __init__(self, pipeline, pipeline_instance_dir):
         self.pipeline = pipeline
         self.state_file_tracker = StateFileTracker(pipeline_instance_dir)
-        self.state_file_tracker.prepare_instance_dir({
-            "__pipeline_code_dir": pipeline.pipeline_code_dir,
-            "__containers_dir": pipeline.containers_dir
-        })
+        if not self.state_file_tracker.instance_exists():
+            self.state_file_tracker.prepare_instance_dir({
+                "__pipeline_code_dir": pipeline.pipeline_code_dir,
+                "__containers_dir": pipeline.containers_dir
+            })
 
     def run_sync(self, queue_only_pattern=None, run_tasks_in_process=True):
 

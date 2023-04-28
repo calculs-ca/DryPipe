@@ -44,7 +44,6 @@ class Pipeline:
             pipeline_code_dir=None,
             task_conf=None,
             containers_dir=None,
-            remote_task_confs=None,
             task_groupers=None,
             pipeline_code_dir_ls_command=None
     ):
@@ -54,15 +53,9 @@ class Pipeline:
         if task_conf is None:
             task_conf = TaskConf("process")
 
-        if remote_task_confs is not None:
-            for tc in remote_task_confs:
-                if not isinstance(tc, TaskConf):
-                    raise Exception(f"invalid type {type(tc)} given to remote_task_confs")
-
         self.pipeline_code_dir = pipeline_code_dir
         self.containers_dir = containers_dir
         self.task_conf = task_conf
-        self.remote_task_confs = remote_task_confs
         self.pipeline_code_dir_ls_command = pipeline_code_dir_ls_command
 
         def wrap_task_gen_to_set_task_conf_defaults(dsl):
