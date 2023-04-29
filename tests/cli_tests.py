@@ -28,7 +28,7 @@ class CliArrayTests1(PipelineWithSlurmArrayForRealSlurmTest):
 
     def create_and_prepare_pipeline(self, d):
         pipeline_instance = self.create_pipeline_instance(d.sandbox_dir)
-        pipeline_instance.run_sync(until_patterns="*")
+        pipeline_instance.run_sync(until_patterns=["*"])
         return pipeline_instance
 
     def do_validate(self, pipeline_instance):

@@ -18,6 +18,9 @@ class PipelineInstance:
 
     def run_sync(self, until_patterns=None, run_tasks_in_process=True):
 
+        if until_patterns is not None and not isinstance(until_patterns, list):
+            raise Exception(f"invalid type for until_patterns: {type(until_patterns).__name__}, must be List[str]")
+
         state_machine = StateMachine(
             self.state_file_tracker,
             lambda dsl: self.pipeline.task_generator(dsl),
