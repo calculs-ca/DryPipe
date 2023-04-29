@@ -545,6 +545,9 @@ class TaskProcess:
             def is_failed(self):
                 return state_file.is_failed()
 
+            def is_ready(self):
+                return state_file.is_ready()
+
             def state_name(self):
                 return state_file.state_as_string()
 
@@ -2279,7 +2282,7 @@ class Cli:
         elif self.parsed_args.command == 'run':
             pipeline = func_from_mod_func(self.parsed_args.generator)()
             pipeline_instance = pipeline.create_pipeline_instance(self.parsed_args.pipeline_instance_dir)
-            pipeline_instance.run_sync(queue_only_pattern=self.parsed_args.until[0])
+            pipeline_instance.run_sync(until_patterns=self.parsed_args.until)
 
     def _sub_parsers(self):
 

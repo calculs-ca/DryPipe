@@ -21,18 +21,27 @@ class InvalidQueryInTaskGenerator(Exception):
 
 class StateMachine:
 
-    def __init__(self, state_file_tracker: StateFileTracker, task_generator=None, observer=None, queue_only_pattern=None):
+    def __init__(self, state_file_tracker: StateFileTracker, task_generator=None, observer=None, until_patterns=None):
 
         if state_file_tracker is None:
             raise Exception(f"state_file_tracker can't be None")
 
         self.state_file_tracker = state_file_tracker
-        if queue_only_pattern is None:
+        if until_patterns is None:
             self._queue_only_func = lambda i: False
-        elif queue_only_pattern == "*":
-            self._queue_only_func = lambda i: True
         else:
-            self._queue_only_func = lambda task_key: fnmatch.fnmatch(task_key, queue_only_pattern)
+            funcs = [
+                lambda task_key: fnmatch.fnmatch(task_key, until_pattern)
+                for until_pattern in until_patterns
+            ]
+
+            def _queue_only(k):
+                for f in funcs:
+                    if f(k):
+                        return True
+                return False
+
+            self._queue_only_func = _queue_only
 
         self._task_generator = task_generator
         self._observer = observer
@@ -77,14 +86,19 @@ class StateMachine:
 
         query_all_matches_count = 0
         query_with_required_state_matches = []
+        match_all_impossible = False
 
         for state_file in self.state_file_tracker.all_state_files():
             if fnmatch.fnmatch(state_file.task_key, glob_expression):
                 query_all_matches_count += 1
                 if is_required_state(state_file):
                     query_with_required_state_matches.append(state_file)
+                elif state == "completed" and self._queue_only_func(state_file.task_key):
+                    self._pending_queries.pop(glob_expression, None)
+                    self._keys_of_tasks_waiting_for_external_events.discard(state_file.task_key)
+                    match_all_impossible = True
 
-        if query_all_matches_count == 0:
+        if query_all_matches_count == 0 or match_all_impossible:
             return []
         elif query_all_matches_count == len(query_with_required_state_matches):
             self._pending_queries.pop(glob_expression, None)
@@ -161,16 +175,18 @@ class StateMachine:
             if is_new:
                 new_generated_tasks += 1
                 upstream_dep_keys = task.upstream_dep_keys()
+
                 if state_file.is_slurm_array_child:
                     self.state_file_tracker.set_ready_on_disk_and_in_memory(state_file.task_key)
-                #state_file.touch_initial_state_file(False)
-                #if len(upstream_dep_keys) == 0:
-                #    self.state_file_tracker.set_ready_on_disk_and_in_memory(state_file.task_key)
-                if not self._queue_only_func(task.key):
-                    if self._register_upstream_task_dependencies_if_any_and_return_ready_status(
-                        task.key, upstream_dep_keys
-                    ):
+
+                if self._register_upstream_task_dependencies_if_any_and_return_ready_status(
+                    task.key, upstream_dep_keys
+                ):
+                    if self._queue_only_func(task.key) and state_file.is_waiting():
+                        self.state_file_tracker.set_ready_on_disk_and_in_memory(state_file.task_key)
+                    else:
                         yield state_file
+
 
         if new_generated_tasks == 0 and len(self._pending_queries) == 0:
             self._generator_exhausted = True

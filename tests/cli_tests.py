@@ -28,7 +28,7 @@ class CliArrayTests1(PipelineWithSlurmArrayForRealSlurmTest):
 
     def create_and_prepare_pipeline(self, d):
         pipeline_instance = self.create_pipeline_instance(d.sandbox_dir)
-        pipeline_instance.run_sync(queue_only_pattern="*")
+        pipeline_instance.run_sync(until_patterns="*")
         return pipeline_instance
 
     def do_validate(self, pipeline_instance):
@@ -90,7 +90,7 @@ class CliArrayTests1(PipelineWithSlurmArrayForRealSlurmTest):
                 '--pipeline-instance-dir', pipeline_instance.state_file_tracker.pipeline_instance_dir,
                 'submit-array',
                 '--task-key', 'array-parent',
-                '--limit', '1'
+                '--limit=1'
             ]).invoke(test_mode=True)
 
         self.do_validate(pipeline_instance)

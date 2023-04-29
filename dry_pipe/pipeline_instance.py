@@ -16,12 +16,12 @@ class PipelineInstance:
                 "__containers_dir": pipeline.containers_dir
             })
 
-    def run_sync(self, queue_only_pattern=None, run_tasks_in_process=True):
+    def run_sync(self, until_patterns=None, run_tasks_in_process=True):
 
         state_machine = StateMachine(
             self.state_file_tracker,
             lambda dsl: self.pipeline.task_generator(dsl),
-            queue_only_pattern=queue_only_pattern
+            until_patterns=until_patterns
         )
         pr = PipelineRunner(
             state_machine,

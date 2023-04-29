@@ -36,7 +36,7 @@ class EnsureFailOfLaunchWhenUnsatisfiedUpstreamDependencyTest(pipeline_tests_wit
         pipeline_instance = self.create_pipeline_instance()
 
         pipeline_instance.run_sync(
-            queue_only_pattern="*",
+            until_patterns="*",
             run_tasks_in_process=self.launches_tasks_in_process()
         )
 

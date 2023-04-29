@@ -101,7 +101,7 @@ class PipelineWithSlurmArray(BasePipelineTest):
 
         for match in dsl.query_all_or_nothing("t_*", state="ready"):
             yield dsl.task(
-                key=f"t_array_parent"
+                key=f"array_parent"
             ).slurm_array_parent(
                 children_tasks=match.tasks
             )()
@@ -120,6 +120,33 @@ class PipelineWithSlurmArray(BasePipelineTest):
         pass
 
 
+class PipelineWithSlurmArrayWithUntil(PipelineWithSlurmArray):
+
+    def launches_tasks_in_process(self):
+        return True
+
+    def test(self):
+        #TODO: make --until=x apply to array children
+        pipeline_instance = self.run_pipeline(["a-dige*"])
+
+        self.assertTrue(
+            pipeline_instance.lookup_single_task("a-digest", include_incomplete_tasks=True).is_ready()
+        )
+
+        self.assertTrue(
+            pipeline_instance.lookup_single_task("b-digest").is_completed()
+        )
+
+        pipeline_instance.run_sync(
+            run_tasks_in_process=True
+        )
+
+        for task in pipeline_instance.query("*"):
+            if not task.is_completed():
+                raise Exception(f"expected {task.key} to be completed, got {task.state_name()}")
+
+
+
 class SlurmArrayHandingStateMachineTest(TestWithDirectorySandbox):
 
     def test_slurm_array_state_machine(self):
@@ -130,7 +157,7 @@ class SlurmArrayHandingStateMachineTest(TestWithDirectorySandbox):
 
         tester.iterate_once_and_mutate_set_of_next_state_files_ready()
 
-        tester.assert_set_of_next_tasks_ready('z', 't_array_parent')
+        tester.assert_set_of_next_tasks_ready('z', 'array_parent')
 
         tester.set_completed_on_disk("t_a_1")
         tester.set_completed_on_disk("t_b_1")
@@ -428,5 +455,6 @@ def all_low_level_tests_with_mockup_slurm():
     return [
         SlurmArrayHandingStateMachineTest,
         SlurmArrayNormalScenario1,
-        SlurmArrayCrashScenario
+        SlurmArrayCrashScenario,
+        PipelineWithSlurmArrayWithUntil
     ]
