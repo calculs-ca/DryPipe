@@ -455,22 +455,24 @@ class TaskProcess:
 
         try:
             if out_vars is not None:
-                prev_out_vars = dict(self.iterate_out_vars_from())
 
-                for k, v in out_vars.items():
-                    try:
-                        v = json.dumps(v)
-                        prev_out_vars[k] = v
-                    except TypeError as ex0:
-                        print(
-                            f"task call {self.control_dir}.{mod_func} returned var {k} of unsupported type: {type(v)}" +
-                            " only primitive types are supported.",
-                            file=sys.stderr
-                        )
-                        logging.shutdown()
-                        exit(1)
+                next_out_vars = dict(self.iterate_out_vars_from())
 
-                self.write_out_vars(prev_out_vars)
+                wrong_type_errors = []
+
+                for o in self.outputs.iterate_non_file_outputs():
+                    v = out_vars.get(o.name)
+                    if v is not None:
+                        error_msg = o.ensure_valid_and_prescribed_type(v)
+                        if error_msg is None:
+                            next_out_vars[o.name] = v
+                        else:
+                            wrong_type_errors.append(f"{o.name}: {error_msg}")
+
+                if len(wrong_type_errors) > 0:
+                    raise Exception(f"function {mod_func} returned invalid types {wrong_type_errors}")
+
+                self.write_out_vars(next_out_vars)
 
         except Exception as ex:
             traceback.print_exc()
@@ -1598,6 +1600,21 @@ class TaskOutput:
             return float(v)
 
         return v
+
+    def ensure_valid_and_prescribed_type(self, v):
+
+        def expected_x_got_v(x, v):
+            return f"expected {x} got {v}"
+
+        if self.type == 'str':
+            if not isinstance(v, str):
+                return expected_x_got_v('str', v)
+        elif self.type == 'int':
+            if not isinstance(v, int):
+                return expected_x_got_v('int', v)
+        elif self.type == 'float':
+            if not isinstance(v, float):
+                return expected_x_got_v('float', v)
 
     def __int__(self):
 
