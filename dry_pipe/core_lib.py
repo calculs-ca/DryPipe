@@ -387,11 +387,8 @@ class TaskProcess:
         # python_calls can access outputs of previous ones with input args
         var_outputs_by_name = {}
 
-        #for task_input, k, v in self.resolve_upstream_and_constant_vars ():
-        #    inputs_by_name[k] = task_input.parse(v)
-
         for k, v in self.inputs._task_inputs.items():
-            inputs_by_name[k] = v
+            inputs_by_name[k] = v.resolved_value
 
         for o, k, f in self.outputs.iterate_file_task_outputs(self.task_output_dir):
             file_outputs_by_name[k] = f
@@ -510,6 +507,8 @@ class TaskProcess:
                             os.path.join(self.pipeline_work_dir, i.upstream_task_key, "output_vars")
                         ))
                         v = out_vars.get(i.name_in_upstream_task)
+                        if v is not None:
+                            v = i.parse(v)
                         yield i, i.name, v
                 elif i.is_constant():
                     yield i, i.name, i.value
@@ -525,8 +524,9 @@ class TaskProcess:
         task_inputs = {}
 
         for task_input, k, v in resolve_upstream_and_constant_vars():
+            task_inputs[k] = task_input
             if v is not None:
-                task_inputs[k] = task_input.parse(v)
+                task_input.resolved_value = v
 
         task_outputs = {}
         to = self.task_conf.get("outputs")
@@ -638,7 +638,7 @@ class TaskProcess:
 
         logger.debug("resolved and constant input vars")
         for k, v in self.inputs._task_inputs.items():
-            yield k, v
+            yield k, v.resolved_value
 
         logger.debug("file output vars")
         for _, k, f in self.outputs.iterate_file_task_outputs(self.task_output_dir):
@@ -1474,6 +1474,7 @@ class TaskInput:
 
         self.file_name = file_name
         self._cached_task_list_hash_codes = None
+        self.resolved_value = None
 
     def _digest_if_task_list(self):
         if self._cached_task_list_hash_codes is None:
@@ -1539,6 +1540,30 @@ class TaskInput:
             d["value"] = self._digest_if_task_list()
 
         return d
+
+    def __int__(self):
+
+        if self.type == "float":
+            return int(self.resolved_value)
+
+        if self.type != "int":
+            raise Exception(f"Task input {self.name} is not of type int, actual type is: {self.type} ")
+
+        return self.resolved_value
+
+    def __float__(self):
+
+        if self.type == "int":
+            return float(self.resolved_value)
+
+        if self.type != "float":
+            raise Exception(f"Task input {self.name} is not of type float, actual type is: {self.type} ")
+
+        return self.resolved_value
+
+    def __str__(self):
+        return str(self.resolved_value)
+
 
 
 class TaskOutput:
