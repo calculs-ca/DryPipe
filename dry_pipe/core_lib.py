@@ -330,17 +330,39 @@ class TaskProcess:
                 else:
                     logger.debug("task ended with returncode: %s", p.popen.returncode)
 
-    def __init__(self, control_dir, run_python_calls_in_process=False, as_subprocess=True):
+    def __init__(
+        self, control_dir, run_python_calls_in_process=False, as_subprocess=True, ensure_all_upstream_deps_complete=True
+    ):
         self.control_dir = control_dir
         self.task_key = os.path.basename(control_dir)
         self.pipeline_work_dir = os.path.dirname(control_dir)
         self.pipeline_instance_dir = os.path.dirname(self.pipeline_work_dir)
         self.pipeline_output_dir = os.path.join(self.pipeline_instance_dir, "output")
         self.task_output_dir = os.path.join(self.pipeline_output_dir, self.task_key)
-        self.task_conf = None
         # For test cases:
         self.run_python_calls_in_process = run_python_calls_in_process
         self.as_subprocess = as_subprocess
+        script_location = self.control_dir
+        with open(os.path.join(script_location, "task-conf.json")) as _task_conf:
+
+            self.task_conf = json.loads(_task_conf.read())
+            self.env = {}
+
+            task_inputs, task_outputs = self._unserialize_and_resolve_inputs_outputs(ensure_all_upstream_deps_complete)
+
+            self.inputs = TaskInputs(self.task_key, task_inputs)
+            self.outputs = TaskOutputs(self.task_key, task_outputs)
+
+            for k, v in self.iterate_task_env(False):
+                v = str(v)
+                logger.debug("env var %s = %s", k, v)
+                self.env[k] = v
+
+            command_before_task = self.task_conf.get("command_before_task")
+
+            if command_before_task is not None:
+                self.exec_cmd_before_launch(command_before_task)
+
 
     def _exit_process(self):
         self._delete_pid_and_slurm_job_id()
@@ -365,18 +387,19 @@ class TaskProcess:
         # python_calls can access outputs of previous ones with input args
         var_outputs_by_name = {}
 
-        for task_input, k, v in self.resolve_upstream_and_constant_vars():
-            inputs_by_name[k] = task_input.parse(v)
+        #for task_input, k, v in self.resolve_upstream_and_constant_vars ():
+        #    inputs_by_name[k] = task_input.parse(v)
 
-        for o, k, f in self.iterate_file_task_outputs():
+        for k, v in self.inputs._task_inputs.items():
+            inputs_by_name[k] = v
+
+        for o, k, f in self.outputs.iterate_file_task_outputs(self.task_output_dir):
             file_outputs_by_name[k] = f
 
-        for o in self.task_conf["outputs"]:
-            o = TaskOutput.from_json(o)
-            if not o.is_file():
-                v = os.environ.get(o.name)
-                if v is not None:
-                    var_outputs_by_name[o.name] = o.parse(v)
+        for o in self.outputs.iterate_non_file_outputs():
+            v = os.environ.get(o.name)
+            if v is not None:
+                var_outputs_by_name[o.name] = o.parse(v)
 
         all_function_input_candidates = {
             ** os.environ,
@@ -456,58 +479,50 @@ class TaskProcess:
 
         logging.shutdown()
 
-    def resolve_task_env(self, ensure_all_upstream_deps_complete=True):
-        script_location = self.control_dir
-        with open(os.path.join(script_location, "task-conf.json")) as _task_conf:
+    def _unserialize_and_resolve_inputs_outputs(self, ensure_all_upstream_deps_complete):
 
-            self.task_conf = json.loads(_task_conf.read())
-            self.env = {}
+        def resolve_upstream_and_constant_vars():
 
-            for k, v in self.iterate_task_env(ensure_all_upstream_deps_complete):
-                v = str(v)
-                logger.debug("env var %s = %s", k, v)
-                self.env[k] = v
+            for i in self.task_conf["inputs"]:
+                i = TaskInput.from_json(i)
+                if logger.level == logging.DEBUG:
+                    logger.debug("%s", i.as_string())
+                if i.is_upstream_output():
 
-            command_before_task = self.task_conf.get("command_before_task")
+                    def ensure_upstream_task_is_completed():
+                        for state_file in glob.glob(
+                                os.path.join(self.pipeline_work_dir, i.upstream_task_key, "state.*")):
+                            if not "completed" in state_file:
+                                msg = f"upstream task {i.upstream_task_key} " + \
+                                      f"not completed (state={state_file}), this task " + \
+                                      f"dependency on {i.name_in_upstream_task} not satisfied"
+                                raise UpstreamTasksNotCompleted(i.upstream_task_key, msg)
 
-            if command_before_task is not None:
-                self.exec_cmd_before_launch(command_before_task)
+                    if ensure_all_upstream_deps_complete:
+                        ensure_upstream_task_is_completed()
 
-            def override_deps(dep_file, bucket):
-                dep_file = os.path.join(os.path.join(script_location, dep_file))
-                if not os.path.exists(dep_file):
-                    return
-
-                file_cache = os.path.join(self.task_conf["remote_base_dir"], "file-cache", bucket)
-
-                logger.debug("will resolve external file deps: %s", file_cache)
-
-                with open(dep_file) as f:
-                    deps = {l.strip() for l in f.readlines() if l != ""}
-                    for k, v in os.environ.items():
-                        if v in deps:
-                            if v.startswith("/"):
-                                v = v[1:]
-                            new_v = os.path.join(file_cache, v)
-                            self.env[k] = new_v
-                            logger.debug("override var '%s' -> '%s'", k, new_v)
-
-            #override_deps("external-deps.txt", "shared")
-            #override_deps("external-deps-pipeline-instance.txt", os.environ["__pipeline_instance_name"])
-
-            #for k, v in resolve_upstream_vars(task_conf_as_json):
-            #    if v is not None:
-            #        os.environ[k] = v
-
-    def resolve_task(self, state_file, ensure_all_upstream_deps_complete=True):
-
-        self.resolve_task_env(ensure_all_upstream_deps_complete)
+                    if i.is_file():
+                        yield i, i.name, os.path.join(self.pipeline_output_dir, i.upstream_task_key, i.file_name)
+                    else:
+                        out_vars = dict(self.iterate_out_vars_from(
+                            os.path.join(self.pipeline_work_dir, i.upstream_task_key, "output_vars")
+                        ))
+                        v = out_vars.get(i.name_in_upstream_task)
+                        yield i, i.name, v
+                elif i.is_constant():
+                    yield i, i.name, i.value
+                elif i.is_file():
+                    # not is_upstream_output means they have either absolute path, or in pipeline_instance_dir
+                    if os.path.isabs(i.file_name):
+                        yield i, i.name, i.file_name
+                    else:
+                        yield i, i.name, os.path.join(self.pipeline_instance_dir, i.file_name)
 
         var_file = os.path.join(self.control_dir, "output_vars")
 
         task_inputs = {}
 
-        for task_input, k, v in self.resolve_upstream_and_constant_vars(ensure_all_upstream_deps_complete):
+        for task_input, k, v in resolve_upstream_and_constant_vars():
             if v is not None:
                 task_inputs[k] = task_input.parse(v)
 
@@ -526,11 +541,15 @@ class TaskProcess:
                     o.set_resolved_value(os.path.join(self.pipeline_output_dir, self.task_key, o.produced_file_name))
                     task_outputs[o.name] = o
 
+        return task_inputs, task_outputs
+
+    def resolve_task(self, state_file):
+
         class ResolvedTask:
-            def __init__(self):
+            def __init__(self, tp):
                 self.key = state_file.task_key
-                self.inputs = TaskInputs(self, task_inputs)
-                self.outputs = TaskOutputs(self, task_outputs)
+                self.inputs = tp.inputs
+                self.outputs = tp.outputs
                 self.state_file = state_file
 
             def __str__(self):
@@ -551,44 +570,8 @@ class TaskProcess:
             def state_name(self):
                 return state_file.state_as_string()
 
-        return ResolvedTask()
+        return ResolvedTask(self)
 
-    def resolve_upstream_and_constant_vars(self, ensure_all_upstream_deps_complete=True):
-
-        for i in self.task_conf["inputs"]:
-            i = TaskInput.from_json(i)
-            if logger.level == logging.DEBUG:
-                logger.debug("%s", i.as_string())
-            if i.is_upstream_output():
-
-                def ensure_upstream_task_is_completed():
-                    for state_file in glob.glob(
-                            os.path.join(self.pipeline_work_dir, i.upstream_task_key, "state.*")):
-                        if not "completed" in state_file:
-                            msg = f"upstream task {i.upstream_task_key} " + \
-                                  f"not completed (state={state_file}), this task " + \
-                                  f"dependency on {i.name_in_upstream_task} not satisfied"
-                            raise UpstreamTasksNotCompleted(i.upstream_task_key, msg)
-
-                if ensure_all_upstream_deps_complete:
-                    ensure_upstream_task_is_completed()
-
-                if i.is_file():
-                    yield i, i.name, os.path.join(self.pipeline_output_dir, i.upstream_task_key, i.file_name)
-                else:
-                    out_vars = dict(self.iterate_out_vars_from(
-                        os.path.join(self.pipeline_work_dir, i.upstream_task_key, "output_vars")
-                    ))
-                    v = out_vars.get(i.name_in_upstream_task)
-                    yield i, i.name, v
-            elif i.is_constant():
-                yield i, i.name, i.value
-            elif i.is_file():
-                # not is_upstream_output means they have either absolute path, or in pipeline_instance_dir
-                if os.path.isabs(i.file_name):
-                    yield i, i.name, i.file_name
-                else:
-                    yield i, i.name, os.path.join(self.pipeline_instance_dir, i.file_name)
 
     def iterate_out_vars_from(self, file=None):
         if file is None:
@@ -652,21 +635,12 @@ class TaskProcess:
                 yield k, os.path.expandvars(v)
 
         logger.debug("resolved and constant input vars")
-        for _, k, v in self.resolve_upstream_and_constant_vars(ensure_all_upstream_deps_complete):
+        for k, v in self.inputs._task_inputs.items():
             yield k, v
 
         logger.debug("file output vars")
-        for _, k, f in self.iterate_file_task_outputs():
+        for _, k, f in self.outputs.iterate_file_task_outputs(self.task_output_dir):
             yield k, f
-
-
-    def iterate_file_task_outputs(self):
-        outputs = self.task_conf.get("outputs")
-        if outputs is not None:
-            for o in outputs:
-                o = TaskOutput.from_json(o)
-                if o.is_file():
-                    yield o, o.name, os.path.join(self.task_output_dir, o.produced_file_name)
 
 
     def run_python(self, mod_func, container=None):
@@ -1010,10 +984,33 @@ class TaskProcess:
                 self._transition_state_file(state_file, "failed", step_number)
                 self._exit_process()
 
+
+    def _is_work_on_local_copy(self):
+        work_on_local_copy = self.env.get("work_on_local_copy")
+        return work_on_local_copy is not None and work_on_local_copy
+
+    def _rsync_inputs_to_scratch(self):
+        pass
+
+    def _adjust_file_env_vars_for_local_working_copies(self):
+        pass
+        #root_dir_of_local_copy = os.path.join(self.env["$__scratch_dir"], 'inputs-copy')
+        #for i, k, v in self.resolve_upstream_and_constant_vars(ensure_all_upstream_deps_complete=False):
+        #    if i.is_file():
+        #        self.env[k] = os.path.join(root_dir_of_local_copy, v)
+
+
+    def _rsync_outputs_from_scratch(self):
+        pass
+
     def _run_steps(self):
 
         step_number, control_dir, state_file, state_name = self.read_task_state()
         step_invocations = self.task_conf["step_invocations"]
+
+        if self._is_work_on_local_copy():
+            self._rsync_inputs_to_scratch_and_adjust_file_env_vars()
+            self._adjust_file_inputs_env_vars_to_scratch()
 
         for i in range(step_number, len(step_invocations)):
 
@@ -1034,6 +1031,9 @@ class TaskProcess:
                 raise Exception(f"unknown step invocation type: {call}")
 
             state_file, step_number = self.transition_to_step_completed(state_file, step_number)
+
+        if self._is_work_on_local_copy():
+            self._rsync_outputs_from_scratch()
 
         self.transition_to_completed(state_file)
 
@@ -1064,7 +1064,6 @@ class TaskProcess:
 
         def task_func_wrapper():
             try:
-                self.resolve_task_env()
                 logger.debug("task func started")
                 is_slurm_parent = self.task_conf.get("is_slurm_parent")
                 if is_slurm_parent is not None and is_slurm_parent:
@@ -1632,8 +1631,8 @@ class TaskOutput:
 
 class TaskInputs:
 
-    def __init__(self, task, task_inputs):
-        self.task = task
+    def __init__(self, task_key, task_inputs):
+        self.task_key = task_key
         self._task_inputs = task_inputs
 
     def __iter__(self):
@@ -1655,17 +1654,26 @@ class TaskInputs:
 
         if p is None:
             raise Exception(
-                f"task {self.task} does not declare input '{name}' in it's consumes() clause.\n" +
-                f"Use task({self.task.key}).consumes({name}=...) to specify input"
+                f"task {self.task_key} does not declare input '{name}' in it's consumes() clause.\n" +
+                f"Use task({self.task_key}).consumes({name}=...) to specify input"
             )
 
         return p
 
+    def rsync_file_list_produced_upstream(self):
+        for i in self._task_inputs:
+            if i.is_upstream_output():
+                yield i.name, f"output/{i.upstream_task_key}/{i.file_name}"
+
+    def rsync_external_file_list(self):
+        for i in self._task_inputs:
+            if not i.is_upstream_output() and i.is_file():
+                yield i.name, i.file_name
 
 class TaskOutputs:
 
-    def __init__(self, task, task_outputs):
-        self.task = task
+    def __init__(self, task_key, task_outputs):
+        self.task_key = task_key
         self._task_outputs = task_outputs
 
     def hash_values(self):
@@ -1684,12 +1692,26 @@ class TaskOutputs:
 
         if p is None:
             raise Exception(
-                f"task {self.task} does not declare output '{name}' in it's outputs() clause.\n" +
-                f"Use task({self.task.key}).outputs({name}=...) to specify outputs"
+                f"task {self.task_key} does not declare output '{name}' in it's outputs() clause.\n" +
+                f"Use task({self.task_key}).outputs({name}=...) to specify outputs"
             )
 
         return p
 
+    def iterate_non_file_outputs(self):
+        for o in self._task_outputs.values():
+            if not o.is_file():
+                yield o
+
+    def rsync_file_list(self):
+        for o in self._task_outputs:
+            if o.is_file():
+                yield o.name, f"output/{self.task_key}/{o.produced_file_name}"
+
+    def iterate_file_task_outputs(self, task_output_dir):
+        for o in self._task_outputs.values():
+            if o.is_file():
+                yield o, o.name, os.path.join(task_output_dir, o.produced_file_name)
 
 class SlurmArrayParentTask:
 
@@ -2165,9 +2187,10 @@ class StateFileTracker:
 
     def _load_task_from_state_file(self, task_key, task_control_dir, state_file_path, include_non_completed):
         if state_file_path.endswith("state.completed") or include_non_completed:
-            yield TaskProcess(task_control_dir).resolve_task(
-                StateFile(task_key, None, self, path=state_file_path),
-                ensure_all_upstream_deps_complete= not include_non_completed
+            yield TaskProcess(
+                task_control_dir, ensure_all_upstream_deps_complete= not include_non_completed
+            ).resolve_task(
+                StateFile(task_key, None, self, path=state_file_path)
             )
 
     def load_tasks_for_query(self, glob_filter=None, include_non_completed=False):

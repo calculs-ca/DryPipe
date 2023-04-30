@@ -23,6 +23,11 @@ class PipelineWithVariablePassingTaskLauncherTest(pipeline_tests_with_multiple_t
         return True
 
 
+class PipelineWith3StepsNoCrashTaskLauncherTest(pipeline_tests_with_single_tasks.PipelineWith3StepsNoCrash):
+    def launches_tasks_in_process(self):
+        return True
+
+
 class EnsureFailOfLaunchWhenUnsatisfiedUpstreamDependencyTest(pipeline_tests_with_multiple_tasks.PipelineWithVariablePassing):
 
 

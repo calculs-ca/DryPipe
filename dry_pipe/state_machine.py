@@ -106,8 +106,8 @@ class StateMachine:
             class Match:
                 def __init__(self):
                     self.tasks = sorted([
-                        TaskProcess(state_file.control_dir()).resolve_task(
-                            state_file, ensure_all_upstream_deps_complete=False
+                        TaskProcess(state_file.control_dir(), ensure_all_upstream_deps_complete=False).resolve_task(
+                            state_file
                         )
                         for state_file in query_with_required_state_matches
                     ], key=lambda t: t.key)
