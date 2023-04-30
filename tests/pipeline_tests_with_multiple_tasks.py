@@ -1,5 +1,5 @@
 from base_pipeline_test import BasePipelineTest
-from dry_pipe import DryPipe
+from dry_pipe import DryPipe, TaskConf
 
 
 class PipelineWithVariablePassing(BasePipelineTest):
@@ -53,7 +53,7 @@ def multiply_by_x(x, y, f):
         "result": x * y
     }
 
-class PipelineWithTwoPythonTasks(BasePipelineTest):
+class PipelineWithTwoBashTasks(BasePipelineTest):
 
     def dag_gen(self, dsl):
 
@@ -67,24 +67,30 @@ class PipelineWithTwoPythonTasks(BasePipelineTest):
             #!/usr/bin/env bash
             export x=12
             export y=34
+            echo "f: $f"
             echo "magic" > $f
         """)()
 
         yield t1
 
         yield dsl.task(
-            key="t2"
+            key="t2",
+            task_conf=self.task_conf()
         ).inputs(
             t1.outputs.x, #equivalent to: x=t1.out.x:
             z=t1.outputs.y,
             f_magic=t1.outputs.f
         ).outputs(
-            r=int
+            r=int,
+            f_magic2=dsl.file("magic2")
         ).calls("""
             #!/usr/bin/env bash
+            set -exv 
+            
             echo "x: $x"
             echo "z: $z"
-            export r=$(( $x + $z ))    
+            export r=$(( $x + $z ))
+            cp $f_magic $f_magic2            
         """)()
 
     def validate(self, tasks_by_keys):
@@ -97,9 +103,20 @@ class PipelineWithTwoPythonTasks(BasePipelineTest):
         if res != 46:
             raise Exception(f"expected 46, got {res}")
 
+        self.assert_file_content_equals(str(t2.outputs.f_magic2), "magic")
+
+
+class PipelineWithTwoBashTasksWorkOnLocalCopy(PipelineWithTwoBashTasks):
+
+    def task_conf(self):
+        tc = TaskConf.default()
+        tc.work_on_local_file_copies = True
+        return tc
+
 
 def all_basic_tests():
     return [
         PipelineWithVariablePassing,
-        PipelineWithTwoPythonTasks
+        PipelineWithTwoBashTasks,
+        PipelineWithTwoBashTasksWorkOnLocalCopy
     ]

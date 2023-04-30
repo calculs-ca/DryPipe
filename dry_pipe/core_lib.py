@@ -18,6 +18,7 @@ from datetime import datetime
 from functools import reduce
 from hashlib import blake2b
 from pathlib import Path
+from tempfile import TemporaryFile, NamedTemporaryFile
 from threading import Thread
 from typing import List, Iterator, Tuple
 
@@ -363,6 +364,8 @@ class TaskProcess:
             if command_before_task is not None:
                 self.exec_cmd_before_launch(command_before_task)
 
+    def __repr__(self):
+        return f"{self.task_key}"
 
     def _exit_process(self):
         self._delete_pid_and_slurm_job_id()
@@ -402,6 +405,7 @@ class TaskProcess:
             ** os.environ,
             ** inputs_by_name,
             ** file_outputs_by_name,
+            ** self._local_copy_adjusted_file_env_vars(),
             ** var_outputs_by_name
         }
 
@@ -501,7 +505,7 @@ class TaskProcess:
                         ensure_upstream_task_is_completed()
 
                     if i.is_file():
-                        yield i, i.name, os.path.join(self.pipeline_output_dir, i.upstream_task_key, i.file_name)
+                        yield i, i.name, os.path.join(self.pipeline_output_dir, i.upstream_task_key, i.name_in_upstream_task)
                     else:
                         out_vars = dict(self.iterate_out_vars_from(
                             os.path.join(self.pipeline_work_dir, i.upstream_task_key, "output_vars")
@@ -609,11 +613,7 @@ class TaskProcess:
         yield "__task_key", self.task_key
         yield "__task_output_dir", self.task_output_dir
 
-        scratch_dir = os.environ.get('SLURM_TMPDIR')
-        if scratch_dir is None:
-            yield "__scratch_dir", os.path.join(self.task_output_dir, "scratch")
-        else:
-            yield "__scratch_dir", scratch_dir
+        yield "__scratch_dir", self.resolve_scratch_dir()
 
         yield "__output_var_file", os.path.join(self.control_dir, "output_vars")
         yield "__out_log", os.path.join(self.control_dir, "out.log")
@@ -644,6 +644,12 @@ class TaskProcess:
         for _, k, f in self.outputs.iterate_file_task_outputs(self.task_output_dir):
             yield k, f
 
+    def resolve_scratch_dir(self):
+        scratch_dir = os.environ.get('SLURM_TMPDIR')
+        if scratch_dir is None:
+            return os.path.join(self.task_output_dir, "scratch")
+        else:
+            return scratch_dir
 
     def run_python(self, mod_func, container=None):
 
@@ -902,10 +908,13 @@ class TaskProcess:
 
     def run_script(self, script, container=None):
 
-        env = self.env
+        env = {
+            ** self.env,
+            ** self._local_copy_adjusted_file_env_vars()
+        }
 
         script = os.path.join(
-            self.env["__control_dir"],
+            env["__control_dir"],
             os.path.basename(script)
         )
 
@@ -988,22 +997,60 @@ class TaskProcess:
 
 
     def _is_work_on_local_copy(self):
-        work_on_local_copy = self.env.get("work_on_local_copy")
+        work_on_local_copy = self.task_conf.get("work_on_local_file_copies")
         return work_on_local_copy is not None and work_on_local_copy
 
-    def _rsync_inputs_to_scratch(self):
-        pass
+    def _local_inputs_root(self):
+        return os.path.join(self.resolve_scratch_dir(), "local-input-files")
 
-    def _adjust_file_env_vars_for_local_working_copies(self):
-        pass
-        #root_dir_of_local_copy = os.path.join(self.env["$__scratch_dir"], 'inputs-copy')
-        #for i, k, v in self.resolve_upstream_and_constant_vars(ensure_all_upstream_deps_complete=False):
-        #    if i.is_file():
-        #        self.env[k] = os.path.join(root_dir_of_local_copy, v)
+    def _local_outputs_root(self):
+        return os.path.join(self.resolve_scratch_dir(), "local-output-files")
 
+    def _local_copy_adjusted_file_env_vars(self):
+
+        if not self._is_work_on_local_copy():
+            return {}
+
+        def gen():
+            local_inputs = self._local_inputs_root()
+            for var_name, file in self.inputs.rsync_external_file_list():
+                yield var_name, os.path.join(local_inputs, file)
+
+            for var_name, file in self.inputs.rsync_file_list_produced_upstream():
+                yield var_name, os.path.join(local_inputs, file)
+
+            local_outputs = self._local_outputs_root()
+            for _, var_name, file in self.outputs.iterate_file_task_outputs(local_outputs):
+                yield var_name, file
+
+        return dict(gen())
+
+    def _create_local_scratch_and_rsync_inputs(self):
+
+        Path(self._local_inputs_root()).mkdir(exist_ok=True)
+        Path(self._local_outputs_root()).mkdir(exist_ok=True)
+
+        def files_included():
+            for var_name, file in self.inputs.rsync_external_file_list():
+                yield var_name, file
+
+            for var_name, file in self.inputs.rsync_file_list_produced_upstream():
+                yield var_name, file
+
+        with NamedTemporaryFile("w", prefix="zzz") as tf:
+            for _, fi in files_included():
+                tf.write(fi)
+                tf.write("\n")
+            tf.flush()
+
+            pid = self.pipeline_instance_dir
+
+            invoke_rsync(f"rsync --files-from={tf.name} {pid}/ {self._local_inputs_root()}")
 
     def _rsync_outputs_from_scratch(self):
-        pass
+        invoke_rsync(
+            f"rsync -a --dirs {self._local_outputs_root()}/ {self.pipeline_output_dir}/{self.task_key}"
+        )
 
     def _run_steps(self):
 
@@ -1011,8 +1058,7 @@ class TaskProcess:
         step_invocations = self.task_conf["step_invocations"]
 
         if self._is_work_on_local_copy():
-            self._rsync_inputs_to_scratch_and_adjust_file_env_vars()
-            self._adjust_file_inputs_env_vars_to_scratch()
+            self._create_local_scratch_and_rsync_inputs()
 
         for i in range(step_number, len(step_invocations)):
 
@@ -1519,7 +1565,12 @@ class TaskInput:
             return v
 
     def is_file(self):
-        return self.file_name is not None
+
+        #if self.file_name is None and self.type == 'file':
+        #    raise Exception("!!")
+
+        return self.type == 'file'
+        #return self.file_name is not None
 
     def is_upstream_output(self):
         return self.upstream_task_key is not None
@@ -1703,12 +1754,12 @@ class TaskInputs:
         return p
 
     def rsync_file_list_produced_upstream(self):
-        for i in self._task_inputs:
-            if i.is_upstream_output():
-                yield i.name, f"output/{i.upstream_task_key}/{i.file_name}"
+        for i in self._task_inputs.values():
+            if i.is_upstream_output() and i.type == 'file':
+                yield i.name, f"output/{i.upstream_task_key}/{i.name_in_upstream_task}"
 
     def rsync_external_file_list(self):
-        for i in self._task_inputs:
+        for i in self._task_inputs.values():
             if not i.is_upstream_output() and i.is_file():
                 yield i.name, i.file_name
 

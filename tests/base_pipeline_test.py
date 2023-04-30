@@ -29,6 +29,10 @@ class TestWithDirectorySandbox(unittest.TestCase):
 
 class BasePipelineTest(TestWithDirectorySandbox):
 
+    def assert_file_content_equals(self, file, expected_content):
+        with open(file) as f:
+            self.assertEqual(f.read().strip(), expected_content)
+
     def launch_task_in_current_process(self, state_file):
 
         self.assertFalse(state_file.is_completed())

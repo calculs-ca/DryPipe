@@ -173,6 +173,12 @@ class TaskBuilder:
         :return a new :py:meth:`dry_pipe.TaskBuilder` with the added inputs declaration
         """
 
+        def g_o(k, v):
+            if v.is_file():
+                yield k, TaskInput(k, v.type, upstream_task_key=v.task_key,name_in_upstream_task=v.produced_file_name)
+            else:
+                yield k, TaskInput(k, v.type, upstream_task_key=v.task_key, name_in_upstream_task=v.name)
+
         def deps():
             for k, v in kwargs.items():
                 if isinstance(v, int):
@@ -182,7 +188,7 @@ class TaskBuilder:
                 elif isinstance(v, float):
                     yield k, TaskInput(k, 'float', value=v)
                 elif isinstance(v, TaskOutput):
-                    yield k, TaskInput(k, v.type, upstream_task_key=v.task_key, name_in_upstream_task=v.name)
+                    yield from g_o(k, v)
                 elif isinstance(v, Path):
                     yield k, TaskInput(k, 'file', file_name=str(v))
                 elif isinstance(v, list):
@@ -196,7 +202,7 @@ class TaskBuilder:
         def deps_from_args():
             for o in args:
                 if isinstance(o, TaskOutput):
-                    yield o.name, TaskInput(o.name, o.type, upstream_task_key=o.task_key, name_in_upstream_task=o.name)
+                    yield from g_o(o.name, o)
                 else:
                     raise Exception(
                         f"bad arg: {o} passed to {self}"
@@ -384,7 +390,8 @@ class TaskConf:
             python_interpreter_switches=["-u"],
             fields_from_json=None,
             extra_env=None,
-            label=None
+            label=None,
+            work_on_local_file_copies=None
     ):
         if init_bash_command is not None:
             raise Exception(f"init_bash_command is deprecated")
@@ -424,6 +431,7 @@ class TaskConf:
         self.python_interpreter_switches = python_interpreter_switches
         self.extra_env = extra_env
         self.label = label
+        self.work_on_local_file_copies = work_on_local_file_copies
 
         if extra_env is not None:
             if not isinstance(extra_env, dict):

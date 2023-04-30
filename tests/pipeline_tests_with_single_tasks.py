@@ -35,8 +35,8 @@ class PipelineWithSingleBashTask(BasePipelineTest):
 
     def validate(self, tasks_by_keys):
         multiply_x_by_y_task = tasks_by_keys["multiply_x_by_y"]
-        self.assertEqual(3, multiply_x_by_y_task.inputs.x)
-        self.assertEqual(5, multiply_x_by_y_task.inputs.y)
+        self.assertEqual(3, int(multiply_x_by_y_task.inputs.x))
+        self.assertEqual(5, int(multiply_x_by_y_task.inputs.y))
         self.assertEqual(15, int(multiply_x_by_y_task.outputs.result))
 
 
@@ -61,7 +61,7 @@ class PipelineWithSinglePythonTask(BasePipelineTest):
         if not multiply_x_by_y_task.is_completed():
             raise Exception(f"expected completed, got {multiply_x_by_y_task.state_name()}")
 
-        x = multiply_x_by_y_task.inputs.x
+        x = int(multiply_x_by_y_task.inputs.x)
         if x != 3:
             raise Exception(f"expected 3, got {x}")
 
