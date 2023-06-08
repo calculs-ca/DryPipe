@@ -46,15 +46,18 @@ class Task:
 
             from dry_pipe import TaskConf
 
-            with open(os.path.join(
-                task_state.control_dir(), "task-conf.json"
-            )) as f:
-                task_conf_json = json.loads(f.read())
+            tc = os.path.join(task_state.control_dir(), "task-conf.json")
+            with open(tc) as f:
+                try:
+                    task_conf_json = json.loads(f.read())
+                except json.decoder.JSONDecodeError as ex:
+                    raise Exception(f"bad json in: {tc}\n {ex}")
 
                 self.task_conf = TaskConf.from_json(task_conf_json)
                 self.executer = self.task_conf.create_executer()
                 self.outputs = TaskOutputs(self, task_conf_json)
                 self.inputs = TaskInputs(self, task_conf_json)
+
             return
 
         self.inputs = TaskInputs(self)

@@ -12,6 +12,7 @@ import sys
 import os
 import time
 import traceback
+from fnmatch import fnmatch
 
 import click
 from dry_pipe import DryPipe, Task
@@ -116,21 +117,36 @@ def _pipeline_from_pipeline_func(pipeline_func, instance_dir):
 
 
 @click.command()
-@click.option('-p', '--pipeline', help="a_module:a_func, a function that returns a pipeline.")
-@click.option('--instance-dir', type=click.Path(), default=None)
+@click.option('-p', '--pipeline', help="a_module:a_func, a function that returns a pipeline.", default=os.environ.get("DRYPIPE_PIPELINE"))
+@click.option('--instance-dir', type=click.Path(), default=os.environ.get("DRYPIPE_INSTANCE_DIR"))
 @click.option('--regen-all', is_flag=True, default=False)
 @click.option('--env', type=click.STRING, default=None)
-def prepare(pipeline, instance_dir, regen_all, env):
+@click.option('--regen-only', type=click.STRING, default=None)
+def prepare(pipeline, instance_dir, regen_all, env, regen_only):
+
+    print(f"instance_dir: {instance_dir}")
+    print(f"pipeline: {pipeline}")
 
     pipeline_instance = _pipeline_instance_creater(instance_dir, pipeline, env)()
 
     for task in pipeline_instance.tasks:
 
-        if regen_all:
+        if regen_all or regen_only is not None:
 
-            if os.path.exists(os.path.join(instance_dir, ".drypipe", task.key)):
+            if regen_only is not None and not fnmatch(task.key, regen_only):
+                continue
+
+            control_dir = os.path.join(instance_dir, ".drypipe", task.key)
+            if os.path.exists(control_dir):
                 task.prepare()
                 print(f"regenerated {task.key}")
+            else:
+                pathlib.Path(control_dir).mkdir(exist_ok=True)
+                pathlib.Path(pipeline_instance, "output", task.key).mkdir(exist_ok=True)
+                pathlib.Path(os.path.join(control_dir, "state.queued.0")).touch()
+                task.prepare()
+                print(f"generated {task.key}")
+
 
 
 @click.command()
@@ -691,13 +707,18 @@ def test(ctx, test_case_mod_func):
 @click.option('--task-env', type=click.Path(exists=True, dir_okay=False))
 def call(ctx, mod_func, task_env):
 
-    python_task = _func_from_mod_func(mod_func)
-
     control_dir = os.environ["__control_dir"]
+
+    pythonpath_in_env = os.environ.get("PYTHONPATH")
+
+    print(f"cli.call({mod_func}) : {control_dir}", file=sys.stderr)
+    print(f"PYTHONPATH: {pythonpath_in_env}", file=sys.stderr)
+
+    python_task = _func_from_mod_func(mod_func)
 
     task_logger = create_task_logger(control_dir)
 
-    pythonpath_in_env = os.environ.get("PYTHONPATH")
+    task_logger.info("cli.call %s, %s, %s ", mod_func, control_dir, python_task)
 
     if pythonpath_in_env is not None:
         for p in pythonpath_in_env.split(":"):
