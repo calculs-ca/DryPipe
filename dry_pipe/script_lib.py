@@ -248,7 +248,13 @@ def iterate_task_env(task_conf_as_json=None, control_dir=None):
     yield "__task_key", task_key
     task_output_dir = os.path.join(pipeline_instance_dir, "output", task_key)
     yield "__task_output_dir", task_output_dir
-    yield "__scratch_dir", os.path.join(task_output_dir, "scratch")
+
+    scratch_dir = os.environ.get('SLURM_TMPDIR')
+    if scratch_dir is None:
+        yield "__scratch_dir", os.path.join(task_output_dir, "scratch")
+    else:
+        yield "__scratch_dir", scratch_dir
+
     yield "__output_var_file", os.path.join(control_dir, "output_vars")
     yield "__out_log", os.path.join(control_dir, "out.log")
     yield "__err_log", os.path.join(control_dir, "err.log")
@@ -356,7 +362,7 @@ def run_python(task_conf_dict, mod_func, container=None):
     ]
 
     if container is not None:
-        b = os.environ.get("APPTAINER_BIND")
+        b = apt_bind(os.environ)
         if b is not None:
             cmd = [
                 APPTAINER_COMMAND,
@@ -373,8 +379,8 @@ def run_python(task_conf_dict, mod_func, container=None):
             ] + cmd
     env = {**os.environ}
 
-    if os.environ.get("__is_slurm"):
-        env['__scratch_dir'] = os.environ['SLURM_TMPDIR']
+    #if os.environ.get("__is_slurm"):
+    #    env['__scratch_dir'] = os.environ['SLURM_TMPDIR']
 
     has_failed = False
 
@@ -730,6 +736,34 @@ def resolve_container_path(container):
 
     return resolved_path
 
+def apt_bind(env):
+
+    apptainer_bindings = []
+
+    slurm_tmpdir = os.environ.get("SLURM_TMPDIR")
+    if slurm_tmpdir is not None:
+        env['__scratch_dir'] = slurm_tmpdir
+        root_of_scratch_dir = _root_dir(slurm_tmpdir)
+        apptainer_bindings.append(f"{root_of_scratch_dir}:{root_of_scratch_dir}")
+
+        prev_apptainer_bindings = env.get("APPTAINER_BIND")
+
+        if prev_apptainer_bindings is not None and prev_apptainer_bindings != "":
+            bindings_prefix = f"{prev_apptainer_bindings},"
+        else:
+            bindings_prefix = ""
+
+        env["APPTAINER_BIND"] = f"{bindings_prefix}{','.join(apptainer_bindings)}"
+
+    new_bind = env.get("APPTAINER_BIND")
+    if new_bind is None:
+        logger.info("APPTAINER_BIND not set")
+    else:
+        logger.info("APPTAINER_BIND=%s", new_bind)
+
+    return new_bind
+
+
 def run_script(script, container=None):
 
     env = {**os.environ}
@@ -758,31 +792,7 @@ def run_script(script, container=None):
                 resolve_container_path(container),
             ] + cmd
 
-        apptainer_bindings = []
-
-        if os.environ.get("__is_slurm"):
-            scratch_dir = os.environ['SLURM_TMPDIR']
-            env['__scratch_dir'] = scratch_dir
-            root_of_scratch_dir = _root_dir(scratch_dir)
-            apptainer_bindings.append(f"{root_of_scratch_dir}:{root_of_scratch_dir}")
-
-        if len(apptainer_bindings) > 0:
-
-            prev_apptainer_bindings = env.get("APPTAINER_BIND")
-
-            if prev_apptainer_bindings is not None and prev_apptainer_bindings != "":
-                bindings_prefix = f"{prev_apptainer_bindings},"
-            else:
-                bindings_prefix = ""
-
-            env["APPTAINER_BIND"] = f"{bindings_prefix}{','.join(apptainer_bindings)}"
-
-        new_bind = env.get("APPTAINER_BIND")
-        if new_bind is None:
-            logger.info("APPTAINER_BIND not set")
-        else:
-            logger.info("APPTAINER_BIND=%s", new_bind)
-
+    apt_bind(env)
 
     logger.info("run_script: %s", " ".join(cmd))
 
@@ -1044,7 +1054,10 @@ def _launch_task(task_func, wait_for_completion):
             sloc = os.environ['__script_location']
             if is_slurm:
                 slurm_job_id = os.environ.get("SLURM_JOB_ID")
-                logger.info("slurm job started, slurm_job_id=%s", slurm_job_id)
+                hostname = os.environ.get("HOSTNAME")
+                if hostname is None:
+                    hostname = "unknown host"
+                logger.info("slurm job started, slurm_job_id=%s, on host: %s", slurm_job_id, hostname)
                 with open(os.path.join(sloc, "slurm_job_id"), "w") as f:
                     f.write(str(os.getpid()))
             else:
