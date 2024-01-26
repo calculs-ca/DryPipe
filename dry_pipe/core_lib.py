@@ -160,6 +160,32 @@ class PortablePopen:
         self.raise_if_non_zero()
 
 
+def assert_slurm_supported_version():
+
+    with PortablePopen(
+        ["sbatch", "--version"]
+    ) as p:
+
+        p.wait()
+
+        if p.popen.returncode != 0:
+            return
+
+        out = p.stdout_as_string()
+        version_s = out.split()[1]
+
+        version = version_s.split(".")
+
+        if len(version) != 3:
+            raise Exception(f"unrecognized slurm version: {out}")
+        else:
+            v1, v2, v3 = [int(v0) for v0 in version]
+            if v1 < 21:
+                raise Exception(f"unsupported sbatch version {version_s}")
+
+        return v1, v2, v3
+
+
 def python_shebang():
     return "#!/usr/bin/env python3"
 

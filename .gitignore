@@ -25,3 +25,4 @@ tests/containers/*.sif
 
 
 *.log
+/tests/test_pssh.py

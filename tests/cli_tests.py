@@ -37,7 +37,7 @@ class CliArrayTests1(PipelineWithSlurmArrayForRealSlurmTest):
             for task in pipeline_instance.query("*")
         })
 
-    def test_continuous_run(self):
+    def test_complete_run(self):
         d = TestSandboxDir(self)
 
         Cli([
@@ -51,7 +51,7 @@ class CliArrayTests1(PipelineWithSlurmArrayForRealSlurmTest):
         self.do_validate(pipeline_instance)
 
 
-    def test_array_launch_one_chunk(self):
+    def test_array_launch_one_complete_array(self):
 
         pipeline_instance = self.create_and_prepare_pipeline(TestSandboxDir(self))
 
@@ -63,7 +63,7 @@ class CliArrayTests1(PipelineWithSlurmArrayForRealSlurmTest):
 
         self.do_validate(pipeline_instance)
 
-    def test_array_launch_2_chunks(self):
+    def test_array_launch_one_task_in_array(self):
         pipeline_instance = self.create_and_prepare_pipeline(TestSandboxDir(self))
 
         Cli([
@@ -76,7 +76,7 @@ class CliArrayTests1(PipelineWithSlurmArrayForRealSlurmTest):
         Cli([
             'submit-array',
             '--task-key', 'array-parent'
-        ],env={
+        ], env={
             "DRYPIPE_PIPELINE_INSTANCE_DIR": pipeline_instance.state_file_tracker.pipeline_instance_dir
         }).invoke(test_mode=True)
 
