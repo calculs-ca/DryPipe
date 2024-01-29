@@ -9,7 +9,7 @@ class TaskMockup:
     def __init__(self, key, upstream_dep_keys=[]):
         self.key = key
         self._upstream_dep_keys = upstream_dep_keys
-        self.inputs = [1, 5, 4]
+        self.inputs = []
         self.is_slurm_array_child = False
         self.is_slurm_parent = False
 

@@ -7,7 +7,7 @@ import pipeline_tests_with_multiple_tasks
 import task_launch_tests
 from cli_tests import CliArrayTests1
 from dsl_tests import TaskChangeTrackingTests
-from pipeline_tests_with_slurm import all_low_level_tests_with_mockup_slurm
+from pipeline_tests_with_slurm_mockup import all_low_level_tests_with_mockup_slurm
 from test_state_machine import StateMachineTests, StateFileTrackerTest, MockupStateFileTrackerTest
 
 

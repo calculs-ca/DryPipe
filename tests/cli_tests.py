@@ -3,7 +3,7 @@ import unittest
 from dry_pipe import DryPipe
 from dry_pipe.core_lib import Cli
 from pipeline_tests_with_single_tasks import PipelineWithSinglePythonTask
-from pipeline_tests_with_slurm import PipelineWithSlurmArrayForRealSlurmTest, PipelineWithSlurmArray
+from pipeline_tests_with_slurm_mockup import PipelineWithSlurmArrayForRealSlurmTest, PipelineWithSlurmArray
 from test_utils import TestSandboxDir
 
 def pipeline_with_slurm_array_1():
