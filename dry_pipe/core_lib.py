@@ -328,14 +328,14 @@ class StateFile:
 class TaskProcess:
 
     @staticmethod
-    def run(control_dir, as_subprocess=True, wait_for_completion=False, run_python_calls_in_process=False, limit=None):
+    def run(control_dir, as_subprocess=True, wait_for_completion=False, run_python_calls_in_process=False, array_limit=None):
 
         if not as_subprocess:
             TaskProcess(
                 control_dir,
                 run_python_calls_in_process,
                 as_subprocess=as_subprocess
-            ).launch_task(wait_for_completion, exit_process_when_done=False, limit=limit)
+            ).launch_task(wait_for_completion, exit_process_when_done=False, array_limit=array_limit)
         else:
             pipeline_work_dir = os.path.dirname(control_dir)
             pipeline_cli = os.path.join(pipeline_work_dir, "cli")
@@ -1137,14 +1137,14 @@ class TaskProcess:
             if ended_ok:
                 self.transition_to_completed(state_file)
 
-    def launch_task(self, wait_for_completion, exit_process_when_done=True, limit=None):
+    def launch_task(self, wait_for_completion, exit_process_when_done=True, array_limit=None):
 
         def task_func_wrapper():
             try:
                 logger.debug("task func started")
                 is_slurm_parent = self.task_conf.get("is_slurm_parent")
                 if is_slurm_parent is not None and is_slurm_parent:
-                    self.run_array(limit)
+                    self.run_array(array_limit)
                 else:
                     self._run_steps()
                 logger.info("task completed")
@@ -2422,7 +2422,7 @@ class Cli:
             TaskProcess.run(
                 os.path.join(self.parsed_args.pipeline_instance_dir, ".drypipe", self.parsed_args.task_key),
                 as_subprocess=not test_mode,
-                limit=self.parsed_args.limit
+                array_limit=self.parsed_args.limit
             )
         elif self.parsed_args.command == 'run':
             pipeline = func_from_mod_func(self.parsed_args.generator)()
