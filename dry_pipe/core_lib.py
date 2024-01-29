@@ -643,7 +643,10 @@ class TaskProcess:
 
         yield "__output_var_file", os.path.join(self.control_dir, "output_vars")
         yield "__out_log", os.path.join(self.control_dir, "out.log")
-        yield "__err_log", os.path.join(self.control_dir, "err.log")
+
+        # stderr defaults to stdout, by default
+        yield "__err_log", os.path.join(self.control_dir, "out.log")
+
         if self.task_conf.get("ssh_specs") is not None:
             yield "__is_remote", "True"
         else:
