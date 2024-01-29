@@ -1464,9 +1464,29 @@ def invoke_rsync(command):
 
 def handle_script_lib_main():
 
+    def get__script_location_and_ensure_set():
+
+        sloc = os.environ.get("__script_location")
+
+        if sloc is not None:
+            return sloc
+
+        sloc = sys.argv[2]
+
+        if not os.path.exists(sloc):
+            sloc = os.path.join(os.path.pardir(__file__), sys.argv[2])
+
+            if os.path.exists(sloc):
+                raise Exception(f"file not found {sloc}")
+
+        os.environ["__script_location"] = sloc
+
+        return sloc
+
+
     if sys.argv[1] == "start":
         #handle_main()
-        task_runner = TaskProcess(sys.argv[2])
+        task_runner = TaskProcess(get__script_location_and_ensure_set())
         task_runner.launch_task(wait_for_completion="--wait" in sys.argv)
     else:
         raise Exception('invalid args')
