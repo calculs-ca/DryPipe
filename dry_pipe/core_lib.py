@@ -190,6 +190,10 @@ def python_shebang():
     return "#!/usr/bin/env python3"
 
 
+def is_inside_slurm_job():
+    return "SLURM_JOB_ID" in os.environ
+
+
 def write_pipeline_lib_script(file_handle):
     file_handle.write(
         f"{python_shebang()}\n" + textwrap.dedent(f"""            
@@ -198,7 +202,11 @@ def write_pipeline_lib_script(file_handle):
             import importlib.machinery
             import importlib.util        
 
-            __script_location = os.path.dirname(os.path.abspath(__file__))
+            if "SLURM_JOB_ID" in os.environ:
+                __script_location = os.path.dirname(os.environ["DRYPIPE_CONTROL_DIR"])
+            else:
+                __script_location = os.path.dirname(os.path.abspath(__file__))
+
             core_lib_path = os.path.join(__script_location, 'core_lib.py')        
             loader = importlib.machinery.SourceFileLoader('core_lib', core_lib_path)
             spec = importlib.util.spec_from_loader(loader.name, loader)
@@ -328,7 +336,12 @@ class StateFile:
 class TaskProcess:
 
     @staticmethod
-    def run(control_dir, as_subprocess=True, wait_for_completion=False, run_python_calls_in_process=False, array_limit=None):
+    def run(
+        control_dir, as_subprocess=True, wait_for_completion=False,
+        run_python_calls_in_process=False,
+        array_limit=None,
+        by_pipeline_runner=False
+    ):
 
         if not as_subprocess:
             TaskProcess(
@@ -343,6 +356,9 @@ class TaskProcess:
                 cmd = [pipeline_cli, "start", control_dir, "--wait"]
             else:
                 cmd = [pipeline_cli, "start", control_dir]
+
+            if by_pipeline_runner:
+                cmd.append("--by-runner")
 
             logger.debug("will launch task %s", ' '.join(cmd))
 
@@ -369,7 +385,7 @@ class TaskProcess:
         # For test cases:
         self.run_python_calls_in_process = run_python_calls_in_process
         self.as_subprocess = as_subprocess
-        script_location = self.control_dir
+        script_location = os.path.abspath(self.control_dir)
         with open(os.path.join(script_location, "task-conf.json")) as _task_conf:
 
             self.task_conf = json.loads(_task_conf.read())
@@ -1137,6 +1153,42 @@ class TaskProcess:
             if ended_ok:
                 self.transition_to_completed(state_file)
 
+    def _sbatch_cmd_lines(self, wait_for_completion=False):
+
+        if self.task_conf["executer_type"] != "slurm":
+            raise Exception(f"not a slurm task")
+
+        yield "sbatch"
+
+        if wait_for_completion:
+            yield "--wait"
+
+        sacc = self.task_conf.get('slurm_account')
+        if sacc is not None:
+            yield f"--account={sacc}"
+
+        yield f"--output={self.control_dir}/out.log"
+
+        control_dir = os.environ["__script_location"]
+
+        yield "--export={0}".format(",".join([f"DRYPIPE_CONTROL_DIR={control_dir}"]))
+        yield "--signal=B:USR1@50"
+        yield "--parsable"
+        yield f"{self.pipeline_instance_dir}/.drypipe/cli"
+
+    def _submit_sbatch_task(self, wait_for_completion):
+
+        p = PortablePopen(
+            list(self._sbatch_cmd_lines(wait_for_completion)),
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT
+        )
+
+        p.popen.wait()
+
+        for l in p.read_stdout_lines():
+            print(l)
+
+
     def launch_task(self, wait_for_completion, exit_process_when_done=True, array_limit=None):
 
         def task_func_wrapper():
@@ -1169,6 +1221,10 @@ class TaskProcess:
                 sloc = os.environ['__script_location']
                 if is_slurm:
                     sloc = _script_location_of_array_task_id_if_applies(sloc)
+
+                    if sloc is None:
+                        sloc = os.environ["DRYPIPE_CONTROL_DIR"]
+
                     logger.info("slurm job started, slurm_job_id=%s", slurm_job_id)
                     with open(os.path.join(sloc, "slurm_job_id"), "w") as f:
                         f.write(str(os.getpid()))
@@ -1464,6 +1520,8 @@ def invoke_rsync(command):
 
 def handle_script_lib_main():
 
+    cli_file = __file__
+
     def get__script_location_and_ensure_set():
 
         sloc = os.environ.get("__script_location")
@@ -1471,23 +1529,44 @@ def handle_script_lib_main():
         if sloc is not None:
             return sloc
 
-        sloc = sys.argv[2]
+        if is_inside_slurm_job():
+            sloc = os.environ["DRYPIPE_CONTROL_DIR"]
+        else:
+            sloc = sys.argv[2]
 
         if not os.path.exists(sloc):
-            sloc = os.path.join(os.path.pardir(__file__), sys.argv[2])
+            sloc = os.path.join(os.path.pardir(cli_file), sloc)
 
             if os.path.exists(sloc):
                 raise Exception(f"file not found {sloc}")
+
+        sloc = os.path.abspath(sloc)
 
         os.environ["__script_location"] = sloc
 
         return sloc
 
+    wait_for_completion = "--wait" in sys.argv
 
-    if sys.argv[1] == "start":
-        #handle_main()
+    if is_inside_slurm_job():
+        cmd = "start"
+    else:
+        cmd = sys.argv[1]
+
+    if cmd == "start" and "--by-runner" in sys.argv:
+        cmd = "sbatch"
+
+    if cmd == "start":
         task_runner = TaskProcess(get__script_location_and_ensure_set())
-        task_runner.launch_task(wait_for_completion="--wait" in sys.argv)
+        task_runner.launch_task(wait_for_completion)
+    elif cmd == "sbatch":
+        task_runner = TaskProcess(get__script_location_and_ensure_set())
+        task_runner._submit_sbatch_task(wait_for_completion)
+    elif cmd == "sbatch-gen":
+        task_runner = TaskProcess(get__script_location_and_ensure_set())
+        print("#!/usr/bin/env bash\n")
+
+        print(" \\\n".join(task_runner._sbatch_cmd_lines()))
     else:
         raise Exception('invalid args')
 
@@ -1893,7 +1972,7 @@ class SlurmArrayParentTask:
             "sbatch",
             f"--array={array_arg}",
             f"--account={self.task_conf.get('slurm_account')}",
-            f"--output={self.control_dir()}/out.log",
+            f"--output={self.control_dir}/out.log",
             f"--export={0}".format(",".join([
                 f"DRYPIPE_CONTROL_DIR={self.control_dir()}",
                 f"DRYPIPE_TASK_KEY_FILE_BASENAME={os.path.basename(task_key_file)}",
@@ -1901,7 +1980,7 @@ class SlurmArrayParentTask:
             ])),
             "--signal=B:USR1@50",
             "--parsable",
-            f"{self.control_dir()}/cli"
+            f"{self.control_dir}/cli"
         ]
 
     def call_sbatch(self, command_args):

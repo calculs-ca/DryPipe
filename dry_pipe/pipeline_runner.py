@@ -29,7 +29,8 @@ class PipelineRunner:
                     yield lambda: TaskProcess.run(
                         state_file.control_dir(),
                         as_subprocess=not self.run_tasks_in_process,
-                        wait_for_completion=not self.run_tasks_async
+                        wait_for_completion=not self.run_tasks_async,
+                        by_pipeline_runner=True
                     ), None
                     c += 1
                 if c == 0:
