@@ -1553,19 +1553,18 @@ def handle_script_lib_main():
     else:
         cmd = sys.argv[1]
 
-    if cmd == "start" and "--by-runner" in sys.argv:
-        cmd = "sbatch"
+    task_runner = TaskProcess(get__script_location_and_ensure_set())
+
+    if task_runner.task_conf["executer_type"] == "slurm":
+        if cmd == "start" and "--by-runner" in sys.argv:
+            cmd = "sbatch"
 
     if cmd == "start":
-        task_runner = TaskProcess(get__script_location_and_ensure_set())
         task_runner.launch_task(wait_for_completion)
     elif cmd == "sbatch":
-        task_runner = TaskProcess(get__script_location_and_ensure_set())
         task_runner._submit_sbatch_task(wait_for_completion)
     elif cmd == "sbatch-gen":
-        task_runner = TaskProcess(get__script_location_and_ensure_set())
         print("#!/usr/bin/env bash\n")
-
         print(" \\\n".join(task_runner._sbatch_cmd_lines()))
     else:
         raise Exception('invalid args')

@@ -71,7 +71,11 @@ class BasePipelineTest(TestWithDirectorySandbox):
         self.run_pipeline()
 
     def task_conf(self):
-        return TaskConf.default()
+        tc = TaskConf.default()
+        tc.extra_env = {
+            "PYTHONPATH": os.path.dirname(__file__)
+        }
+        return tc
 
     def launches_tasks_in_process(self):
         return False
