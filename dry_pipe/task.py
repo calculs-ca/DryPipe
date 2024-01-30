@@ -154,14 +154,12 @@ class Task:
 
             f.write(json.dumps(task_conf_json, indent=2))
 
-        shell_script_file = os.path.join(control_dir, "task")
-
-        with open(shell_script_file, "w") as f:
-            f.write(task_script_header())
-            f.write('core_lib.handle_main()\n')
-            f.write('logging.shutdown()\n')
-
-        os.chmod(shell_script_file, FileCreationDefaultModes.pipeline_instance_scripts)
+        #shell_script_file = os.path.join(control_dir, "task")
+        #with open(shell_script_file, "w") as f:
+        #    f.write(task_script_header())
+        #    f.write('core_lib.handle_main()\n')
+        #    f.write('logging.shutdown()\n')
+        #os.chmod(shell_script_file, FileCreationDefaultModes.pipeline_instance_scripts)
 
         if self.is_slurm_parent:
             with open(os.path.join(control_dir, "task-keys.tsv"), "w") as tc:
