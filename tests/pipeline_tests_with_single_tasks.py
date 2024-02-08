@@ -343,13 +343,6 @@ task_conf_with_test_container = TaskConf(
     container="singularity-test-container.sif"
 )
 
-task_conf_with_local_slurm = TaskConf(
-    executer_type="slurm",
-    slurm_account="dummy-account",
-    extra_env={
-        "PYTHONPATH": str(Path(__file__).resolve().parent)
-    }
-)
 
 
 class PipelineWithSingleBashTaskInContainer(PipelineWithSingleBashTask):
@@ -359,11 +352,6 @@ class PipelineWithSingleBashTaskInContainer(PipelineWithSingleBashTask):
 class PipelineWithSinglePythonTaskInContainer(PipelineWithSinglePythonTask):
     def task_conf(self):
         return task_conf_with_test_container
-
-class PipelineWithSinglePythonTaskWithSlurm(PipelineWithSinglePythonTask):
-    def task_conf(self):
-        return task_conf_with_local_slurm
-
 
 class PipelineWithVarAndFileOutputInContainer(PipelineWithVarAndFileOutput):
     def task_conf(self):

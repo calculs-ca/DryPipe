@@ -18,7 +18,7 @@ from datetime import datetime
 from functools import reduce
 from hashlib import blake2b
 from pathlib import Path
-from tempfile import TemporaryFile, NamedTemporaryFile
+from tempfile import NamedTemporaryFile
 from threading import Thread
 from typing import List, Iterator, Tuple
 
@@ -28,47 +28,28 @@ APPTAINER_COMMAND="singularity"
 APPTAINER_BIND="APPTAINER_BIND"
 
 
-def init_logger(_logger, filename, logging_level):
+def create_task_logger(task_control_dir):
+
+    if os.environ.get("DRYPIPE_TASK_DEBUG") != "True":
+        logging_level = logging.INFO
+    else:
+        logging_level = logging.DEBUG
+
+    logger = logging.getLogger("task-logger")
+    logger.setLevel(logging_level)
+    filename = os.path.join(task_control_dir, "drypipe.log")
     file_handler = logging.FileHandler(filename=filename)
     file_handler.setLevel(logging_level)
     file_handler.setFormatter(
         logging.Formatter("%(asctime)s - %(levelname)s - %(message)s", datefmt='%Y-%m-%d %H:%M:%S%z')
     )
-    _logger.addHandler(file_handler)
-    return _logger
+    logger.addHandler(file_handler)
+    logger.info("log level: %s", logging.getLevelName(logging_level))
+    return logger
 
-def create_task_logger(task_control_dir):
-    if os.environ.get("DRYPIPE_TASK_DEBUG") != "True":
-        logging_level = logging.INFO
-    else:
-        logging_level = logging.DEBUG
-    _logger = logging.Logger("task-logger", logging_level)
-    return init_logger(
-        _logger,
-        os.path.join(task_control_dir, "drypipe.log"),
-        logging_level
-    )
-
-
-def create_remote_janitor_logger(pipeline_instance_dir, logger_name, is_debug):
-    if is_debug:
-        logging_level = logging.DEBUG
-    else:
-        logging_level = logging.INFO
-    _logger = logging.Logger(logger_name, logging_level)
-    return init_logger(
-        _logger,
-        os.path.join(pipeline_instance_dir, ".drypipe", f"{logger_name}.log"),
-        logging_level
-    )
 
 __script_location = os.environ.get("__script_location")
 
-
-if __script_location is None:
-    logger = logging.getLogger(__name__)
-else:
-    logger = create_task_logger(__script_location)
 
 def parse_ssh_specs(ssh_specs):
     ssh_specs_parts = ssh_specs.split(":")
@@ -305,6 +286,9 @@ class StateFile:
     def is_waiting(self):
         return self.path.endswith("state.waiting")
 
+    def has_ended(self):
+        return self.is_completed() or self.is_timed_out() or self.is_failed() or self.is_crashed()
+
     def is_ready(self):
         return self.path.endswith("state.ready")
 
@@ -360,8 +344,6 @@ class TaskProcess:
             if by_pipeline_runner:
                 cmd.append("--by-runner")
 
-            logger.debug("will launch task %s", ' '.join(cmd))
-
             with PortablePopen(
                 cmd,
                 stdout=subprocess.DEVNULL,
@@ -369,13 +351,29 @@ class TaskProcess:
             ) as p:
                 p.wait()
                 if p.popen.returncode != 0:
-                    logger.warning("task ended with non zero code: %s", p.popen.returncode)
-                else:
-                    logger.debug("task ended with returncode: %s", p.popen.returncode)
+                    create_task_logger(control_dir).warning("task ended with non zero code: %s", p.popen.returncode)
 
     def __init__(
-        self, control_dir, run_python_calls_in_process=False, as_subprocess=True, ensure_all_upstream_deps_complete=True
+        self,
+            control_dir,
+            run_python_calls_in_process=False,
+            as_subprocess=True,
+            ensure_all_upstream_deps_complete=True,
+            no_logger=False
     ):
+
+        self.record_history = False
+
+        if no_logger:
+            self.task_logger = logging.getLogger('dummy')
+        else:
+            array_task_control_dir = self._script_location_of_array_task_id_if_applies(control_dir)
+            if array_task_control_dir is not None:
+                control_dir = array_task_control_dir
+                os.environ["DRYPIPE_CONTROL_DIR"] = control_dir
+
+            self.task_logger = create_task_logger(control_dir)
+
         self.control_dir = control_dir
         self.task_key = os.path.basename(control_dir)
         self.pipeline_work_dir = os.path.dirname(control_dir)
@@ -398,7 +396,7 @@ class TaskProcess:
 
             for k, v in self.iterate_task_env(False):
                 v = str(v)
-                logger.debug("env var %s = %s", k, v)
+                self.task_logger.debug("env var %s = %s", k, v)
                 self.env[k] = v
 
             command_before_task = self.task_conf.get("command_before_task")
@@ -530,8 +528,8 @@ class TaskProcess:
 
             for i in self.task_conf["inputs"]:
                 i = TaskInput.from_json(i)
-                if logger.level == logging.DEBUG:
-                    logger.debug("%s", i.as_string())
+                if self.task_logger.level == logging.DEBUG:
+                    self.task_logger.debug("%s", i.as_string())
                 if i.is_upstream_output():
 
                     def ensure_upstream_task_is_completed():
@@ -674,18 +672,18 @@ class TaskProcess:
         else:
             yield "__is_singularity", "False"
 
-        logger.debug("extra_env vars from task-conf.json")
+        self.task_logger.debug("extra_env vars from task-conf.json")
 
         extra_env = self.task_conf.get("extra_env")
         if extra_env is not None:
             for k, v in extra_env.items():
                 yield k, os.path.expandvars(v)
 
-        logger.debug("resolved and constant input vars")
+        self.task_logger.debug("resolved and constant input vars")
         for k, v in self.inputs._task_inputs.items():
             yield k, v.resolved_value
 
-        logger.debug("file output vars")
+        self.task_logger.debug("file output vars")
         for _, k, f in self.outputs.iterate_file_task_outputs(self.task_output_dir):
             yield k, f
 
@@ -719,7 +717,7 @@ class TaskProcess:
 
         has_failed = False
 
-        logger.info("run_python: %s", ' '.join(cmd))
+        self.task_logger.info("run_python: %s", ' '.join(cmd))
 
         with open(env['__out_log'], 'a') as out:
             with open(env['__err_log'], 'a') as err:
@@ -729,7 +727,7 @@ class TaskProcess:
                         has_failed = p.popen.returncode != 0
                     except Exception as ex:
                         has_failed = True
-                        logger.exception(ex)
+                        self.task_logger.exception(ex)
                     finally:
                         if has_failed:
                             step_number, control_dir, state_file, state_name = self.read_task_state()
@@ -741,10 +739,10 @@ class TaskProcess:
 
         try:
             try:
-                logger.info("signal SIGTERM received, will transition to killed and terminate descendants")
+                self.task_logger.info("signal SIGTERM received, will transition to killed and terminate descendants")
                 step_number, control_dir, state_file, state_name = self.read_task_state()
                 self._transition_state_file(state_file, "killed", step_number)
-                logger.info("will terminate descendants")
+                self.task_logger.info("will terminate descendants")
             except Exception as _:
                 pass
 
@@ -758,14 +756,14 @@ class TaskProcess:
                     for line in p.popen.stdout.readlines()
                 ]
                 pids = [pid for pid in pids if pid != p.popen.pid]
-                logger.debug("descendants of %s: %s", this_pid, pids)
+                self.task_logger.debug("descendants of %s: %s", this_pid, pids)
                 for pid in pids:
                     try:
                         os.kill(pid, signal.SIGTERM)
                     except Exception as _:
                         pass
         except Exception as ex:
-            logger.exception(ex)
+            self.task_logger.exception(ex)
         finally:
             self._exit_process()
 
@@ -783,7 +781,7 @@ class TaskProcess:
             delete_if_exists("pid")
             delete_if_exists("slurm_job_id")
         except Exception as ex:
-            logger.exception(ex)
+            self.task_logger.exception(ex)
 
 
     def exec_cmd_before_launch(self, command_before_task):
@@ -792,7 +790,7 @@ class TaskProcess:
 
         dump_with_python_script = f'{p} -c "import os, json; print(json.dumps(dict(os.environ)))"'
 
-        logger.info("will execute 'command_before_task': %s", command_before_task)
+        self.task_logger.info("will execute 'command_before_task': %s", command_before_task)
 
         out = self.env['__out_log']
         err = self.env['__err_log']
@@ -846,9 +844,9 @@ class TaskProcess:
             f.write("\n")
 
 
-    def _transition_state_file(self, state_file, next_state_name, step_number=None, this_logger=logger):
+    def _transition_state_file(self, state_file, next_state_name, step_number=None):
 
-        this_logger.debug("_transition_state_file: %s", state_file)
+        self.task_logger.debug("_transition_state_file: %s", state_file)
 
         control_dir = os.path.dirname(state_file)
 
@@ -861,15 +859,16 @@ class TaskProcess:
 
         next_state_file = os.path.join(control_dir, next_state_basename)
 
-        this_logger.info("will transition to: %s", next_state_basename)
-        this_logger.debug("next_state_file: %s", next_state_file)
+        self.task_logger.info("will transition to: %s", next_state_basename)
+        self.task_logger.debug("next_state_file: %s", next_state_file)
 
         os.rename(
             state_file,
             next_state_file
         )
 
-        self._append_to_history(control_dir, next_state_name, step_number)
+        if self.record_history:
+            self._append_to_history(control_dir, next_state_name, step_number)
 
         return next_state_file, next_step_number
 
@@ -890,7 +889,7 @@ class TaskProcess:
             self._transition_state_file(state_file, "timed-out", step_number)
             self._exit_process()
 
-        logger.debug("will register signal handlers")
+        self.task_logger.debug("will register signal handlers")
 
         signal.signal(signal.SIGINT, signal.SIG_IGN)
         signal.signal(signal.SIGHUP, signal.SIG_IGN)
@@ -901,7 +900,7 @@ class TaskProcess:
             self._terminate_descendants_and_exit(p1, p2)
         signal.signal(signal.SIGTERM, f)
 
-        logger.debug("signal handlers registered")
+        self.task_logger.debug("signal handlers registered")
 
 
     def transition_to_completed(self, state_file):
@@ -927,7 +926,7 @@ class TaskProcess:
         with open(output_vars, "w") as f:
             f.write("\n".join(all_vars))
 
-        logger.info("out vars written: %s", ",".join(all_vars))
+        self.task_logger.info("out vars written: %s", ",".join(all_vars))
 
     def resolve_container_path(self, container):
 
@@ -947,7 +946,7 @@ class TaskProcess:
         if not os.path.exists(resolved_path):
             raise Exception(f"container file not found: {resolved_path}, __containers_dir={containers_dir}")
 
-        logger.debug("container: %s resolves to: %s", container, resolved_path)
+        self.task_logger.debug("container: %s resolves to: %s", container, resolved_path)
 
         return resolved_path
 
@@ -1001,12 +1000,12 @@ class TaskProcess:
 
             new_bind = env.get("APPTAINER_BIND")
             if new_bind is not None:
-                logger.info("APPTAINER_BIND not set")
+                self.task_logger.info("APPTAINER_BIND not set")
             else:
-                logger.info("APPTAINER_BIND=%s", new_bind)
+                self.task_logger.info("APPTAINER_BIND=%s", new_bind)
 
 
-        logger.info("run_script: %s", " ".join(cmd))
+        self.task_logger.info("run_script: %s", " ".join(cmd))
 
         has_failed = False
         try:
@@ -1023,7 +1022,7 @@ class TaskProcess:
                         o = TaskOutput.from_json(o)
                         if o.type != "file":
                             v = step_output_vars.get(o.name)
-                            logger.debug("script exported output var %s = %s", o.name, v)
+                            self.task_logger.debug("script exported output var %s = %s", o.name, v)
                             task_output_vars[o.name] = v
                             if v is not None:
                                 self.env[o.name] = v
@@ -1032,7 +1031,7 @@ class TaskProcess:
 
 
         except Exception as ex:
-            logger.exception(ex)
+            self.task_logger.exception(ex)
             has_failed = True
         finally:
             if has_failed:
@@ -1143,11 +1142,12 @@ class TaskProcess:
                 self.task_key,
                 StateFileTracker(self.pipeline_instance_dir),
                 self.task_conf,
-                logger,
+                self.task_logger,
                 mockup_run_launch_local_processes=not self.as_subprocess
             ).run_array(False, False, limit)
             ended_ok = True
         except Exception as ex:
+            self.task_logger.exception(ex)
             self._transition_state_file(state_file, "failed", step_number)
         finally:
             if ended_ok:
@@ -1188,22 +1188,40 @@ class TaskProcess:
         for l in p.read_stdout_lines():
             print(l)
 
+    def _script_location_of_array_task_id_if_applies(self, sloc):
+        slurm_array_task_id = os.environ.get("SLURM_ARRAY_TASK_ID")
+        if slurm_array_task_id is None:
+            return None
+        else:
+            slurm_array_task_id = int(slurm_array_task_id)
+            with open(os.path.join(sloc, "task-keys.tsv")) as _array_children_task_ids:
+                c = 0
+                for line in _array_children_task_ids:
+                    if c == slurm_array_task_id:
+                        p = os.path.join(os.path.dirname(sloc), line.strip())
+                        os.environ['__script_location'] = p
+                        return p
+                    else:
+                        c += 1
+
+            msg = f"Error: no task_key for SLURM_ARRAY_TASK_ID={slurm_array_task_id}"
+            raise Exception(msg)
 
     def launch_task(self, wait_for_completion, exit_process_when_done=True, array_limit=None):
 
         def task_func_wrapper():
             try:
-                logger.debug("task func started")
+                self.task_logger.debug("task func started")
                 is_slurm_parent = self.task_conf.get("is_slurm_parent")
                 if is_slurm_parent is not None and is_slurm_parent:
                     self.run_array(array_limit)
                 else:
                     self._run_steps()
-                logger.info("task completed")
+                self.task_logger.info("task completed")
             except Exception as ex:
                 if not exit_process_when_done:
                     raise ex
-                logger.exception(ex)
+                self.task_logger.exception(ex)
             finally:
                 if exit_process_when_done:
                     self._exit_process()
@@ -1220,14 +1238,7 @@ class TaskProcess:
                 # forked child, or slurm job
                 sloc = os.environ['__script_location']
                 if is_slurm:
-                    sloc = _script_location_of_array_task_id_if_applies(sloc)
-
-                    if sloc is None:
-                        sloc = os.environ["DRYPIPE_CONTROL_DIR"]
-
-                    logger.info("slurm job started, slurm_job_id=%s", slurm_job_id)
-                    with open(os.path.join(sloc, "slurm_job_id"), "w") as f:
-                        f.write(str(os.getpid()))
+                    self.task_logger.info("slurm job started, slurm_job_id=%s", slurm_job_id)
                 else:
                     with open(os.path.join(sloc, "pid"), "w") as f:
                         f.write(str(os.getpid()))
@@ -1420,26 +1431,6 @@ def _tail_command():
 
     with PortablePopen(tail_cmd, stdout=sys.stdout, stderr=sys.stderr, stdin=sys.stdin) as p:
         p.wait()
-
-def _script_location_of_array_task_id_if_applies(sloc):
-    slurm_array_task_id = os.environ.get("SLURM_ARRAY_TASK_ID")
-    if slurm_array_task_id is None:
-        return slurm_array_task_id
-    else:
-        slurm_array_task_id = int(slurm_array_task_id)
-        with open(os.path.join(sloc, "array_children_task_ids.tsv")) as _array_children_task_ids:
-            c = 0
-            for line in _array_children_task_ids:
-                if c == slurm_array_task_id:
-                    p = os.path.join(os.path.dirname(sloc), line.strip())
-                    os.environ['__script_location'] = p
-                    return p
-                else:
-                    c += 1
-
-        msg = f"Error: no task_key for SLURM_ARRAY_TASK_ID={slurm_array_task_id}"
-        raise Exception(msg)
-
 
 
 def _root_dir(d):
@@ -1940,6 +1931,7 @@ class SlurmArrayParentTask:
         self.debug = True
         self.task_conf = task_conf
         self.tracker = tracker
+        self.pipeline_instance_dir = os.path.dirname(self.tracker.pipeline_work_dir)
         self.mockup_run_launch_local_processes = mockup_run_launch_local_processes
         if logger is None:
             self.logger = logging.getLogger('log nothing')
@@ -1967,20 +1959,27 @@ class SlurmArrayParentTask:
         else:
             array_arg = f"0-{array_size - 1}"
 
-        return [
-            "sbatch",
-            f"--array={array_arg}",
-            f"--account={self.task_conf.get('slurm_account')}",
-            f"--output={self.control_dir}/out.log",
-            f"--export={0}".format(",".join([
+        def sbatch_lines():
+            yield "sbatch"
+            yield f"--array={array_arg}"
+            a = self.task_conf.get('slurm_account')
+            if a is not None:
+                yield f"--account={a}"
+
+            #yield f"--out={self.control_dir()}/out-%A_%a.log"
+            yield "--output=/dev/null"
+
+            yield "--export={0}".format(",".join([
                 f"DRYPIPE_CONTROL_DIR={self.control_dir()}",
                 f"DRYPIPE_TASK_KEY_FILE_BASENAME={os.path.basename(task_key_file)}",
                 f"DRYPIPE_TASK_DEBUG={self.debug}"
-            ])),
-            "--signal=B:USR1@50",
-            "--parsable",
-            f"{self.control_dir}/cli"
-        ]
+            ]))
+
+            yield "--signal=B:USR1@50"
+            yield "--parsable"
+            yield f"{self.pipeline_instance_dir}/.drypipe/cli"
+
+        return list(sbatch_lines())
 
     def call_sbatch(self, command_args):
         cmd = " ".join(command_args)
@@ -1992,36 +1991,101 @@ class SlurmArrayParentTask:
     def call_squeue(self, submitted_job_ids):
         job_ids_as_str = ",".join(list(submitted_job_ids))
         # see JOB STATE CODES: https://slurm.schedmd.com/squeue.html
-        with PortablePopen(f'squeue -r --format="%i %t" --states=all --jobs={job_ids_as_str}', shell=True) as p:
+        squeue_cmd = f'squeue -r --noheader --format="%i %t" --states=all --jobs={job_ids_as_str}'
+        self.logger.debug(squeue_cmd)
+        with PortablePopen(squeue_cmd, shell=True) as p:
+            #p.wait()
+            # "stderr: slurm_load_jobs error: Invalid job id specified"
+            #if self.popen.returncode != 0:
+            #    p.safe_stderr_as_string()
             p.wait_and_raise_if_non_zero()
             for line in p.iterate_stdout_lines():
                 yield line
 
+    def _task_key_to_job_id_and_array_idx_map(self):
+
+        submitted_arrays_files = list(self.submitted_arrays_files_with_job_is_running_status())
+
+        job_id_array_idx_to_task_key = {}
+
+        for array_n, job_id, job_submission_file, is_assumed_terminated in submitted_arrays_files:
+            if not is_assumed_terminated:
+                for task_key, array_idx in self.task_keys_in_i_th_array_file(array_n):
+                    job_id_array_idx_to_task_key[(job_id, array_idx)] = task_key
+
+        return job_id_array_idx_to_task_key
+
     def compare_and_reconcile_squeue_with_state_files(self, mockup_squeue_call=None):
+        """
+        Returns None when job has ended (completed or crashed, timed out, etc)
+        or a dictionary:
+            task_key -> (drypipe_state_as_string expected_squeue_state, actual_queue_state), ...}
+        when the tasks state file has is not expected according to the task status returned by squeue.
+
+        For example, the following response {'t1': ('_step-started', 'R,PD', None)}, means:
+
+        task t1 is '_step-started' according to the state_file, BUT is 'R' (running) according to squeue,
+        the expected squeue state should be 'PD' (pending).
+        """
 
         submitted_arrays_files = list(self.submitted_arrays_files_with_job_is_running_status())
 
         assumed_active_job_ids = {
-            job_id
+            job_id: array_n
             for array_n, job_id, file, is_terminated in submitted_arrays_files
             if not is_terminated
         }
+        # 363:
 
         if len(assumed_active_job_ids) == 0:
             return None
 
-        job_ids_to_array_idx_to_squeue_state = self.call_squeue_and_index_response(
-            assumed_active_job_ids, mockup_squeue_call
+        job_ids_to_array_idx_to_squeue_state = self.call_squeue_and_index_response(assumed_active_job_ids, mockup_squeue_call)
+        # {'363': {3: 'CD', 2: 'CD', 1: 'CD', 0: 'CD'}}
+
+        task_key_to_job_id_and_array_idx = self._task_key_to_job_id_and_array_idx_map()
+
+        for job_id, array_idx_to_state_codes in job_ids_to_array_idx_to_squeue_state.items():
+            def is_running_or_will_run(slurm_code):
+                if slurm_code in {"PD", "R"}:
+                    return True
+                elif slurm_code in {"F", "CD", "TO", "ST", "PR", "RV", "SE", "BF", "CA", "DL", "OOM", "NF"}:
+                    return False
+                logging.warning("rare code: %s", slurm_code)
+                return False
+
+            is_running_or_will_run_count = 0
+
+            for array_idx, state_code in array_idx_to_state_codes.items():
+                if is_running_or_will_run(state_code):
+                    is_running_or_will_run_count += 1
+                else:
+                    task_key = task_key_to_job_id_and_array_idx[(job_id, array_idx)]
+                    latest_state = self.fetch_state_file(task_key)
+
+                    if not latest_state.has_ended():
+                        is_running_or_will_run_count += 1
+                    # validate state_file
+
+            if is_running_or_will_run_count == 0:
+                for _, job_id_, job_submission_file, is_assumed_terminated in submitted_arrays_files:
+                    if job_id_ == job_id:
+                        if not is_assumed_terminated:
+                            with open(job_submission_file, "a") as f:
+                                f.write("\nBATCH_ENDED\n")
+                            break
+                        else:
+                            self.logger.warning("submission %s already ended")
+
+        u_states = self._validate_squeue_states_and_state_files(
+            submitted_arrays_files, job_ids_to_array_idx_to_squeue_state
         )
 
-        actual_active_job_ids = job_ids_to_array_idx_to_squeue_state.keys()
+        return u_states
 
-        ended_job_ids_since_last_call = assumed_active_job_ids - actual_active_job_ids
 
-        """
-        j1: t0, t1, t3
-        j2:     t1
-        """
+    def _validate_squeue_states_and_state_files(self, submitted_arrays_files, job_ids_to_array_idx_to_squeue_state):
+
         task_key_to_job_id_array_idx = {}
 
         for array_n, job_id, job_submission_file, is_assumed_terminated in submitted_arrays_files:
@@ -2041,21 +2105,16 @@ class SlurmArrayParentTask:
                 dict_unexpected_states[task_key] = unexpected_states
                 drypipe_state_as_string, expected_squeue_state, actual_queue_state = unexpected_states
                 self.logger.warning(
-                    "unexpected squeue state %s, expected %s for task %s",
+                    "unexpected squeue state '%s', expected '%s' for task '%s'",
                     actual_queue_state, expected_squeue_state, task_key
                 )
-
-        # flag new ended job_ids
-        for array_n, job_id, job_submission_file, is_assumed_terminated in submitted_arrays_files:
-            if not is_assumed_terminated:
-                if job_id in ended_job_ids_since_last_call:
-                    with open(job_submission_file, "a") as f:
-                        f.write("COMPLETED\n")
-
         return dict_unexpected_states
 
-    def call_squeue_and_index_response(self, submitted_job_ids, mockup_squeue_call=None) -> dict[str,dict[int,str]]:
 
+    def call_squeue_and_index_response(self, submitted_job_ids, mockup_squeue_call=None) -> dict[str, dict[int, str]]:
+        """
+          job_id -> (array_idx, job_state_code)
+        """
         res: dict[str,dict[int,str]] = {}
 
         if self.mockup_run_launch_local_processes:
@@ -2066,17 +2125,22 @@ class SlurmArrayParentTask:
             squeue_func = lambda: mockup_squeue_call(submitted_job_ids)
 
         for line in squeue_func():
-            line = line.strip()
-            job_id_array_idx, squeue_state = line.split()
-            job_id, array_idx = job_id_array_idx.split("_")
+            try:
 
-            array_idx_to_state_dict = res.get(job_id)
-            if array_idx_to_state_dict is None:
-                array_idx_to_state_dict = {}
-                res[job_id] = array_idx_to_state_dict
+                line = line.strip()
+                job_id_array_idx, squeue_state = line.split()
+                job_id, array_idx = job_id_array_idx.split("_")
 
-            array_idx = int(array_idx)
-            array_idx_to_state_dict[array_idx] = squeue_state
+                array_idx_to_state_dict = res.get(job_id)
+                if array_idx_to_state_dict is None:
+                    array_idx_to_state_dict = {}
+                    res[job_id] = array_idx_to_state_dict
+
+                array_idx = int(array_idx)
+                array_idx_to_state_dict[array_idx] = squeue_state
+            except Exception as ex:
+                self.logger.error(f"failed while parsing squeue line: '%s'", line)
+                raise ex
         return res
 
     def mock_compare_and_reconcile_squeue_with_state_files(self, mock_squeue_lines: List[str]):
@@ -2099,8 +2163,13 @@ class SlurmArrayParentTask:
 
         # see JOB STATE CODES at https://slurm.schedmd.com/squeue.html
 
+        self.logger.debug(
+            "task_key=%s, drypipe_state_as_string=%s, squeue_state=%s ",
+            task_key, drypipe_state_as_string, squeue_state
+        )
+
         if drypipe_state_as_string in ["completed", "failed", "killed", "timed-out"]:
-            if squeue_state is not None:
+            if squeue_state != "CD" and squeue_state is not None:
                 return drypipe_state_as_string, None, squeue_state
         elif drypipe_state_as_string in ["ready", "waiting"]:
             if squeue_state is not None:
@@ -2154,7 +2223,7 @@ class SlurmArrayParentTask:
         def s(file):
             with open(file) as _file:
                 for line in _file:
-                    if line.strip() == "COMPLETED":
+                    if line.strip() == "BATCH_ENDED":
                         return True
             return False
 
@@ -2205,6 +2274,8 @@ class SlurmArrayParentTask:
 
             command_args = self.prepare_sbatch_command(next_task_key_file, len(next_task_state_files))
 
+            self.logger.info("will submit array: %s", " ".join(command_args))
+
             if call_sbatch_mockup is not None:
                 call_sbatch_func = call_sbatch_mockup
             elif self.mockup_run_launch_local_processes:
@@ -2247,11 +2318,22 @@ class SlurmArrayParentTask:
         if self.mockup_run_launch_local_processes:
             return
 
-        pause_in_seconds = [5, 5, 60, 600]
+        self.logger.info("will run array %s", self.task_key)
+
+        if self.logger.getEffectiveLevel() == logging.DEBUG:
+            pause_in_seconds = [1, 1, 2, 3, 3, 4, 10]
+        else:
+            pause_in_seconds = [2, 2, 3, 3, 4, 10, 30, 60, 120, 120, 180, 240, 300]
+
         pause_idx = 0
         max_idx = len(pause_in_seconds) - 1
-        while self.compare_and_reconcile_squeue_with_state_files() is not None:
-            time.sleep(pause_in_seconds[pause_idx])
+        while True:
+            res = self.compare_and_reconcile_squeue_with_state_files()
+            if res is None:
+                break
+            next_sleep = pause_in_seconds[pause_idx]
+            self.logger.debug("will sleep %s seconds", next_sleep)
+            time.sleep(next_sleep)
             if pause_idx < max_idx:
                 pause_idx += 1
 
@@ -2260,6 +2342,7 @@ class SlurmArrayParentTask:
             if not state_file.is_completed():
                 raise Exception(f"at least one child task has not completed: {state_file.path}")
 
+        self.logger.info("array %s completed", self.task_key)
 
 class StateFileTracker:
 

@@ -9,6 +9,7 @@ from cli_tests import CliArrayTests1
 from dsl_tests import TaskChangeTrackingTests
 from pipeline_tests_with_slurm_mockup import all_low_level_tests_with_mockup_slurm
 from test_state_machine import StateMachineTests, StateFileTrackerTest, MockupStateFileTrackerTest
+from tests.pipeline_tests_with_local_slurm import all_with_local_slurm
 
 
 def ad_hoc():
@@ -24,7 +25,8 @@ def low_level_tests():
         pipeline_tests_with_multiple_tasks.all_basic_tests(),
         all_low_level_tests_with_mockup_slurm(),
         TaskChangeTrackingTests,
-        CliArrayTests1
+        CliArrayTests1,
+        all_with_local_slurm()
     ]
 
 def quick_sanity_tests():
@@ -38,7 +40,7 @@ def quick_sanity_tests():
         pipeline_tests_with_single_tasks.PipelineWithSinglePythonTask,
         pipeline_tests_with_multiple_tasks.PipelineWithTwoPythonTasks,
         pipeline_tests_with_single_tasks.PipelineWithVarAndFileOutput,
-        all_low_level_tests_with_mockup_slurm(),
+        all_low_level_tests_with_mockup_slurm()
     ]
 
 

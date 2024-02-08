@@ -76,10 +76,10 @@ class PipelineWithSlurmArray(BasePipelineTest):
         t0 = dsl.task(
             key="z"
         ).outputs(
-            r=str
+            r=int
         ).calls("""
             #!/usr/bin/env bash            
-            export r="abc"
+            export r=10            
         """)()
 
         yield t0
@@ -95,8 +95,10 @@ class PipelineWithSlurmArray(BasePipelineTest):
                 ).outputs(
                     slurm_result=int
                 ).calls("""
-                    #!/usr/bin/env bash            
-                    export slurm_result=$(( $x + $z ))
+                    #!/usr/bin/env bash
+                    echo "$r $i"            
+                    export slurm_result=$(( $r + $i ))
+                    echo "$slurm_result"
                 """)()
 
         for match in dsl.query_all_or_nothing("t_*", state="ready"):
@@ -117,7 +119,31 @@ class PipelineWithSlurmArray(BasePipelineTest):
             )()
 
     def validate(self, tasks_by_keys):
-        pass
+
+        for k, t in tasks_by_keys.items():
+            self.assertEqual(t.state_name(), "state.completed", f"unexpected state for {k}")
+
+        self.assertEqual(
+            int(tasks_by_keys["t_a_1"].outputs.slurm_result),
+            11
+        )
+
+        self.assertEqual(
+            int(tasks_by_keys["t_a_2"].outputs.slurm_result),
+            12
+        )
+
+        self.assertEqual(
+            int(tasks_by_keys["t_b_1"].outputs.slurm_result),
+            11
+        )
+
+        self.assertEqual(
+            int(tasks_by_keys["t_b_2"].outputs.slurm_result),
+            12
+        )
+
+
 
 
 class PipelineWithSlurmArrayWithUntil(PipelineWithSlurmArray):
