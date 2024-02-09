@@ -123,7 +123,8 @@ class PipelineWithVarSharingBetweenSteps(BasePipelineTest):
 
     def dag_gen(self, dsl):
         yield dsl.task(
-            key="t"
+            key="t",
+            task_conf=self.task_conf()
         ).outputs(
             x1=int,
             x2=int,
