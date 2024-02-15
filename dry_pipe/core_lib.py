@@ -35,15 +35,19 @@ def create_task_logger(task_control_dir):
     else:
         logging_level = logging.DEBUG
 
-    logger = logging.getLogger("task-logger")
+    logger = logging.getLogger(f"task-logger-{os.path.basename(task_control_dir)}")
+
     logger.setLevel(logging_level)
-    filename = os.path.join(task_control_dir, "drypipe.log")
-    file_handler = logging.FileHandler(filename=filename)
-    file_handler.setLevel(logging_level)
-    file_handler.setFormatter(
-        logging.Formatter("%(asctime)s - %(levelname)s - %(message)s", datefmt='%Y-%m-%d %H:%M:%S%z')
-    )
-    logger.addHandler(file_handler)
+
+    if len(logger.handlers) == 0:
+        filename = os.path.join(task_control_dir, "drypipe.log")
+        file_handler = logging.FileHandler(filename=filename)
+        file_handler.setLevel(logging_level)
+        file_handler.setFormatter(
+            logging.Formatter("%(asctime)s - %(levelname)s - %(message)s", datefmt='%Y-%m-%d %H:%M:%S%z')
+        )
+        logger.addHandler(file_handler)
+
     logger.info("log level: %s", logging.getLevelName(logging_level))
     return logger
 
@@ -1136,22 +1140,21 @@ class TaskProcess:
     def run_array(self, limit):
 
         step_number, _, state_file, _ = self.read_task_state()
-        ended_ok = False
         try:
-            SlurmArrayParentTask(
+            sapt = SlurmArrayParentTask(
                 self.task_key,
                 StateFileTracker(self.pipeline_instance_dir),
                 self.task_conf,
-                self.task_logger,
-                mockup_run_launch_local_processes=not self.as_subprocess
-            ).run_array(False, False, limit)
-            ended_ok = True
+                self.task_logger
+            )
+            all_children_completed = sapt.run_array(False, False, limit)
+
+            if all_children_completed:
+                self.transition_to_completed(state_file)
         except Exception as ex:
             self.task_logger.exception(ex)
             self._transition_state_file(state_file, "failed", step_number)
-        finally:
-            if ended_ok:
-                self.transition_to_completed(state_file)
+            raise ex
 
     def _sbatch_cmd_lines(self, wait_for_completion=False):
 
@@ -1188,21 +1191,35 @@ class TaskProcess:
         for l in p.read_stdout_lines():
             print(l)
 
+
     def _script_location_of_array_task_id_if_applies(self, sloc):
+
         slurm_array_task_id = os.environ.get("SLURM_ARRAY_TASK_ID")
         if slurm_array_task_id is None:
             return None
         else:
+
+            # TODO: consider geting info from SLURM_ARRAY_JOB_ID instead of DRYPIPE_TASK_KEY_FILE_BASENAME
+            #slurm_array_job_id = os.environ.get("SLURM_ARRAY_JOB_ID")
+
+            array_index_2_task_key = os.environ.get("DRYPIPE_TASK_KEY_FILE_BASENAME")
+
+            def children_task_keys():
+                with open(os.path.join(sloc, array_index_2_task_key)) as f:
+                    for line in f:
+                        yield line.strip()
+
             slurm_array_task_id = int(slurm_array_task_id)
-            with open(os.path.join(sloc, "task-keys.tsv")) as _array_children_task_ids:
-                c = 0
-                for line in _array_children_task_ids:
-                    if c == slurm_array_task_id:
-                        p = os.path.join(os.path.dirname(sloc), line.strip())
-                        os.environ['__script_location'] = p
-                        return p
-                    else:
-                        c += 1
+            c = 0
+            _drypipe_dir = os.path.dirname(sloc)
+
+            for task_key in children_task_keys():
+                if c == slurm_array_task_id:
+                    p = os.path.join(_drypipe_dir, task_key)
+                    os.environ['__script_location'] = p
+                    return p
+                else:
+                    c += 1
 
             msg = f"Error: no task_key for SLURM_ARRAY_TASK_ID={slurm_array_task_id}"
             raise Exception(msg)
@@ -1934,7 +1951,7 @@ class SlurmArrayParentTask:
         self.pipeline_instance_dir = os.path.dirname(self.tracker.pipeline_work_dir)
         self.mockup_run_launch_local_processes = mockup_run_launch_local_processes
         if logger is None:
-            self.logger = logging.getLogger('log nothing')
+            self.logger = logging.getLogger('dummy')
             self.logger.addHandler(logging.NullHandler())
         else:
             self.logger = logger
@@ -1966,8 +1983,10 @@ class SlurmArrayParentTask:
             if a is not None:
                 yield f"--account={a}"
 
-            #yield f"--out={self.control_dir()}/out-%A_%a.log"
             yield "--output=/dev/null"
+
+            #yield f"--output={self.pipeline_instance_dir}/out-%A_%a.log"
+            #yield f"--error={self.pipeline_instance_dir}/out-%A_%a.log"
 
             yield "--export={0}".format(",".join([
                 f"DRYPIPE_CONTROL_DIR={self.control_dir()}",
@@ -1983,7 +2002,6 @@ class SlurmArrayParentTask:
 
     def call_sbatch(self, command_args):
         cmd = " ".join(command_args)
-        logging.info("will launch array: %s", cmd)
         with PortablePopen(cmd, shell=True) as p:
             p.wait_and_raise_if_non_zero()
             return p.stdout_as_string().strip()
@@ -2051,7 +2069,7 @@ class SlurmArrayParentTask:
                     return True
                 elif slurm_code in {"F", "CD", "TO", "ST", "PR", "RV", "SE", "BF", "CA", "DL", "OOM", "NF"}:
                     return False
-                logging.warning("rare code: %s", slurm_code)
+                self.logger.warning("rare code: %s", slurm_code)
                 return False
 
             is_running_or_will_run_count = 0
@@ -2274,13 +2292,14 @@ class SlurmArrayParentTask:
 
             command_args = self.prepare_sbatch_command(next_task_key_file, len(next_task_state_files))
 
-            self.logger.info("will submit array: %s", " ".join(command_args))
-
             if call_sbatch_mockup is not None:
                 call_sbatch_func = call_sbatch_mockup
+                self.logger.info("Will use SBATCH MOCKUP")
             elif self.mockup_run_launch_local_processes:
+                self.logger.info("Will fake SBATCH as local process")
                 call_sbatch_func = lambda: self._sbatch_mockup_launch_as_local_proceses()
             else:
+                self.logger.info("will submit array: %s", " ".join(command_args))
                 call_sbatch_func = lambda: self.call_sbatch(command_args)
 
             job_id = call_sbatch_func()
@@ -2321,7 +2340,7 @@ class SlurmArrayParentTask:
         self.logger.info("will run array %s", self.task_key)
 
         if self.logger.getEffectiveLevel() == logging.DEBUG:
-            pause_in_seconds = [1, 1, 2, 3, 3, 4, 10]
+            pause_in_seconds = [0, 0, 0, 0, 0, 1]
         else:
             pause_in_seconds = [2, 2, 3, 3, 4, 10, 30, 60, 120, 120, 180, 240, 300]
 
@@ -2337,12 +2356,24 @@ class SlurmArrayParentTask:
             if pause_idx < max_idx:
                 pause_idx += 1
 
-        for task_key in self.children_task_keys():
-            state_file = self.fetch_state_file(task_key)
-            if not state_file.is_completed():
-                raise Exception(f"at least one child task has not completed: {state_file.path}")
+        self.submitted_arrays_files_with_job_is_running_status()
 
-        self.logger.info("array %s completed", self.task_key)
+        total_children_tasks = 0
+        ended_tasks = 0
+        completed_tasks = 0
+        for task_key in self.children_task_keys():
+            total_children_tasks += 1
+            state_file = self.tracker.load_state_file(task_key)
+            if state_file.has_ended():
+                ended_tasks += 1
+            if state_file.is_completed():
+                completed_tasks += 1
+
+        if completed_tasks == total_children_tasks:
+            self.logger.info("array %s completed", self.task_key)
+            return True
+
+        return False
 
 class StateFileTracker:
 

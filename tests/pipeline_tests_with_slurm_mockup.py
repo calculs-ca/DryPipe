@@ -70,6 +70,8 @@ def format_sbatch_array(array_indexes):
 
 class PipelineWithSlurmArray(BasePipelineTest):
 
+    def task_conf(self):
+        return TaskConf(executer_type="slurm", slurm_account="dummy")
 
     def dag_gen(self, dsl):
 
@@ -88,7 +90,8 @@ class PipelineWithSlurmArray(BasePipelineTest):
             for c in ["a", "b"]:
                 yield dsl.task(
                     key=f"t_{c}_{i}",
-                    is_slurm_array_child=True
+                    is_slurm_array_child=True,
+                    task_conf=self.task_conf()
                 ).inputs(
                     r=t0.outputs.r,
                     i=i
@@ -448,7 +451,11 @@ class PipelineWithSlurmArrayForRealSlurmTest(BasePipelineTest):
         for i in range(1, 4):
             yield dsl.task(
                 key=f"t{i}",
-                is_slurm_array_child=True
+                is_slurm_array_child=True,
+                task_conf=TaskConf(
+                    executer_type="slurm",
+                    slurm_account="dummy"
+                )
             ).inputs(
                 x=i
             ).outputs(

@@ -69,6 +69,10 @@ class StateMachine:
 
         if task_conf is None:
             task_conf = TaskConf.default()
+
+        if task_conf.executer_type == "process" and is_slurm_array_child:
+            raise Exception(f"task {key} has is_slurm_array_child=True, and executer_type='process', should be 'slurm'")
+
         return TaskBuilder(key, task_conf=task_conf, dsl=self, is_slurm_array_child=is_slurm_array_child)
 
     def file(self, p):
@@ -180,11 +184,12 @@ class StateMachine:
 
                 if state_file.is_slurm_array_child:
                     self.state_file_tracker.set_ready_on_disk_and_in_memory(state_file.task_key)
+                    continue
 
                 if self._register_upstream_task_dependencies_if_any_and_return_ready_status(
                     task.key, upstream_dep_keys
                 ):
-                    if self._queue_only_func(task.key) and state_file.is_waiting():
+                    if self._queue_only_func(task.key) and (state_file.is_waiting() or state_file.is_ready()):
                         self.state_file_tracker.set_ready_on_disk_and_in_memory(state_file.task_key)
                     else:
                         yield state_file

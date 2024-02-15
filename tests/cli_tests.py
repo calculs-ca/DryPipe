@@ -1,3 +1,5 @@
+import glob
+import os.path
 import unittest
 
 from dry_pipe import DryPipe
@@ -26,10 +28,11 @@ class CliArrayTests1(PipelineWithSlurmArrayForRealSlurmTest):
     def setUp(self):
         pass
 
-    def create_and_prepare_pipeline(self, d):
+    def create_prepare_and_run_pipeline(self, d, until_patterns=["*"]):
         pipeline_instance = self.create_pipeline_instance(d.sandbox_dir)
-        pipeline_instance.run_sync(until_patterns=["*"])
+        pipeline_instance.run_sync(until_patterns)
         return pipeline_instance
+
 
     def do_validate(self, pipeline_instance):
         self.validate({
@@ -41,9 +44,9 @@ class CliArrayTests1(PipelineWithSlurmArrayForRealSlurmTest):
         d = TestSandboxDir(self)
 
         Cli([
-            '--pipeline-instance-dir', d.sandbox_dir,
+            f'--pipeline-instance-dir={d.sandbox_dir}',
             'run',
-            '--generator', 'cli_tests:pipeline_with_slurm_array_1'
+            f'--generator=cli_tests:pipeline_with_slurm_array_1'
         ]).invoke(test_mode=True)
 
         pipeline_instance = self.create_pipeline_instance(d.sandbox_dir)
@@ -53,18 +56,23 @@ class CliArrayTests1(PipelineWithSlurmArrayForRealSlurmTest):
 
     def test_array_launch_one_complete_array(self):
 
-        pipeline_instance = self.create_and_prepare_pipeline(TestSandboxDir(self))
+        pipeline_instance = self.create_prepare_and_run_pipeline(TestSandboxDir(self))
 
         Cli([
-            '--pipeline-instance-dir', pipeline_instance.state_file_tracker.pipeline_instance_dir,
+            f'--pipeline-instance-dir={pipeline_instance.state_file_tracker.pipeline_instance_dir}',
             'submit-array',
-            '--task-key', 'array-parent'
+            '--task-key=array-parent'
         ]).invoke(test_mode=True)
 
         self.do_validate(pipeline_instance)
 
+    def _get_job_files(self, pipeline_instance, array_task_key):
+        p = os.path.join(
+            pipeline_instance.state_file_tracker.pipeline_instance_dir, ".drypipe", array_task_key, "array.*.job.*")
+        return list(glob.glob(p))
+
     def test_array_launch_one_task_in_array(self):
-        pipeline_instance = self.create_and_prepare_pipeline(TestSandboxDir(self))
+        pipeline_instance = self.create_prepare_and_run_pipeline(TestSandboxDir(self))
 
         Cli([
             '--pipeline-instance-dir', pipeline_instance.state_file_tracker.pipeline_instance_dir,
@@ -73,6 +81,11 @@ class CliArrayTests1(PipelineWithSlurmArrayForRealSlurmTest):
             '--limit', '1'
         ]).invoke(test_mode=True)
 
+        self.assertEqual(
+            len(self._get_job_files(pipeline_instance,"array-parent")),
+            1
+        )
+
         Cli([
             'submit-array',
             '--task-key', 'array-parent'
@@ -80,18 +93,28 @@ class CliArrayTests1(PipelineWithSlurmArrayForRealSlurmTest):
             "DRYPIPE_PIPELINE_INSTANCE_DIR": pipeline_instance.state_file_tracker.pipeline_instance_dir
         }).invoke(test_mode=True)
 
+        self.assertEqual(
+            len(self._get_job_files(pipeline_instance,"array-parent")),
+            2
+        )
+
         self.do_validate(pipeline_instance)
 
     def test_array_launch_3_chunks(self):
-        pipeline_instance = self.create_and_prepare_pipeline(TestSandboxDir(self))
+        pipeline_instance = self.create_prepare_and_run_pipeline(TestSandboxDir(self))
 
-        for _ in [1, 2, 3]:
+        for _ in [1, 1, 1]:
             Cli([
                 '--pipeline-instance-dir', pipeline_instance.state_file_tracker.pipeline_instance_dir,
                 'submit-array',
                 '--task-key', 'array-parent',
                 '--limit=1'
             ]).invoke(test_mode=True)
+
+        self.assertEqual(
+            len(self._get_job_files(pipeline_instance,"array-parent")),
+            3
+        )
 
         self.do_validate(pipeline_instance)
 
