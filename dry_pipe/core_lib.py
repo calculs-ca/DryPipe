@@ -379,36 +379,41 @@ class TaskProcess:
         else:
             self.task_logger = create_task_logger(control_dir, test_mode)
 
-        self.control_dir = control_dir
-        self.task_key = os.path.basename(control_dir)
-        self.pipeline_work_dir = os.path.dirname(control_dir)
-        self.pipeline_instance_dir = os.path.dirname(self.pipeline_work_dir)
-        self.pipeline_output_dir = os.path.join(self.pipeline_instance_dir, "output")
-        self.task_output_dir = os.path.join(self.pipeline_output_dir, self.task_key)
-        # For test cases:
-        self.test_mode = test_mode
-        self.run_python_calls_in_process = run_python_calls_in_process
-        self.as_subprocess = as_subprocess
-        script_location = os.path.abspath(self.control_dir)
-        with open(os.path.join(script_location, "task-conf.json")) as _task_conf:
+        try:
 
-            self.task_conf = json.loads(_task_conf.read())
-            self.env = {}
+            self.control_dir = control_dir
+            self.task_key = os.path.basename(control_dir)
+            self.pipeline_work_dir = os.path.dirname(control_dir)
+            self.pipeline_instance_dir = os.path.dirname(self.pipeline_work_dir)
+            self.pipeline_output_dir = os.path.join(self.pipeline_instance_dir, "output")
+            self.task_output_dir = os.path.join(self.pipeline_output_dir, self.task_key)
+            # For test cases:
+            self.test_mode = test_mode
+            self.run_python_calls_in_process = run_python_calls_in_process
+            self.as_subprocess = as_subprocess
+            script_location = os.path.abspath(self.control_dir)
+            with open(os.path.join(script_location, "task-conf.json")) as _task_conf:
 
-            task_inputs, task_outputs = self._unserialize_and_resolve_inputs_outputs(ensure_all_upstream_deps_complete)
+                self.task_conf = json.loads(_task_conf.read())
+                self.env = {}
 
-            self.inputs = TaskInputs(self.task_key, task_inputs)
-            self.outputs = TaskOutputs(self.task_key, task_outputs)
+                task_inputs, task_outputs = self._unserialize_and_resolve_inputs_outputs(ensure_all_upstream_deps_complete)
 
-            for k, v in self.iterate_task_env(False):
-                v = str(v)
-                self.task_logger.debug("env var %s = %s", k, v)
-                self.env[k] = v
+                self.inputs = TaskInputs(self.task_key, task_inputs)
+                self.outputs = TaskOutputs(self.task_key, task_outputs)
 
-            command_before_task = self.task_conf.get("command_before_task")
+                for k, v in self.iterate_task_env(False):
+                    v = str(v)
+                    self.task_logger.debug("env var %s = %s", k, v)
+                    self.env[k] = v
 
-            if command_before_task is not None:
-                self.exec_cmd_before_launch(command_before_task)
+                command_before_task = self.task_conf.get("command_before_task")
+
+                if command_before_task is not None:
+                    self.exec_cmd_before_launch(command_before_task)
+        except Exception as ex:
+            self.task_logger.exception(ex)
+            raise ex
 
     def __repr__(self):
         return f"{self.task_key}"
@@ -1951,9 +1956,11 @@ class TaskOutputs:
 
 class SlurmArrayParentTask:
 
-    def __init__(self, task_key, tracker, task_conf=None, logger=None, mockup_run_launch_local_processes=False, test_mode=False):
+    def __init__(
+            self, task_key, tracker, task_conf=None, logger=None,
+            mockup_run_launch_local_processes=False, test_mode=False
+    ):
         self.task_key = task_key
-        self.debug = True
         self.task_conf = task_conf
         self.tracker = tracker
         self.pipeline_instance_dir = os.path.dirname(self.tracker.pipeline_work_dir)
@@ -1962,8 +1969,10 @@ class SlurmArrayParentTask:
         if logger is None:
             self.logger = logging.getLogger('dummy')
             self.logger.addHandler(logging.NullHandler())
+            self.debug = False
         else:
             self.logger = logger
+            self.debug = self.logger.isEnabledFor(logging.DEBUG)
 
     def control_dir(self):
         return os.path.join(self.tracker.pipeline_work_dir,  self.task_key)
@@ -1993,8 +2002,9 @@ class SlurmArrayParentTask:
                 yield f"--account={a}"
 
             yield "--output=/dev/null"
-            # produce log (in parent dir) only if task has stderr:
-            yield f"--error={self.control_dir()}/err-%A_%a.log"
+
+            if self.debug:
+                yield f"--error={self.control_dir()}/err-%A_%a.log"
 
             yield "--export={0}".format(",".join([
                 f"DRYPIPE_CONTROL_DIR={self.control_dir()}",

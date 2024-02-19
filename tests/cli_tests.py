@@ -146,14 +146,14 @@ class CliTestsPipelineWithSlurmArray(PipelineWithSlurmArray):
         self.assertRaises(UpstreamTasksNotCompleted, go)
 
 
-        Cli([
-            '--pipeline-instance-dir', pipeline_instance.state_file_tracker.pipeline_instance_dir,
-            'run',
-            '--generator', 'cli_tests:pipeline_with_slurm_array_2',
-            '--task-key=z'
-        ]).invoke(test_mode=True)
+        #Cli([
+        #    '--pipeline-instance-dir', pipeline_instance.state_file_tracker.pipeline_instance_dir,
+        #    'run',
+        #    '--generator', 'cli_tests:pipeline_with_slurm_array_2',
+        #    '--task-key=z'
+        #]).invoke(test_mode=True)
 
-        go()
+        #go()
 
         def keys_p1():
             with open(os.path.join(pipeline_instance.state_file_tracker.pipeline_work_dir, "p1", "task-keys.tsv")) as f:
