@@ -67,14 +67,6 @@ def parse_ssh_specs(ssh_specs):
 
     return ssh_username, ssh_host, key_filename
 
-def _fail_safe_stderr(process):
-    try:
-        err = process.stderr.read().decode("utf-8")
-    except Exception as _e:
-        err = ""
-    return err
-
-
 class PortablePopen:
 
     def __init__(self, process_args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=None, shell=False, stdin=None):
@@ -186,11 +178,11 @@ def write_pipeline_lib_script(file_handle):
             import importlib.util        
 
             if "SLURM_JOB_ID" in os.environ:
-                __script_location = os.path.dirname(os.environ["DRYPIPE_CONTROL_DIR"])
+                sl = os.path.dirname(os.environ["DRYPIPE_TASK_CONTROL_DIR"])
             else:
-                __script_location = os.path.dirname(os.path.abspath(__file__))
+                sl = os.path.dirname(os.path.abspath(__file__))
 
-            core_lib_path = os.path.join(__script_location, 'core_lib.py')        
+            core_lib_path = os.path.join(sl, 'core_lib.py')        
             loader = importlib.machinery.SourceFileLoader('core_lib', core_lib_path)
             spec = importlib.util.spec_from_loader(loader.name, loader)
             core_lib = importlib.util.module_from_spec(spec)
@@ -217,11 +209,11 @@ def task_script_header():
 
         is_slurm = os.environ.get("__is_slurm") == "True"        
         if is_slurm:
-            __script_location = os.environ['__script_location']
+            sl = os.environ['DRYPIPE_TASK_CONTROL_DIR']
         else:
-            __script_location = os.path.dirname(os.path.abspath(__file__))
-            os.environ["__script_location"] = __script_location
-        core_lib_path = os.path.join(os.path.dirname(__script_location), 'core_lib.py')        
+            sl = os.path.dirname(os.path.abspath(__file__))
+            os.environ["DRYPIPE_TASK_CONTROL_DIR"] = sl
+        core_lib_path = os.path.join(os.path.dirname(sl), 'core_lib.py')        
         loader = importlib.machinery.SourceFileLoader('core_lib', core_lib_path)
         spec = importlib.util.spec_from_loader(loader.name, loader)
         core_lib = importlib.util.module_from_spec(spec)
@@ -341,21 +333,25 @@ class TaskProcess:
             pipeline_work_dir = os.path.dirname(control_dir)
             pipeline_cli = os.path.join(pipeline_work_dir, "cli")
             if wait_for_completion:
-                cmd = [pipeline_cli, "start", control_dir, "--wait"]
+                cmd = [pipeline_cli, "task", control_dir, "--wait"]
             else:
-                cmd = [pipeline_cli, "start", control_dir]
+                cmd = [pipeline_cli, "task", control_dir]
 
             if by_pipeline_runner:
                 cmd.append("--by-runner")
 
             with PortablePopen(
                 cmd,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE
             ) as p:
                 p.wait()
                 if p.popen.returncode != 0:
-                    create_task_logger(control_dir).warning("task ended with non zero code: %s", p.popen.returncode)
+                    create_task_logger(control_dir).warning(
+                        "task ended with non zero code: %s, %s",
+                        p.popen.returncode,
+                        p.safe_stderr_as_string()
+                    )
 
     def __init__(
         self,
@@ -372,7 +368,7 @@ class TaskProcess:
         array_task_control_dir = self._script_location_of_array_task_id_if_applies(control_dir)
         if array_task_control_dir is not None:
             control_dir = array_task_control_dir
-            os.environ["DRYPIPE_CONTROL_DIR"] = control_dir
+            os.environ["DRYPIPE_TASK_CONTROL_DIR"] = control_dir
 
         if no_logger:
             self.task_logger = logging.getLogger('dummy')
@@ -1183,14 +1179,13 @@ class TaskProcess:
 
         yield f"--output={self.control_dir}/out.log"
 
-        control_dir = os.environ["__script_location"]
 
-        yield "--export={0}".format(",".join([f"DRYPIPE_CONTROL_DIR={control_dir}"]))
+        yield "--export={0}".format(",".join([f"DRYPIPE_TASK_CONTROL_DIR={self.control_dir}"]))
         yield "--signal=B:USR1@50"
         yield "--parsable"
         yield f"{self.pipeline_instance_dir}/.drypipe/cli"
 
-    def _submit_sbatch_task(self, wait_for_completion):
+    def submit_sbatch_task(self, wait_for_completion):
 
         p = PortablePopen(
             list(self._sbatch_cmd_lines(wait_for_completion)),
@@ -1227,7 +1222,7 @@ class TaskProcess:
             for task_key in children_task_keys():
                 if c == slurm_array_task_id:
                     p = os.path.join(_drypipe_dir, task_key)
-                    os.environ['__script_location'] = p
+                    os.environ['DRYPIPE_TASK_CONTROL_DIR'] = p
                     return p
                 else:
                     c += 1
@@ -1264,7 +1259,7 @@ class TaskProcess:
                 exit(0)
             else:
                 # forked child, or slurm job
-                sloc = os.environ['__script_location']
+                sloc = os.environ['DRYPIPE_TASK_CONTROL_DIR']
                 if is_slurm:
                     self.task_logger.info("slurm job started, slurm_job_id=%s", slurm_job_id)
                 else:
@@ -1313,43 +1308,6 @@ class TaskProcess:
 
         return True
 
-
-def handle_main():
-    is_kill_command = "kill" in sys.argv
-    is_tail_command = "tail" in sys.argv
-    wait_for_completion = "--wait" in sys.argv
-    is_ps_command = "ps" in sys.argv
-    is_env = "env" in sys.argv
-    is_with_exports = "--with-exports" in sys.argv
-
-    is_run_command = not (is_tail_command or is_ps_command or is_kill_command or is_env)
-
-    task_runner = TaskProcess(os.environ["__script_location"])
-
-    if is_run_command:
-        task_runner.launch_task(wait_for_completion)
-    else:
-
-        def quit_command(p1, p2):
-            logging.shutdown()
-            exit(0)
-
-        signal.signal(signal.SIGINT, quit_command)
-
-        if is_tail_command:
-            _tail_command()
-        elif is_ps_command:
-            _ps_command()
-        elif is_kill_command:
-            _kill_command()
-        elif is_env:
-            prefix = "export " if is_with_exports else ""
-            for k, v in task_runner.iterate_task_env():
-                print(f"{prefix}{k}={v}")
-        else:
-            raise Exception(f"bad args: {sys.argv}")
-
-
 def _load_pid_or_job_id(control_dir, pid_or_job_id):
     pid_file = os.path.join(control_dir, pid_or_job_id)
     if not os.path.exists(pid_file):
@@ -1370,36 +1328,6 @@ def load_slurm_job_id(control_dir):
 def print_pid_not_found(sloc):
     print(f"file {os.path.join(sloc, 'pid')} not found, task not running")
 
-
-def _kill_command():
-    sloc = os.environ["__script_location"]
-    pid = load_pid(sloc)
-    if pid is None:
-        print_pid_not_found(sloc)
-    else:
-        os.kill(pid, signal.SIGTERM)
-
-
-def _ps_command(pid=None):
-
-    if pid is None:
-        sloc = os.environ["__script_location"]
-        pid = load_pid(sloc)
-        if pid is None:
-            print_pid_not_found(sloc)
-            return
-
-    res = list(ps_resources(pid))
-
-    if len(res) == 0:
-        return
-
-    header, row = res
-
-    sys.stdout.write("\t".join(header))
-    sys.stdout.write("\n")
-    sys.stdout.write("\t".join(str(v) for v in row))
-    sys.stdout.write("\n")
 
 
 def sizeof_fmt(num, suffix="B"):
@@ -1444,21 +1372,6 @@ def ps_resources(pid):
                 [parse_ps_line(line) for line in out.split("\n")],
                 (0, 0, 0, 0, 0, 0)
             ))
-
-
-def _tail_command():
-
-    script_location = os.environ["__script_location"]
-
-    all_logs = [
-        os.path.join(script_location, log)
-        for log in ["drypipe.log", "out.log", "err.log"]
-    ]
-
-    tail_cmd = ["tail", "-f"] + all_logs
-
-    with PortablePopen(tail_cmd, stdout=sys.stdout, stderr=sys.stderr, stdin=sys.stdin) as p:
-        p.wait()
 
 
 def _root_dir(d):
@@ -1535,62 +1448,6 @@ def invoke_rsync(command):
                 raise Exception(msg)
             else:
                 raise RetryableRsyncException(msg)
-
-
-def handle_script_lib_main():
-
-    cli_file = __file__
-
-    def get__script_location_and_ensure_set():
-
-        sloc = os.environ.get("__script_location")
-
-        if sloc is not None:
-            return sloc
-
-        if is_inside_slurm_job():
-            sloc = os.environ["DRYPIPE_CONTROL_DIR"]
-        else:
-            sloc = sys.argv[2]
-
-        if not os.path.exists(sloc):
-            sloc = os.path.join(os.path.pardir(cli_file), sloc)
-
-            if os.path.exists(sloc):
-                raise Exception(f"file not found {sloc}")
-
-        sloc = os.path.abspath(sloc)
-
-        os.environ["__script_location"] = sloc
-
-        return sloc
-
-    wait_for_completion = "--wait" in sys.argv
-
-    if is_inside_slurm_job():
-        cmd = "start"
-    else:
-        cmd = sys.argv[1]
-
-    sloc = get__script_location_and_ensure_set()
-
-    task_runner = TaskProcess(sloc)
-
-    if task_runner.task_conf["executer_type"] == "slurm":
-        if cmd == "start" and "--by-runner" in sys.argv:
-            cmd = "sbatch"
-
-    if cmd == "start":
-        task_runner.launch_task(wait_for_completion)
-    elif cmd == "sbatch":
-        task_runner._submit_sbatch_task(wait_for_completion)
-    elif cmd == "sbatch-gen":
-        print("#!/usr/bin/env bash\n")
-        print(" \\\n".join(task_runner._sbatch_cmd_lines()))
-    else:
-        raise Exception('invalid args')
-
-    logging.shutdown()
 
 
 class FileCreationDefaultModes:
@@ -2007,7 +1864,7 @@ class SlurmArrayParentTask:
                 yield f"--error={self.control_dir()}/err-%A_%a.log"
 
             yield "--export={0}".format(",".join([
-                f"DRYPIPE_CONTROL_DIR={self.control_dir()}",
+                f"DRYPIPE_TASK_CONTROL_DIR={self.control_dir()}",
                 f"DRYPIPE_TASK_KEY_FILE_BASENAME={os.path.basename(task_key_file)}",
                 f"DRYPIPE_TASK_DEBUG={self.debug}"
             ]))
@@ -2670,6 +2527,9 @@ class Cli:
 
         self._sub_parsers()
 
+        if is_inside_slurm_job():
+            args = ["task", os.environ["DRYPIPE_TASK_CONTROL_DIR"]]
+
         self.parsed_args = self.parser.parse_args(args)
 
     def _add_pipeline_instance_dir_arg(self, parser):
@@ -2709,6 +2569,14 @@ class Cli:
             default=default_task_key
         )
 
+    def _control_dir(self):
+        pipeline_instance_dir = self.parsed_args.pipeline_instance_dir
+        task_key = self.parsed_args.task_key
+        return os.path.join(pipeline_instance_dir, ".drypipe", task_key)
+
+    def _wait(self):
+        return self.parsed_args.wait
+
     def invoke(self, test_mode=False):
 
         if self.parsed_args.command == 'submit-array':
@@ -2724,7 +2592,18 @@ class Cli:
             pipeline_instance.run_sync(until_patterns=self.parsed_args.until)
         elif self.parsed_args.command == 'task':
 
-            task_key = self.parsed_args.task_key
+            tp = TaskProcess(self.parsed_args.control_dir)
+
+            if tp.task_conf["executer_type"] == "slurm":
+                if self.parsed_args.by_runner:
+                    tp.submit_sbatch_task(self._wait())
+                    return
+
+            tp.launch_task(self._wait())
+
+        elif self.parsed_args.command == 'sbatch':
+            tp = TaskProcess(self.parsed_args.control_dir)
+            tp.submit_sbatch_task(self._wait())
 
         elif self.parsed_args.command == 'upload-array':
 
@@ -2803,6 +2682,8 @@ class Cli:
         self.subparsers = self.parser.add_subparsers(required=True, dest='command')
         self.add_run_args(self.subparsers.add_parser('run'))
         self.add_task_args(self.subparsers.add_parser('task'))
+        self.add_sbatch_args(self.subparsers.add_parser('sbatch'))
+        self.add_sbatch_args(self.subparsers.add_parser('sbatch-gen'))
         self.add_array_args(self.subparsers.add_parser('submit-array'))
         self.add_upload_array_args(self.subparsers.add_parser('upload-array'))
         self.add_create_array_parent_args(self.subparsers.add_parser('create-array-parent'))
@@ -2898,9 +2779,33 @@ class Cli:
             help="create N parent Tasks, and distribute the children evenly tasks among parents"
         )
 
-    def add_task_args(self, parser):
-        self._add_task_key_parser_arg(parser)
+    def __wait_arg(self, parser):
+        parser.add_argument(
+            '--wait',
+            dest='wait',
+            action='store_true',
+            help="wait for task to complete before exiting"
+        )
+        parser.set_defaults(wait=False)
 
+    def add_task_args(self, parser):
+        parser.add_argument('control_dir', type=str)
+        self._add_task_key_parser_arg(parser)
+        self.__wait_arg(parser)
+        parser.add_argument("--by-runner", dest="by_runner", action="store_true")
+        parser.set_defaults(by_runner=False)
+
+    def add_sbatch_args(self, parser):
+        self._add_task_key_parser_arg(parser)
+        self.__wait_arg(parser)
+
+
+def handle_script_lib_main():
+    try:
+        cli = Cli(sys.argv[1:])
+        cli.invoke()
+    finally:
+        logging.shutdown()
 
 if __name__ == '__main__':
     Cli(sys.argv[1:]).invoke(test_mode=True)
