@@ -3,7 +3,7 @@ import os.path
 import unittest
 
 from dry_pipe import DryPipe
-from dry_pipe.core_lib import Cli
+from dry_pipe.core_lib import Cli, UpstreamTasksNotCompleted
 from pipeline_tests_with_single_tasks import PipelineWithSinglePythonTask
 from pipeline_tests_with_slurm_mockup import PipelineWithSlurmArrayForRealSlurmTest, PipelineWithSlurmArray
 from test_utils import TestSandboxDir
@@ -117,6 +117,59 @@ class CliArrayTests1(PipelineWithSlurmArrayForRealSlurmTest):
         )
 
         self.do_validate(pipeline_instance)
+
+
+class CliTestsPipelineWithSlurmArray(PipelineWithSlurmArray):
+
+    def create_prepare_and_run_pipeline(self, d, until_patterns=["*"]):
+        pipeline_instance = self.create_pipeline_instance(d.sandbox_dir)
+        pipeline_instance.run_sync(until_patterns)
+        return pipeline_instance
+
+
+    def do_validate(self, pipeline_instance):
+        self.validate({
+            task.key: task
+            for task in pipeline_instance.query("*")
+        })
+
+    def test_custom_array_parents(self):
+        pipeline_instance = self.create_prepare_and_run_pipeline(TestSandboxDir(self))
+
+        def go():
+            Cli([
+                '--pipeline-instance-dir', pipeline_instance.state_file_tracker.pipeline_instance_dir,
+                'create-array-parent',
+                'p1', 't_a_*'
+            ]).invoke(test_mode=True)
+
+        self.assertRaises(UpstreamTasksNotCompleted, go)
+
+
+        Cli([
+            '--pipeline-instance-dir', pipeline_instance.state_file_tracker.pipeline_instance_dir,
+            'run',
+            '--generator', 'cli_tests:pipeline_with_slurm_array_2',
+            '--task-key=z'
+        ]).invoke(test_mode=True)
+
+        go()
+
+        def keys_p1():
+            with open(os.path.join(pipeline_instance.state_file_tracker.pipeline_work_dir, "p1", "task-keys.tsv")) as f:
+                for l in f.readlines():
+                    l = l.strip()
+                    if l != "":
+                        yield l.strip()
+
+        self.assertEqual({k for k in keys_p1()}, {'t_a_2', 't_a_1'})
+
+
+        Cli([
+            f'--pipeline-instance-dir={pipeline_instance.state_file_tracker.pipeline_instance_dir}',
+            'submit-array',
+            '--task-key=p1'
+        ]).invoke(test_mode=True)
 
 
 

@@ -28,12 +28,12 @@ APPTAINER_COMMAND="singularity"
 APPTAINER_BIND="APPTAINER_BIND"
 
 
-def create_task_logger(task_control_dir):
+def create_task_logger(task_control_dir, test_mode=False):
 
-    if os.environ.get("DRYPIPE_TASK_DEBUG") != "True":
-        logging_level = logging.INFO
-    else:
+    if test_mode or os.environ.get("DRYPIPE_TASK_DEBUG") == "True":
         logging_level = logging.DEBUG
+    else:
+        logging_level = logging.INFO
 
     logger = logging.getLogger(f"task-logger-{os.path.basename(task_control_dir)}")
 
@@ -51,8 +51,6 @@ def create_task_logger(task_control_dir):
     logger.info("log level: %s", logging.getLevelName(logging_level))
     return logger
 
-
-__script_location = os.environ.get("__script_location")
 
 
 def parse_ssh_specs(ssh_specs):
@@ -328,14 +326,16 @@ class TaskProcess:
         control_dir, as_subprocess=True, wait_for_completion=False,
         run_python_calls_in_process=False,
         array_limit=None,
-        by_pipeline_runner=False
+        by_pipeline_runner=False,
+        test_mode=False
     ):
 
         if not as_subprocess:
             TaskProcess(
                 control_dir,
                 run_python_calls_in_process,
-                as_subprocess=as_subprocess
+                as_subprocess=as_subprocess,
+                test_mode=test_mode
             ).launch_task(wait_for_completion, exit_process_when_done=False, array_limit=array_limit)
         else:
             pipeline_work_dir = os.path.dirname(control_dir)
@@ -363,20 +363,21 @@ class TaskProcess:
             run_python_calls_in_process=False,
             as_subprocess=True,
             ensure_all_upstream_deps_complete=True,
-            no_logger=False
+            no_logger=False,
+            test_mode=False
     ):
 
         self.record_history = False
 
+        array_task_control_dir = self._script_location_of_array_task_id_if_applies(control_dir)
+        if array_task_control_dir is not None:
+            control_dir = array_task_control_dir
+            os.environ["DRYPIPE_CONTROL_DIR"] = control_dir
+
         if no_logger:
             self.task_logger = logging.getLogger('dummy')
         else:
-            array_task_control_dir = self._script_location_of_array_task_id_if_applies(control_dir)
-            if array_task_control_dir is not None:
-                control_dir = array_task_control_dir
-                os.environ["DRYPIPE_CONTROL_DIR"] = control_dir
-
-            self.task_logger = create_task_logger(control_dir)
+            self.task_logger = create_task_logger(control_dir, test_mode)
 
         self.control_dir = control_dir
         self.task_key = os.path.basename(control_dir)
@@ -385,6 +386,7 @@ class TaskProcess:
         self.pipeline_output_dir = os.path.join(self.pipeline_instance_dir, "output")
         self.task_output_dir = os.path.join(self.pipeline_output_dir, self.task_key)
         # For test cases:
+        self.test_mode = test_mode
         self.run_python_calls_in_process = run_python_calls_in_process
         self.as_subprocess = as_subprocess
         script_location = os.path.abspath(self.control_dir)
@@ -619,6 +621,9 @@ class TaskProcess:
 
             def state_name(self):
                 return state_file.state_as_string()
+
+            def control_dir(self):
+                return state_file.control_dir()
 
         return ResolvedTask(self)
 
@@ -1073,20 +1078,20 @@ class TaskProcess:
 
         return dict(gen())
 
+    def dependent_file_list(self):
+        for var_name, file in self.inputs.rsync_external_file_list():
+            yield var_name, file
+
+        for var_name, file in self.inputs.rsync_file_list_produced_upstream():
+            yield var_name, file
+
     def _create_local_scratch_and_rsync_inputs(self):
 
         Path(self._local_inputs_root()).mkdir(exist_ok=True)
         Path(self._local_outputs_root()).mkdir(exist_ok=True)
 
-        def files_included():
-            for var_name, file in self.inputs.rsync_external_file_list():
-                yield var_name, file
-
-            for var_name, file in self.inputs.rsync_file_list_produced_upstream():
-                yield var_name, file
-
         with NamedTemporaryFile("w", prefix="zzz") as tf:
-            for _, fi in files_included():
+            for _, fi in self.dependent_file_list():
                 tf.write(fi)
                 tf.write("\n")
             tf.flush()
@@ -1137,7 +1142,7 @@ class TaskProcess:
         python_task = func_from_mod_func(module_function)
         self.call_python(module_function, python_task)
 
-    def run_array(self, limit):
+    def run_array(self, limit, test_mode=False):
 
         step_number, _, state_file, _ = self.read_task_state()
         try:
@@ -1145,7 +1150,8 @@ class TaskProcess:
                 self.task_key,
                 StateFileTracker(self.pipeline_instance_dir),
                 self.task_conf,
-                self.task_logger
+                self.task_logger,
+                test_mode
             )
             all_children_completed = sapt.run_array(False, False, limit)
 
@@ -1561,7 +1567,9 @@ def handle_script_lib_main():
     else:
         cmd = sys.argv[1]
 
-    task_runner = TaskProcess(get__script_location_and_ensure_set())
+    sloc = get__script_location_and_ensure_set()
+
+    task_runner = TaskProcess(sloc)
 
     if task_runner.task_conf["executer_type"] == "slurm":
         if cmd == "start" and "--by-runner" in sys.argv:
@@ -1943,13 +1951,14 @@ class TaskOutputs:
 
 class SlurmArrayParentTask:
 
-    def __init__(self, task_key, tracker, task_conf=None, logger=None, mockup_run_launch_local_processes=False):
+    def __init__(self, task_key, tracker, task_conf=None, logger=None, mockup_run_launch_local_processes=False, test_mode=False):
         self.task_key = task_key
         self.debug = True
         self.task_conf = task_conf
         self.tracker = tracker
         self.pipeline_instance_dir = os.path.dirname(self.tracker.pipeline_work_dir)
         self.mockup_run_launch_local_processes = mockup_run_launch_local_processes
+        self.test_mode = test_mode
         if logger is None:
             self.logger = logging.getLogger('dummy')
             self.logger.addHandler(logging.NullHandler())
@@ -1984,9 +1993,8 @@ class SlurmArrayParentTask:
                 yield f"--account={a}"
 
             yield "--output=/dev/null"
-
-            #yield f"--output={self.pipeline_instance_dir}/out-%A_%a.log"
-            #yield f"--error={self.pipeline_instance_dir}/out-%A_%a.log"
+            # produce log (in parent dir) only if task has stderr:
+            yield f"--error={self.control_dir()}/err-%A_%a.log"
 
             yield "--export={0}".format(",".join([
                 f"DRYPIPE_CONTROL_DIR={self.control_dir()}",
@@ -2339,7 +2347,7 @@ class SlurmArrayParentTask:
 
         self.logger.info("will run array %s", self.task_key)
 
-        if self.logger.getEffectiveLevel() == logging.DEBUG:
+        if self.test_mode:
             pause_in_seconds = [0, 0, 0, 0, 0, 1]
         else:
             pause_in_seconds = [2, 2, 3, 3, 4, 10, 30, 60, 120, 120, 180, 240, 300]
@@ -2374,6 +2382,36 @@ class SlurmArrayParentTask:
             return True
 
         return False
+
+    def upload_array(self, ssh_remote_dest):
+
+        def gen_dep_files():
+            for task_key in self.children_task_keys():
+
+                p = TaskProcess(
+                    os.path.join(self.tracker.pipeline_work_dir, task_key, "task-conf.json"),
+                    ensure_all_upstream_deps_complete=True
+                )
+
+                for _, fi in p.dependent_file_list():
+                    yield fi
+
+        self.logger.info("will generate file list for upload")
+        with open(os.path.join(self.control_dir(), "deps.txt"), "w") as tf:
+            for dep_file in gen_dep_files():
+                tf.write(dep_file)
+                tf.write("\n")
+        self.logger.info("done")
+
+        if not ssh_remote_dest.endswith("/"):
+            ssh_remote_dest = f"{ssh_remote_dest}/"
+
+        invoke_rsync(
+            f"rsync -a --dirs {self.pipeline_instance_dir}/ {ssh_remote_dest}"
+        )
+
+
+
 
 class StateFileTracker:
 
@@ -2610,11 +2648,8 @@ class Cli:
             description="DryPipe CLI"
         )
 
-        self.parser.add_argument(
-            '--pipeline-instance-dir',
-            help='pipeline instance directory, can also be set with environment var DRYPIPE_PIPELINE_INSTANCE_DIR',
-            default=self.env.get("DRYPIPE_PIPELINE_INSTANCE_DIR")
-        )
+        self._add_pipeline_instance_dir_arg(self.parser)
+
         self.parser.add_argument(
             '--verbose'
         )
@@ -2627,6 +2662,42 @@ class Cli:
 
         self.parsed_args = self.parser.parse_args(args)
 
+    def _add_pipeline_instance_dir_arg(self, parser):
+
+        default_pid = self.env.get("DRYPIPE_PIPELINE_INSTANCE_DIR")
+
+        if default_pid is None:
+            control_dir = self._guess_control_dir_from_cwd()
+
+            if control_dir is not None:
+                default_pid = os.path.dirname(os.path.dirname(control_dir))
+
+        parser.add_argument(
+            '--pipeline-instance-dir',
+            help='pipeline instance directory, can also be set with environment var DRYPIPE_PIPELINE_INSTANCE_DIR',
+            default=default_pid
+        )
+
+    def _guess_control_dir_from_cwd(self):
+        cwd = Path.cwd()
+        task_conf = os.path.join(cwd, "task-conf.json")
+        if os.path.exists(task_conf):
+            return cwd
+        else:
+            return None
+    def _add_task_key_parser_arg(self, parser):
+
+        control_dir = self._guess_control_dir_from_cwd()
+
+        if control_dir is not None:
+            default_task_key = os.path.basename(control_dir)
+        else:
+            default_task_key = None
+
+        parser.add_argument(
+            '--task-key',
+            default=default_task_key
+        )
 
     def invoke(self, test_mode=False):
 
@@ -2634,20 +2705,97 @@ class Cli:
             TaskProcess.run(
                 os.path.join(self.parsed_args.pipeline_instance_dir, ".drypipe", self.parsed_args.task_key),
                 as_subprocess=not test_mode,
-                array_limit=self.parsed_args.limit
+                array_limit=self.parsed_args.limit,
+                test_mode=test_mode
             )
         elif self.parsed_args.command == 'run':
             pipeline = func_from_mod_func(self.parsed_args.generator)()
             pipeline_instance = pipeline.create_pipeline_instance(self.parsed_args.pipeline_instance_dir)
             pipeline_instance.run_sync(until_patterns=self.parsed_args.until)
+        elif self.parsed_args.command == 'task':
+
+            task_key = self.parsed_args.task_key
+
+        elif self.parsed_args.command == 'upload-array':
+
+            tp = TaskProcess(
+                os.path.join(self.parsed_args.pipeline_instance_dir, ".drypipe", self.parsed_args.task_key)
+            )
+
+            array_parent_task = SlurmArrayParentTask(
+                tp.task_key,
+                StateFileTracker(tp.pipeline_instance_dir),
+                task_conf=tp.task_conf,
+                logger=tp.task_logger
+            )
+
+            array_parent_task.upload_array(self.parsed_args.ssh_remote_dest)
+        elif self.parsed_args.command == 'create-array-parent':
+
+            new_task_key = self.parsed_args.new_task_key
+            matcher = self.parsed_args.matcher
+            split_into = self.parsed_args.split
+
+            state_file_tracker = StateFileTracker(self.parsed_args.pipeline_instance_dir)
+
+            control_dir = Path(state_file_tracker.pipeline_work_dir, new_task_key)
+
+            if os.path.exists(control_dir):
+                raise Exception(
+                    f"Directory {control_dir} already exists, delete, rename, or chose other name for task-key"
+                )
+
+            control_dir.mkdir(exist_ok=False)
+
+            not_ready_task_keys = []
+
+            with open(os.path.join(control_dir, "task-conf.json"), "w") as f:
+                f.write(json.dumps({
+                  "is_slurm_parent": True,
+                  "inputs": [
+                    {
+                      "upstream_task_key": None,
+                      "name_in_upstream_task": None,
+                      "file_name": None,
+                      "value": None,
+                      "name": "children_tasks",
+                      "type": "task-list"
+                    }
+                  ]
+                }, indent=2))
+
+            with open(os.path.join(control_dir, "task-keys.tsv"), "w") as tc:
+                for resolved_task in state_file_tracker.load_tasks_for_query(matcher, include_non_completed=True):
+
+                    # TODO: check ensure_upstream_task_is_completed
+
+                    tp = TaskProcess(resolved_task.control_dir(), no_logger=True)
+                    tp._unserialize_and_resolve_inputs_outputs(ensure_all_upstream_deps_complete=True)
+
+                    if not resolved_task.is_ready():
+                        not_ready_task_keys.append(resolved_task.key)
+
+                    tc.write(resolved_task.key)
+                    tc.write("\n")
+
+            if len(not_ready_task_keys) > 0:
+                print(f"Warning: {len(not_ready_task_keys)} are not in 'ready' state:")
+                raise Exception(f"wwwwwwwwwwww")
+                #for k in not_ready_task_keys:
+                #    print(k)
+
+
+            Path(os.path.join(control_dir, "state.ready")).touch(exist_ok=True)
 
     def _sub_parsers(self):
 
 
         self.subparsers = self.parser.add_subparsers(required=True, dest='command')
         self.add_run_args(self.subparsers.add_parser('run'))
-        #self.add_run_args(self.subparsers.add_parser('status', parents=[self.parser]))
+        self.add_task_args(self.subparsers.add_parser('task'))
         self.add_array_args(self.subparsers.add_parser('submit-array'))
+        self.add_upload_array_args(self.subparsers.add_parser('upload-array'))
+        self.add_create_array_parent_args(self.subparsers.add_parser('create-array-parent'))
 
     def add_status_args(self):
         pass
@@ -2666,6 +2814,22 @@ class Cli:
             action='append',
             metavar='PATTERN'
         )
+
+        self._add_task_key_parser_arg(run_parser)
+
+    def add_upload_array_args(self, upload_array_parser):
+
+        self.upload_array_parser = upload_array_parser
+
+        upload_array_parser.add_argument(
+            '--ssh-remote-dest',
+            help=textwrap.dedent(
+            """
+                example:`me@myhost.example.com:/my-directory`            
+            """)
+        )
+
+        self._add_task_key_parser_arg(upload_array_parser)
 
 
     def add_array_args(self, run_parser):
@@ -2688,9 +2852,7 @@ class Cli:
             '--slurm-account'
         )
 
-        run_parser.add_argument(
-            '--task-key'
-        )
+        self._add_task_key_parser_arg(run_parser)
 
         run_parser.add_argument(
             '--slurm-args',
@@ -2714,3 +2876,21 @@ class Cli:
             help='delete and re submit failed tasks in array'
         )
 
+    def add_create_array_parent_args(self, parser):
+        parser.add_argument('new_task_key', type=str)
+        parser.add_argument(
+            'matcher', type=str,
+            help="a glob expression to match the tasks that will become children of created parent"
+        )
+
+        parser.add_argument(
+            '--split', type=int, default=1,
+            help="create N parent Tasks, and distribute the children evenly tasks among parents"
+        )
+
+    def add_task_args(self, parser):
+        self._add_task_key_parser_arg(parser)
+
+
+if __name__ == '__main__':
+    Cli(sys.argv[1:]).invoke(test_mode=True)
