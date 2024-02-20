@@ -126,7 +126,6 @@ class CliTestsPipelineWithSlurmArray(PipelineWithSlurmArray):
         pipeline_instance.run_sync(until_patterns)
         return pipeline_instance
 
-
     def do_validate(self, pipeline_instance):
         self.validate({
             task.key: task
@@ -136,40 +135,65 @@ class CliTestsPipelineWithSlurmArray(PipelineWithSlurmArray):
     def test_custom_array_parents(self):
         pipeline_instance = self.create_prepare_and_run_pipeline(TestSandboxDir(self))
 
-        def go():
+        def create_parent_task(parent_task_key, match):
             Cli([
                 '--pipeline-instance-dir', pipeline_instance.state_file_tracker.pipeline_instance_dir,
                 'create-array-parent',
-                'p1', 't_a_*'
+                parent_task_key, match,
+                '--slurm-account=dummy', '--force'
             ]).invoke(test_mode=True)
 
-        self.assertRaises(UpstreamTasksNotCompleted, go)
+        self.assertRaises(UpstreamTasksNotCompleted, lambda: create_parent_task('p1', 't_a_*'))
 
+        Cli([
+            '--pipeline-instance-dir', pipeline_instance.state_file_tracker.pipeline_instance_dir,
+            'task',
+            f'{pipeline_instance.state_file_tracker.pipeline_instance_dir}/.drypipe/z',
+            '--wait'
+        ]).invoke(test_mode=True)
 
-        #Cli([
-        #    '--pipeline-instance-dir', pipeline_instance.state_file_tracker.pipeline_instance_dir,
-        #    'run',
-        #    '--generator', 'cli_tests:pipeline_with_slurm_array_2',
-        #    '--task-key=z'
-        #]).invoke(test_mode=True)
+        create_parent_task('p1', 't_a_*')
 
-        #go()
-
-        def keys_p1():
-            with open(os.path.join(pipeline_instance.state_file_tracker.pipeline_work_dir, "p1", "task-keys.tsv")) as f:
+        def keys_p1(parent_task_key):
+            kf = os.path.join(pipeline_instance.state_file_tracker.pipeline_work_dir, parent_task_key, "task-keys.tsv")
+            with open(kf) as f:
                 for l in f.readlines():
                     l = l.strip()
                     if l != "":
                         yield l.strip()
 
-        self.assertEqual({k for k in keys_p1()}, {'t_a_2', 't_a_1'})
+        self.assertEqual({k for k in keys_p1('p1')}, {'t_a_2', 't_a_1'})
 
+        def run_parent_task(parent_task_key):
+            Cli([
+                '--pipeline-instance-dir', pipeline_instance.state_file_tracker.pipeline_instance_dir,
+                'task',
+                f'{pipeline_instance.state_file_tracker.pipeline_instance_dir}/.drypipe/{parent_task_key}',
+                '--wait'
+            ]).invoke(test_mode=True)
+
+        run_parent_task('p1')
+
+        create_parent_task('p2', 't_*')
+
+        self.assertEqual({k for k in keys_p1('p2')}, {'t_b_2', 't_b_1'})
 
         Cli([
             f'--pipeline-instance-dir={pipeline_instance.state_file_tracker.pipeline_instance_dir}',
             'submit-array',
-            '--task-key=p1'
+            '--task-key=p2',
+            '--limit=1'
         ]).invoke(test_mode=True)
+
+        Cli([
+            f'--pipeline-instance-dir={pipeline_instance.state_file_tracker.pipeline_instance_dir}',
+            'submit-array',
+            '--task-key=p2',
+            '--limit=1'
+        ]).invoke(test_mode=True)
+
+        self.do_validate(pipeline_instance)
+
 
 
 

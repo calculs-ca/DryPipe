@@ -408,7 +408,8 @@ class TaskProcess:
                 if command_before_task is not None:
                     self.exec_cmd_before_launch(command_before_task)
         except Exception as ex:
-            self.task_logger.exception(ex)
+            if not no_logger:
+                self.task_logger.exception(ex)
             raise ex
 
     def __repr__(self):
@@ -1259,12 +1260,12 @@ class TaskProcess:
                 exit(0)
             else:
                 # forked child, or slurm job
-                sloc = os.environ['DRYPIPE_TASK_CONTROL_DIR']
+                #sloc = os.environ['DRYPIPE_TASK_CONTROL_DIR']
                 if is_slurm:
                     self.task_logger.info("slurm job started, slurm_job_id=%s", slurm_job_id)
-                else:
-                    with open(os.path.join(sloc, "pid"), "w") as f:
-                        f.write(str(os.getpid()))
+                #else:
+                #    with open(os.path.join(sloc, "pid"), "w") as f:
+                #        f.write(str(os.getpid()))
 
                 os.setpgrp()
                 self.register_signal_handlers()
@@ -2599,7 +2600,7 @@ class Cli:
                     tp.submit_sbatch_task(self._wait())
                     return
 
-            tp.launch_task(self._wait())
+            tp.launch_task(self._wait(), exit_process_when_done=not test_mode)
 
         elif self.parsed_args.command == 'sbatch':
             tp = TaskProcess(self.parsed_args.control_dir)
@@ -2623,6 +2624,14 @@ class Cli:
 
             new_task_key = self.parsed_args.new_task_key
             matcher = self.parsed_args.matcher
+
+            if self.parsed_args.slurm_account is not None:
+                executer_type = "slurm"
+                slurm_account = self.parsed_args.slurm_account
+            else:
+                executer_type = "process"
+                slurm_account = None
+
             split_into = self.parsed_args.split
 
             state_file_tracker = StateFileTracker(self.parsed_args.pipeline_instance_dir)
@@ -2630,16 +2639,19 @@ class Cli:
             control_dir = Path(state_file_tracker.pipeline_work_dir, new_task_key)
 
             if os.path.exists(control_dir):
-                raise Exception(
-                    f"Directory {control_dir} already exists, delete, rename, or chose other name for task-key"
-                )
+                if not self.parsed_args.force:
+                    raise Exception(
+                        f"Directory {control_dir} already exists, use --force to overwrite"
+                    )
 
-            control_dir.mkdir(exist_ok=False)
+            control_dir.mkdir(exist_ok=True)
 
             not_ready_task_keys = []
 
             with open(os.path.join(control_dir, "task-conf.json"), "w") as f:
                 f.write(json.dumps({
+                  "executer_type": executer_type,
+                  "slurm_account": slurm_account,
                   "is_slurm_parent": True,
                   "inputs": [
                     {
@@ -2656,8 +2668,10 @@ class Cli:
             with open(os.path.join(control_dir, "task-keys.tsv"), "w") as tc:
                 for resolved_task in state_file_tracker.load_tasks_for_query(matcher, include_non_completed=True):
 
-                    # TODO: check ensure_upstream_task_is_completed
+                    if resolved_task.is_completed():
+                       continue
 
+                    # ensure upstream dependencies are met
                     tp = TaskProcess(resolved_task.control_dir(), no_logger=True)
                     tp._unserialize_and_resolve_inputs_outputs(ensure_all_upstream_deps_complete=True)
 
@@ -2669,10 +2683,6 @@ class Cli:
 
             if len(not_ready_task_keys) > 0:
                 print(f"Warning: {len(not_ready_task_keys)} are not in 'ready' state:")
-                raise Exception(f"wwwwwwwwwwww")
-                #for k in not_ready_task_keys:
-                #    print(k)
-
 
             Path(os.path.join(control_dir, "state.ready")).touch(exist_ok=True)
 
@@ -2739,9 +2749,7 @@ class Cli:
             '--limit', type=int, help='limit submitted array size to N tasks', metavar='N'
         )
 
-        run_parser.add_argument(
-            '--slurm-account'
-        )
+        self._add_slurm_account_arg(run_parser)
 
         self._add_task_key_parser_arg(run_parser)
 
@@ -2777,6 +2785,15 @@ class Cli:
         parser.add_argument(
             '--split', type=int, default=1,
             help="create N parent Tasks, and distribute the children evenly tasks among parents"
+        )
+
+        parser.add_argument('--force', action='store_true')
+
+        self._add_slurm_account_arg(parser)
+
+    def _add_slurm_account_arg(self, parser):
+        parser.add_argument(
+            '--slurm-account'
         )
 
     def __wait_arg(self, parser):
