@@ -78,10 +78,12 @@ class PipelineWithSlurmArray(BasePipelineTest):
         t0 = dsl.task(
             key="z"
         ).outputs(
-            r=int
+            r=int,
+            f=dsl.file('f.txt')
         ).calls("""
             #!/usr/bin/env bash            
-            export r=10            
+            export r=10        
+            echo 25 > $f    
         """)()
 
         yield t0
@@ -94,19 +96,22 @@ class PipelineWithSlurmArray(BasePipelineTest):
                     task_conf=self.task_conf()
                 ).inputs(
                     r=t0.outputs.r,
-                    i=i
+                    i=i,
+                    f=t0.outputs.f
                 ).outputs(
                     slurm_result=int
                 ).calls("""
                     #!/usr/bin/env bash
-                    echo "$r $i"            
-                    export slurm_result=$(( $r + $i ))
+                    echo "$r $i"  
+                    value_f=$(<$f)          
+                    export slurm_result=$(( $r + $i + $value_f))
                     echo "$slurm_result"
                 """)()
 
         for match in dsl.query_all_or_nothing("t_*", state="ready"):
             yield dsl.task(
-                key=f"array_parent"
+                key=f"array_parent",
+                task_conf=self.task_conf()
             ).slurm_array_parent(
                 children_tasks=match.tasks
             )()
@@ -128,22 +133,22 @@ class PipelineWithSlurmArray(BasePipelineTest):
 
         self.assertEqual(
             int(tasks_by_keys["t_a_1"].outputs.slurm_result),
-            11
+            11+25
         )
 
         self.assertEqual(
             int(tasks_by_keys["t_a_2"].outputs.slurm_result),
-            12
+            12+25
         )
 
         self.assertEqual(
             int(tasks_by_keys["t_b_1"].outputs.slurm_result),
-            11
+            11+25
         )
 
         self.assertEqual(
             int(tasks_by_keys["t_b_2"].outputs.slurm_result),
-            12
+            12+25
         )
 
 

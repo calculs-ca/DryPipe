@@ -381,6 +381,10 @@ class TaskProcess:
             self.task_key = os.path.basename(control_dir)
             self.pipeline_work_dir = os.path.dirname(control_dir)
             self.pipeline_instance_dir = os.path.dirname(self.pipeline_work_dir)
+
+            if self.pipeline_instance_dir == "":
+                raise Exception(f"pipeline_instance_dir can't be empty string")
+
             self.pipeline_output_dir = os.path.join(self.pipeline_instance_dir, "output")
             self.task_output_dir = os.path.join(self.pipeline_output_dir, self.task_key)
             # For test cases:
@@ -1082,10 +1086,13 @@ class TaskProcess:
 
     def dependent_file_list(self):
         for var_name, file in self.inputs.rsync_external_file_list():
-            yield var_name, file
+            yield file
 
         for var_name, file in self.inputs.rsync_file_list_produced_upstream():
-            yield var_name, file
+            yield file
+
+        for file in self.inputs.rsync_output_var_file_list_produced_upstream():
+            yield file
 
     def _create_local_scratch_and_rsync_inputs(self):
 
@@ -1093,7 +1100,7 @@ class TaskProcess:
         Path(self._local_outputs_root()).mkdir(exist_ok=True)
 
         with NamedTemporaryFile("w", prefix="zzz") as tf:
-            for _, fi in self.dependent_file_list():
+            for fi in self.dependent_file_list():
                 tf.write(fi)
                 tf.write("\n")
             tf.flush()
@@ -1519,7 +1526,7 @@ class TaskInput:
                 raise Exception(f"invalid constant {name}")
 
         self.name = name
-        self.type  = type
+        self.type = type
         self.name_in_upstream_task = name_in_upstream_task
         self.upstream_task_key = upstream_task_key
         self.value = value
@@ -1571,15 +1578,13 @@ class TaskInput:
             return v
 
     def is_file(self):
-
-        #if self.file_name is None and self.type == 'file':
-        #    raise Exception("!!")
-
         return self.type == 'file'
-        #return self.file_name is not None
 
     def is_upstream_output(self):
         return self.upstream_task_key is not None
+
+    def is_upstream_var_output(self):
+        return self.upstream_task_key is not None and self.type in ['str', 'int', 'float']
 
     def is_constant(self):
         return self.value is not None
@@ -1763,6 +1768,17 @@ class TaskInputs:
         for i in self._task_inputs.values():
             if i.is_upstream_output() and i.type == 'file':
                 yield i.name, f"output/{i.upstream_task_key}/{i.name_in_upstream_task}"
+
+    def rsync_output_var_file_list_produced_upstream(self):
+
+        upstream_output_var_deps = {
+            i.upstream_task_key
+            for i in self._task_inputs.values()
+            if i.is_upstream_var_output()
+        }
+
+        for task_key in upstream_output_var_deps:
+            yield f".drypipe/{task_key}/output_vars"
 
     def rsync_external_file_list(self):
         for i in self._task_inputs.values():
@@ -2005,7 +2021,7 @@ class SlurmArrayParentTask:
         return dict_unexpected_states
 
 
-    def call_squeue_and_index_response(self, submitted_job_ids, mockup_squeue_call=None) -> dict[str, dict[int, str]]:
+    def call_squeue_and_index_response(self, submitted_job_ids, mockup_squeue_call=None):
         """
           job_id -> (array_idx, job_state_code)
         """
@@ -2257,26 +2273,39 @@ class SlurmArrayParentTask:
             for task_key in self.children_task_keys():
 
                 p = TaskProcess(
-                    os.path.join(self.tracker.pipeline_work_dir, task_key, "task-conf.json"),
+                    os.path.join(self.tracker.pipeline_work_dir, task_key),
                     ensure_all_upstream_deps_complete=True
                 )
 
-                for _, fi in p.dependent_file_list():
-                    yield fi
+                yield from p.dependent_file_list()
+                yield f".drypipe/{task_key}/state.ready"
+                yield f".drypipe/{task_key}/task-conf.json"
+
+            yield ".drypipe/cli"
+            yield ".drypipe/core_lib.py"
+
+            yield f".drypipe/{self.task_key}/task-conf.json"
+            yield f".drypipe/{self.task_key}/task-keys.tsv"
+            yield f".drypipe/{self.task_key}/state.ready"
 
         self.logger.info("will generate file list for upload")
-        with open(os.path.join(self.control_dir(), "deps.txt"), "w") as tf:
+        dep_file_txt = os.path.join(self.control_dir(), "deps.txt")
+        uniq_files = set()
+        with open(dep_file_txt, "w") as tf:
             for dep_file in gen_dep_files():
-                tf.write(dep_file)
-                tf.write("\n")
+                if dep_file not in uniq_files:
+                    tf.write(dep_file)
+                    tf.write("\n")
+                    uniq_files.add(dep_file)
+
         self.logger.info("done")
 
         if not ssh_remote_dest.endswith("/"):
             ssh_remote_dest = f"{ssh_remote_dest}/"
 
-        invoke_rsync(
-            f"rsync -a --dirs {self.pipeline_instance_dir}/ {ssh_remote_dest}"
-        )
+        rsync_cmd = f"rsync -a --dirs --files-from={dep_file_txt} {self.pipeline_instance_dir}/ {ssh_remote_dest}"
+        self.logger.debug("%s", rsync_cmd)
+        invoke_rsync(rsync_cmd)
 
 
 
@@ -2543,6 +2572,9 @@ class Cli:
             if control_dir is not None:
                 default_pid = os.path.dirname(os.path.dirname(control_dir))
 
+        if default_pid is None:
+            default_pid = Path(__file__).parent.parent
+
         parser.add_argument(
             '--pipeline-instance-dir',
             help='pipeline instance directory, can also be set with environment var DRYPIPE_PIPELINE_INSTANCE_DIR',
@@ -2575,6 +2607,17 @@ class Cli:
         task_key = self.parsed_args.task_key
         return os.path.join(pipeline_instance_dir, ".drypipe", task_key)
 
+    def _complete_control_dir(self, maybe_partial_contro_dir):
+        if os.path.exists(maybe_partial_contro_dir):
+            return os.path.abspath(maybe_partial_contro_dir)
+
+        cd = os.path.join(os.getcwd(), maybe_partial_contro_dir)
+
+        if os.path.exists(cd):
+            return cd
+
+        raise Exception(f"directory not found {cd}")
+
     def _wait(self):
         return self.parsed_args.wait
 
@@ -2593,7 +2636,7 @@ class Cli:
             pipeline_instance.run_sync(until_patterns=self.parsed_args.until)
         elif self.parsed_args.command == 'task':
 
-            tp = TaskProcess(self.parsed_args.control_dir)
+            tp = TaskProcess(self._complete_control_dir(self.parsed_args.control_dir))
 
             if tp.task_conf["executer_type"] == "slurm":
                 if self.parsed_args.by_runner:
@@ -2619,7 +2662,18 @@ class Cli:
                 logger=tp.task_logger
             )
 
-            array_parent_task.upload_array(self.parsed_args.ssh_remote_dest)
+            ssh_remote_dest = array_parent_task.task_conf.get("ssh_remote_dest")
+            if ssh_remote_dest is None:
+                if self.parsed_args.ssh_remote_dest is None:
+                    raise Exception(
+                        f"--ssh-remote-dest is required for 'upload-array', OR must be defined with " +
+                        " .task(task_conf=TaskConf(ss_remote_dest=...)"
+                    )
+                else:
+                    ssh_remote_dest = self.parsed_args.ssh_remote_dest
+
+            array_parent_task.upload_array(ssh_remote_dest)
+
         elif self.parsed_args.command == 'create-array-parent':
 
             new_task_key = self.parsed_args.new_task_key

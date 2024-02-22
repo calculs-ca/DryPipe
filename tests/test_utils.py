@@ -46,9 +46,11 @@ class TestSandboxDir:
         else:
             f = other_func
 
+        self.test_name = f"{parent.__class__.__name__}.{f}"
+
         sandbox_dir = os.path.join(
             all_sandbox_dirs,
-            f"{parent.__class__.__name__}.{f}"
+            self.test_name
         )
 
         self.sandbox_dir = sandbox_dir

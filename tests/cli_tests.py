@@ -2,8 +2,8 @@ import glob
 import os.path
 import unittest
 
-from dry_pipe import DryPipe
-from dry_pipe.core_lib import Cli, UpstreamTasksNotCompleted
+from dry_pipe import DryPipe, TaskConf
+from dry_pipe.core_lib import Cli, UpstreamTasksNotCompleted, PortablePopen
 from pipeline_tests_with_single_tasks import PipelineWithSinglePythonTask
 from pipeline_tests_with_slurm_mockup import PipelineWithSlurmArrayForRealSlurmTest, PipelineWithSlurmArray
 from test_utils import TestSandboxDir
@@ -132,6 +132,9 @@ class CliTestsPipelineWithSlurmArray(PipelineWithSlurmArray):
             for task in pipeline_instance.query("*")
         })
 
+    def test_run_pipeline(self):
+        pass
+
     def test_custom_array_parents(self):
         pipeline_instance = self.create_prepare_and_run_pipeline(TestSandboxDir(self))
 
@@ -194,6 +197,46 @@ class CliTestsPipelineWithSlurmArray(PipelineWithSlurmArray):
 
         self.do_validate(pipeline_instance)
 
+    def task_conf(self):
+        return TaskConf(executer_type="slurm", slurm_account="def-xroucou", extra_env={"DRYPIPE_TASK_DEBUG": "True"})
+
+
+    def exec_remote(self, user_at_host, cmd):
+
+        with PortablePopen(["ssh", user_at_host, " ".join(cmd)]) as p:
+            p.wait_and_raise_if_non_zero()
+
+    def test_array_upload(self):
+        d = TestSandboxDir(self)
+
+        pipeline_instance = self.create_prepare_and_run_pipeline(d)
+
+        ssh_dest = "maxl@mp2.ccs.usherbrooke.ca:/home/maxl/tests-drypipe"
+
+        user_at_host, root_dir = ssh_dest.split(":")
+
+        self.exec_remote(user_at_host, ["rm", "-Rf", root_dir])
+        self.exec_remote(user_at_host, ["mkdir", "-p", root_dir])
+
+        Cli([
+            '--pipeline-instance-dir', pipeline_instance.state_file_tracker.pipeline_instance_dir,
+            'task',
+            f'{pipeline_instance.state_file_tracker.pipeline_instance_dir}/.drypipe/z',
+            '--wait'
+        ]).invoke(test_mode=True)
+
+        Cli([
+            '--pipeline-instance-dir', pipeline_instance.state_file_tracker.pipeline_instance_dir,
+            'upload-array',
+            '--task-key=array_parent',
+            f'--ssh-remote-dest={ssh_dest}'
+        ]).invoke(test_mode=True)
+
+        Cli([
+            '--pipeline-instance-dir', pipeline_instance.state_file_tracker.pipeline_instance_dir,
+            'task', '--wait',
+            f'--ssh-remote-dest={ssh_dest}'
+        ]).invoke(test_mode=True)
 
 
 
