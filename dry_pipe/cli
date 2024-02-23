@@ -1,0 +1,17 @@
+#!/usr/bin/env python3
+
+import os
+import sys
+
+if "SLURM_JOB_ID" in os.environ:
+    sl = os.path.dirname(os.environ["DRYPIPE_TASK_CONTROL_DIR"])
+else:
+    sl = os.path.dirname(os.path.abspath(__file__))
+
+sys.path.insert(0, sl)
+from dry_pipe.cli import handle_script_lib_main
+
+
+
+if __name__ == '__main__':
+    handle_script_lib_main()

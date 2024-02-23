@@ -3,7 +3,8 @@ import os.path
 import unittest
 
 from dry_pipe import DryPipe, TaskConf
-from dry_pipe.core_lib import Cli, UpstreamTasksNotCompleted, PortablePopen
+from dry_pipe.cli import Cli
+from dry_pipe.core_lib import UpstreamTasksNotCompleted, PortablePopen
 from pipeline_tests_with_single_tasks import PipelineWithSinglePythonTask
 from pipeline_tests_with_slurm_mockup import PipelineWithSlurmArrayForRealSlurmTest, PipelineWithSlurmArray
 from test_utils import TestSandboxDir

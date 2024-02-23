@@ -6,8 +6,6 @@ from hashlib import blake2b
 
 from dry_pipe.core_lib import FileCreationDefaultModes, TaskInputs, TaskOutputs
 
-from dry_pipe.core_lib import task_script_header
-
 
 class Task:
 
