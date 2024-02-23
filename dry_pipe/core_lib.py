@@ -52,6 +52,32 @@ def create_task_logger(task_control_dir, test_mode=False):
     return logger
 
 
+def parse_ssh_remote_dest(ssh_remote_dest):
+    """
+
+     :param ssh_specs:
+
+     me@somehost.org:/remote-base-dir
+
+     me@somehost.org:/remote-base-dir:/x/y/.ssh/id_rsa
+
+    :return:
+    """
+
+    ssh_specs_parts = ssh_remote_dest.split(":")
+
+    if len(ssh_specs_parts) == 2:
+        user_at_host, remote_base_dire = ssh_specs_parts
+        ssh_key_file = "~/.ssh/id_rsa"
+    elif len(ssh_specs_parts) == 3:
+        user_at_host, remote_base_dire, ssh_key_file = ssh_specs_parts
+    else:
+        raise Exception(
+            f"invalid format for ssh_remote_dest {ssh_remote_dest} should be: <user>@<host>:/<dir>(:ssh_key)?"
+        )
+
+    return user_at_host, remote_base_dire, ssh_key_file
+
 
 def parse_ssh_specs(ssh_specs):
     ssh_specs_parts = ssh_specs.split(":")
@@ -1238,16 +1264,27 @@ class TaskProcess:
             msg = f"Error: no task_key for SLURM_ARRAY_TASK_ID={slurm_array_task_id}"
             raise Exception(msg)
 
+    def exec_remote(self, user_at_host, cmd):
+        with PortablePopen(["ssh", user_at_host, " ".join(cmd)]) as p:
+            p.wait_and_raise_if_non_zero()
+
+    def launch_remote_task(self):
+        user_at_host, remote_base_dire, ssh_key_file = parse_ssh_remote_dest(self.task_conf["ssh_specs"])
+
     def launch_task(self, wait_for_completion, exit_process_when_done=True, array_limit=None):
 
         def task_func_wrapper():
             try:
                 self.task_logger.debug("task func started")
-                is_slurm_parent = self.task_conf.get("is_slurm_parent")
-                if is_slurm_parent is not None and is_slurm_parent:
-                    self.run_array(array_limit)
+                if self.task_conf["ssh_specs"] is not None:
+                    self.launch_remote_task()
                 else:
-                    self._run_steps()
+                    is_slurm_parent = self.task_conf.get("is_slurm_parent")
+                    if is_slurm_parent is not None and is_slurm_parent:
+                        self.run_array(array_limit)
+                    else:
+                        self._run_steps()
+
                 self.task_logger.info("task completed")
             except Exception as ex:
                 if not exit_process_when_done:
@@ -2621,6 +2658,17 @@ class Cli:
     def _wait(self):
         return self.parsed_args.wait
 
+    def get_ssh_remote_dest_or_none(self, task_conf):
+        ssh_remote_dest = task_conf.get("ssh_remote_dest")
+        if ssh_remote_dest is None:
+            if self.parsed_args.ssh_remote_dest is None:
+                raise Exception(
+                    f"--ssh-remote-dest is required for 'upload-array', OR must be defined with " +
+                    " .task(task_conf=TaskConf(ss_remote_dest=...)"
+                )
+            else:
+                ssh_remote_dest = self.parsed_args.ssh_remote_dest
+
     def invoke(self, test_mode=False):
 
         if self.parsed_args.command == 'submit-array':
@@ -2638,7 +2686,9 @@ class Cli:
 
             tp = TaskProcess(self._complete_control_dir(self.parsed_args.control_dir))
 
-            if tp.task_conf["executer_type"] == "slurm":
+            if self.parsed_args.ssh_remote_dest is not None:
+                tp.task_conf["ssh_specs"] = self.parsed_args.ssh_remote_dest
+            elif tp.task_conf["executer_type"] == "slurm":
                 if self.parsed_args.by_runner:
                     tp.submit_sbatch_task(self._wait())
                     return
@@ -2662,15 +2712,7 @@ class Cli:
                 logger=tp.task_logger
             )
 
-            ssh_remote_dest = array_parent_task.task_conf.get("ssh_remote_dest")
-            if ssh_remote_dest is None:
-                if self.parsed_args.ssh_remote_dest is None:
-                    raise Exception(
-                        f"--ssh-remote-dest is required for 'upload-array', OR must be defined with " +
-                        " .task(task_conf=TaskConf(ss_remote_dest=...)"
-                    )
-                else:
-                    ssh_remote_dest = self.parsed_args.ssh_remote_dest
+            ssh_remote_dest = self.get_ssh_remote_dest_or_none(array_parent_task.task_conf)
 
             array_parent_task.upload_array(ssh_remote_dest)
 
@@ -2776,16 +2818,17 @@ class Cli:
 
         self.upload_array_parser = upload_array_parser
 
-        upload_array_parser.add_argument(
+        self.add_ssh_remote_dest_arg(upload_array_parser)
+        self._add_task_key_parser_arg(upload_array_parser)
+
+    def add_ssh_remote_dest_arg(self, parser):
+        parser.add_argument(
             '--ssh-remote-dest',
             help=textwrap.dedent(
             """
                 example:`me@myhost.example.com:/my-directory`            
             """)
         )
-
-        self._add_task_key_parser_arg(upload_array_parser)
-
 
     def add_array_args(self, run_parser):
         run_parser.add_argument(
@@ -2865,6 +2908,7 @@ class Cli:
         self.__wait_arg(parser)
         parser.add_argument("--by-runner", dest="by_runner", action="store_true")
         parser.set_defaults(by_runner=False)
+        self.add_ssh_remote_dest_arg(parser)
 
     def add_sbatch_args(self, parser):
         self._add_task_key_parser_arg(parser)
