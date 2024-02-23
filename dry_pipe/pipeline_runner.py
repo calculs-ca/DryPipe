@@ -1,7 +1,7 @@
 import time
 from timeit import default_timer as timer
 
-from dry_pipe.core_lib import TaskProcess
+from dry_pipe.task_process import TaskProcess
 from dry_pipe.state_machine import AllRunnableTasksCompletedOrInError
 
 

@@ -5,7 +5,7 @@ from pathlib import Path
 
 from dry_pipe import TaskConf
 from dry_pipe.pipeline import Pipeline
-from dry_pipe.core_lib import TaskProcess
+from dry_pipe.task_process import TaskProcess
 
 
 class TestWithDirectorySandbox(unittest.TestCase):

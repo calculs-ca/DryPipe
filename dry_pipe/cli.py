@@ -6,8 +6,8 @@ import sys
 import textwrap
 from pathlib import Path
 
-from dry_pipe.core_lib import func_from_mod_func, TaskProcess, SlurmArrayParentTask, StateFileTracker, \
-    is_inside_slurm_job
+from dry_pipe.core_lib import func_from_mod_func, StateFileTracker, is_inside_slurm_job
+from dry_pipe.task_process import TaskProcess, SlurmArrayParentTask
 
 
 def call(mod_func):

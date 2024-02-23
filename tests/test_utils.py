@@ -1,8 +1,8 @@
 import inspect
+import json
 import os
 import pathlib
 import shutil
-import yaml
 import logging.config
 from dry_pipe import DryPipe, core_lib
 
@@ -22,8 +22,7 @@ def setup_log_conf(log_file):
 
     with open(log_conf_file) as f:
         print(f"log config: {log_conf_file}")
-        config = yaml.load(f, Loader=yaml.FullLoader)
-        logging.config.dictConfig(config)
+        logging.config.dictConfig(json.loads(log_conf_file))
 
 
 def log_4_debug_daemon_mode():

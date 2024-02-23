@@ -3,7 +3,8 @@ import os.path
 from pathlib import Path
 
 from dry_pipe import TaskBuilder, TaskConf
-from dry_pipe.core_lib import TaskProcess, StateFileTracker
+from dry_pipe.core_lib import StateFileTracker
+from dry_pipe.task_process import TaskProcess
 
 
 # TODO: rename to TaskState

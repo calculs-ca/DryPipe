@@ -8,7 +8,8 @@ from typing import Tuple, List
 
 from base_pipeline_test import BasePipelineTest, TestWithDirectorySandbox
 from dry_pipe import TaskConf
-from dry_pipe.core_lib import SlurmArrayParentTask, StateFileTracker
+from dry_pipe.core_lib import StateFileTracker
+from dry_pipe.task_process import SlurmArrayParentTask
 from mockups import TaskMockup
 from test_state_machine import StateMachineTester
 
