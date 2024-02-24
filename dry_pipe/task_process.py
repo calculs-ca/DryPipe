@@ -16,7 +16,7 @@ from tempfile import NamedTemporaryFile
 from threading import Thread
 from typing import List, Iterator, Tuple
 
-from dry_pipe.core_lib import create_task_logger, TaskInputs, TaskOutputs, TaskInput, UpstreamTasksNotCompleted, \
+from dry_pipe.core_lib import TaskInputs, TaskOutputs, TaskInput, UpstreamTasksNotCompleted, \
     TaskOutput, PortablePopen, func_from_mod_func, StateFileTracker, parse_ssh_remote_dest
 
 #APPTAINER_COMMAND="apptainer"
@@ -98,6 +98,29 @@ def invoke_rsync(command):
                 raise Exception(msg)
             else:
                 raise RetryableRsyncException(msg)
+
+def create_task_logger(task_control_dir, test_mode=False):
+
+    if test_mode or os.environ.get("DRYPIPE_TASK_DEBUG") == "True":
+        logging_level = logging.DEBUG
+    else:
+        logging_level = logging.INFO
+
+    logger = logging.getLogger(f"task-logger-{os.path.basename(task_control_dir)}")
+
+    logger.setLevel(logging_level)
+
+    if len(logger.handlers) == 0:
+        filename = os.path.join(task_control_dir, "drypipe.log")
+        file_handler = logging.FileHandler(filename=filename)
+        file_handler.setLevel(logging_level)
+        file_handler.setFormatter(
+            logging.Formatter("%(asctime)s - %(levelname)s - %(message)s", datefmt='%Y-%m-%d %H:%M:%S%z')
+        )
+        logger.addHandler(file_handler)
+
+    logger.info("log level: %s", logging.getLevelName(logging_level))
+    return logger
 
 class TaskProcess:
 

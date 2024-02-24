@@ -5,35 +5,10 @@ import json
 import os
 import shutil
 import subprocess
-import logging
-import logging.config
 from hashlib import blake2b
 from pathlib import Path
 
 
-
-def create_task_logger(task_control_dir, test_mode=False):
-
-    if test_mode or os.environ.get("DRYPIPE_TASK_DEBUG") == "True":
-        logging_level = logging.DEBUG
-    else:
-        logging_level = logging.INFO
-
-    logger = logging.getLogger(f"task-logger-{os.path.basename(task_control_dir)}")
-
-    logger.setLevel(logging_level)
-
-    if len(logger.handlers) == 0:
-        filename = os.path.join(task_control_dir, "drypipe.log")
-        file_handler = logging.FileHandler(filename=filename)
-        file_handler.setLevel(logging_level)
-        file_handler.setFormatter(
-            logging.Formatter("%(asctime)s - %(levelname)s - %(message)s", datefmt='%Y-%m-%d %H:%M:%S%z')
-        )
-        logger.addHandler(file_handler)
-
-    logger.info("log level: %s", logging.getLevelName(logging_level))
-    return logger
 
 
 def parse_ssh_remote_dest(ssh_remote_dest):
