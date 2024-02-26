@@ -137,21 +137,11 @@ class Task:
             for step_number in range(0, len(self.task_steps))
         ]
 
-        with open(state_file.task_conf_file(), "w") as f:
-
-            task_conf_json = {
-                "digest": hash_code,
-                ** self.task_conf.as_json()
-            }
-
-            if self.is_slurm_parent:
-                task_conf_json["is_slurm_parent"] = True
-
-            task_conf_json["inputs"] = self.inputs.as_json()
-            task_conf_json["outputs"] = self.outputs.as_json()
-            task_conf_json["step_invocations"] = step_invocations
-
-            f.write(json.dumps(task_conf_json, indent=2))
+        self.task_conf.is_slurm_parent = self.is_slurm_parent
+        self.task_conf.inputs = self.inputs.as_json()
+        self.task_conf.outputs = self.outputs.as_json()
+        self.task_conf.step_invocations = step_invocations
+        self.task_conf.save_as_json(control_dir, digest=hash_code)
 
         #shell_script_file = os.path.join(control_dir, "task")
         #with open(shell_script_file, "w") as f:

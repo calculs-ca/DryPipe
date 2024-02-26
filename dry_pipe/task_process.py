@@ -192,8 +192,7 @@ class TaskProcess:
             self.test_mode = test_mode
             self.run_python_calls_in_process = run_python_calls_in_process
             self.as_subprocess = as_subprocess
-            script_location = os.path.abspath(self.control_dir)
-            self.task_conf = TaskConf.from_json_file(os.path.join(script_location, "task-conf.json"))
+            self.task_conf = TaskConf.from_json_file(self.control_dir)
             self.env = {}
             task_inputs, task_outputs = self._unserialize_and_resolve_inputs_outputs(ensure_all_upstream_deps_complete)
 

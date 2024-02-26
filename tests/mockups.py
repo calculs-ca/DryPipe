@@ -32,11 +32,10 @@ class TaskMockup:
             }
             for k in self.upstream_dep_keys()
         ]
-        with open(os.path.join(task_control_dir, "task-conf.json"), "w") as tc_file:
-            tc = TaskConf.default()
-            tc.hash_code = hash_code
-            tc.inputs = inputs
-            tc_file.write(json.dumps(tc.as_json()))
+        tc = TaskConf.default()
+        tc.hash_code = hash_code
+        tc.inputs = inputs
+        tc.save_as_json(task_control_dir, "")
 
 
 class StateFileTrackerMockup:

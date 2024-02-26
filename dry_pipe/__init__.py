@@ -433,7 +433,7 @@ class TaskConf:
         self.label = label
         self.work_on_local_file_copies = work_on_local_file_copies
         self.is_slurm_parent = False
-        self.hash_code = None
+        #self.hash_code = None
         self.inputs = []
         self.outputs = []
 
@@ -480,20 +480,22 @@ class TaskConf:
     def full_remote_path(self, pipeline_instance):
         return f"{self.remote_site_key}/{pipeline_instance.instance_dir_base_name()}"
 
-    def as_json(self):
-        return dict(
-            (key, value)
-            for key, value in self.__dict__.items() if not callable(value) and not key.startswith('__')
-        )
+    def save_as_json(self, control_dir, digest):
+        def as_json():
+            return dict(
+                (key, value)
+                for key, value in self.__dict__.items() if not callable(value) and not key.startswith('__')
+            )
+
+        with open(os.path.join(control_dir, "task-conf.json"), "w") as tc_file:
+            d = as_json()
+            d["digest"] = digest
+            tc_file.write(json.dumps(d, indent=2))
 
     @staticmethod
-    def from_json(json_dict):
-        return TaskConf(fields_from_json=json_dict)
-
-    @staticmethod
-    def from_json_file(json_file):
-        with open(json_file) as f:
-            return TaskConf.from_json(json.loads(f.read()))
+    def from_json_file(control_dir):
+        with open(os.path.join(control_dir, "task-conf.json")) as f:
+            return TaskConf(fields_from_json=json.loads(f.read()))
 
     def is_remote(self):
         return self.ssh_specs is not None
