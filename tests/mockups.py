@@ -2,6 +2,7 @@ import json
 import os
 from pathlib import Path
 
+from dry_pipe import TaskConf
 from dry_pipe.core_lib import StateFile
 
 
@@ -31,11 +32,11 @@ class TaskMockup:
             }
             for k in self.upstream_dep_keys()
         ]
-        with open(os.path.join(task_control_dir, "task-conf.json"), "w") as tc:
-            tc.write(json.dumps({
-                "hash_code": hash_code,
-                "inputs": inputs
-            }))
+        with open(os.path.join(task_control_dir, "task-conf.json"), "w") as tc_file:
+            tc = TaskConf.default()
+            tc.hash_code = hash_code
+            tc.inputs = inputs
+            tc_file.write(json.dumps(tc.as_json()))
 
 
 class StateFileTrackerMockup:

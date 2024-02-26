@@ -294,7 +294,7 @@ class SlurmArrayNormalScenario1(BaseSlurmArrayScenarioWithSlurmMockup):
         return "parent_task", ["t1", "t2", "t3", "t4"]
 
     def get_task_conf(self):
-        return TaskConf.default().as_json()
+        return TaskConf.default()
 
     def test(self):
 
@@ -408,7 +408,7 @@ class SlurmArrayCrashScenario(BaseSlurmArrayScenarioWithSlurmMockup):
         return "parent_task", ["t1", "t2"]
 
     def get_task_conf(self):
-        return TaskConf.default().as_json()
+        return TaskConf.default()
 
     def test(self):
 

@@ -16,6 +16,7 @@ from tempfile import NamedTemporaryFile
 from threading import Thread
 from typing import List, Iterator, Tuple
 
+from dry_pipe import TaskConf
 from dry_pipe.core_lib import (UpstreamTasksNotCompleted,
                                PortablePopen, func_from_mod_func, StateFileTracker, parse_ssh_remote_dest)
 
@@ -192,25 +193,22 @@ class TaskProcess:
             self.run_python_calls_in_process = run_python_calls_in_process
             self.as_subprocess = as_subprocess
             script_location = os.path.abspath(self.control_dir)
-            with open(os.path.join(script_location, "task-conf.json")) as _task_conf:
+            self.task_conf = TaskConf.from_json_file(os.path.join(script_location, "task-conf.json"))
+            self.env = {}
+            task_inputs, task_outputs = self._unserialize_and_resolve_inputs_outputs(ensure_all_upstream_deps_complete)
 
-                self.task_conf = json.loads(_task_conf.read())
-                self.env = {}
+            self.inputs = TaskInputs(self.task_key, task_inputs)
+            self.outputs = TaskOutputs(self.task_key, task_outputs)
 
-                task_inputs, task_outputs = self._unserialize_and_resolve_inputs_outputs(ensure_all_upstream_deps_complete)
+            for k, v in self.iterate_task_env(False):
+                v = str(v)
+                self.task_logger.debug("env var %s = %s", k, v)
+                self.env[k] = v
 
-                self.inputs = TaskInputs(self.task_key, task_inputs)
-                self.outputs = TaskOutputs(self.task_key, task_outputs)
+            command_before_task = self.task_conf.command_before_task
 
-                for k, v in self.iterate_task_env(False):
-                    v = str(v)
-                    self.task_logger.debug("env var %s = %s", k, v)
-                    self.env[k] = v
-
-                command_before_task = self.task_conf.get("command_before_task")
-
-                if command_before_task is not None:
-                    self.exec_cmd_before_launch(command_before_task)
+            if command_before_task is not None:
+                self.exec_cmd_before_launch(command_before_task)
         except Exception as ex:
             if not no_logger:
                 self.task_logger.exception(ex)
@@ -338,7 +336,7 @@ class TaskProcess:
 
         def resolve_upstream_and_constant_vars():
 
-            for i in self.task_conf["inputs"]:
+            for i in self.task_conf.inputs:
                 i = TaskInput.from_json(i)
                 if self.task_logger.level == logging.DEBUG:
                     self.task_logger.debug("%s", i.as_string())
@@ -385,7 +383,7 @@ class TaskProcess:
                 task_input.resolved_value = v
 
         task_outputs = {}
-        to = self.task_conf.get("outputs")
+        to = self.task_conf.outputs
         if to is not None:
             unparsed_out_vars = dict(self.iterate_out_vars_from(var_file))
             for o in to:
@@ -476,12 +474,12 @@ class TaskProcess:
         # stderr defaults to stdout, by default
         yield "__err_log", os.path.join(self.control_dir, "out.log")
 
-        if self.task_conf.get("ssh_specs") is not None:
+        if self.task_conf.ssh_specs is not None:
             yield "__is_remote", "True"
         else:
             yield "__is_remote", "False"
 
-        container = self.task_conf.get("container")
+        container = self.task_conf.container
         if container is not None and container != "":
             yield "__is_singularity", "True"
         else:
@@ -489,7 +487,7 @@ class TaskProcess:
 
         self.task_logger.debug("extra_env vars from task-conf.json")
 
-        extra_env = self.task_conf.get("extra_env")
+        extra_env = self.task_conf.extra_env
         if extra_env is not None:
             for k, v in extra_env.items():
                 yield k, os.path.expandvars(v)
@@ -513,7 +511,7 @@ class TaskProcess:
 
         switches = "-u"
         cmd = [
-            self.task_conf["python_bin"],
+            self.task_conf.python_bin,
             switches,
             "-m",
             "dry_pipe.cli",
@@ -856,7 +854,7 @@ class TaskProcess:
 
 
     def _is_work_on_local_copy(self):
-        work_on_local_copy = self.task_conf.get("work_on_local_file_copies")
+        work_on_local_copy = self.task_conf.work_on_local_file_copies
         return work_on_local_copy is not None and work_on_local_copy
 
     def _local_inputs_root(self):
@@ -917,7 +915,7 @@ class TaskProcess:
     def _run_steps(self):
 
         step_number, control_dir, state_file, state_name = self.read_task_state()
-        step_invocations = self.task_conf["step_invocations"]
+        step_invocations = self.task_conf.step_invocations
 
         if self._is_work_on_local_copy():
             self._create_local_scratch_and_rsync_inputs()
@@ -971,7 +969,7 @@ class TaskProcess:
 
     def _sbatch_cmd_lines(self, wait_for_completion=False):
 
-        if self.task_conf["executer_type"] != "slurm":
+        if self.task_conf.executer_type != "slurm":
             raise Exception(f"not a slurm task")
 
         yield "sbatch"
@@ -979,7 +977,7 @@ class TaskProcess:
         if wait_for_completion:
             yield "--wait"
 
-        sacc = self.task_conf.get('slurm_account')
+        sacc = self.task_conf.slurm_account
         if sacc is not None:
             yield f"--account={sacc}"
 
@@ -1041,17 +1039,17 @@ class TaskProcess:
             p.wait_and_raise_if_non_zero()
 
     def launch_remote_task(self):
-        user_at_host, remote_base_dire, ssh_key_file = parse_ssh_remote_dest(self.task_conf["ssh_specs"])
+        user_at_host, remote_base_dire, ssh_key_file = parse_ssh_remote_dest(self.task_conf.ssh_specs)
 
     def launch_task(self, wait_for_completion, exit_process_when_done=True, array_limit=None):
 
         def task_func_wrapper():
             try:
                 self.task_logger.debug("task func started")
-                if self.task_conf["ssh_specs"] is not None:
+                if self.task_conf.ssh_specs is not None:
                     self.launch_remote_task()
                 else:
-                    is_slurm_parent = self.task_conf.get("is_slurm_parent")
+                    is_slurm_parent = self.task_conf.is_slurm_parent
                     if is_slurm_parent is not None and is_slurm_parent:
                         self.run_array(array_limit)
                     else:
@@ -1168,7 +1166,7 @@ class SlurmArrayParentTask:
         def sbatch_lines():
             yield "sbatch"
             yield f"--array={array_arg}"
-            a = self.task_conf.get('slurm_account')
+            a = self.task_conf.slurm_account
             if a is not None:
                 yield f"--account={a}"
 

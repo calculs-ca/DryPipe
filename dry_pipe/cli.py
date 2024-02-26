@@ -133,8 +133,8 @@ class Cli:
             tp = TaskProcess(self._complete_control_dir(self.parsed_args.control_dir))
 
             if self.parsed_args.ssh_remote_dest is not None:
-                tp.task_conf["ssh_specs"] = self.parsed_args.ssh_remote_dest
-            elif tp.task_conf["executer_type"] == "slurm":
+                tp.task_conf.ssh_specs = self.parsed_args.ssh_remote_dest
+            elif tp.task_conf.executer_type == "slurm":
                 if self.parsed_args.by_runner:
                     tp.submit_sbatch_task(self._wait())
                     return

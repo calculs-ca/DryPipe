@@ -432,6 +432,10 @@ class TaskConf:
         self.extra_env = extra_env
         self.label = label
         self.work_on_local_file_copies = work_on_local_file_copies
+        self.is_slurm_parent = False
+        self.hash_code = None
+        self.inputs = []
+        self.outputs = []
 
         if extra_env is not None:
             if not isinstance(extra_env, dict):
