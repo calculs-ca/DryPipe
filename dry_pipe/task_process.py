@@ -16,8 +16,10 @@ from tempfile import NamedTemporaryFile
 from threading import Thread
 from typing import List, Iterator, Tuple
 
-from dry_pipe.core_lib import TaskInputs, TaskOutputs, TaskInput, UpstreamTasksNotCompleted, \
-    TaskOutput, PortablePopen, func_from_mod_func, StateFileTracker, parse_ssh_remote_dest
+from dry_pipe.core_lib import (UpstreamTasksNotCompleted,
+                               PortablePopen, func_from_mod_func, StateFileTracker, parse_ssh_remote_dest)
+
+from dry_pipe.task import TaskOutput, TaskInputs, TaskOutputs, TaskInput
 
 #APPTAINER_COMMAND="apptainer"
 APPTAINER_COMMAND="singularity"
@@ -124,29 +126,16 @@ def create_task_logger(task_control_dir, test_mode=False):
 
 class TaskProcess:
 
-    @staticmethod
-    def run(
-        control_dir, as_subprocess=True, wait_for_completion=False,
-        run_python_calls_in_process=False,
-        array_limit=None,
-        by_pipeline_runner=False,
-        test_mode=False
-    ):
+    def run(self, wait_for_completion=False, array_limit=None, by_pipeline_runner=False):
 
-        if not as_subprocess:
-            TaskProcess(
-                control_dir,
-                run_python_calls_in_process,
-                as_subprocess=as_subprocess,
-                test_mode=test_mode
-            ).launch_task(wait_for_completion, exit_process_when_done=False, array_limit=array_limit)
+        if not self.as_subprocess:
+            self.launch_task(wait_for_completion, exit_process_when_done=False, array_limit=array_limit)
         else:
-            pipeline_work_dir = os.path.dirname(control_dir)
-            pipeline_cli = os.path.join(pipeline_work_dir, "cli")
+            pipeline_cli = os.path.join(self.pipeline_work_dir, "cli")
             if wait_for_completion:
-                cmd = [pipeline_cli, "task", control_dir, "--wait"]
+                cmd = [pipeline_cli, "task", self.control_dir, "--wait"]
             else:
-                cmd = [pipeline_cli, "task", control_dir]
+                cmd = [pipeline_cli, "task", self.control_dir]
 
             if by_pipeline_runner:
                 cmd.append("--by-runner")
@@ -158,7 +147,7 @@ class TaskProcess:
             ) as p:
                 p.wait()
                 if p.popen.returncode != 0:
-                    create_task_logger(control_dir).warning(
+                    self.task_logger.warning(
                         "task ended with non zero code: %s, %s",
                         p.popen.returncode,
                         p.safe_stderr_as_string()
@@ -944,7 +933,9 @@ class TaskProcess:
                 if not self.run_python_calls_in_process:
                     self.run_python(step_invocation["module_function"], step_invocation.get("container"))
                 else:
-                    self._run_python_calls_in_process(step_invocation["module_function"])
+                    module_function = step_invocation["module_function"]
+                    python_task = func_from_mod_func(module_function)
+                    self.call_python(module_function, python_task)
             elif call == "bash":
                 self.run_script(os.path.expandvars(step_invocation["script"]),
                            step_invocation.get("container"))
@@ -957,10 +948,6 @@ class TaskProcess:
             self._rsync_outputs_from_scratch()
 
         self.transition_to_completed(state_file)
-
-    def _run_python_calls_in_process(self, module_function):
-        python_task = func_from_mod_func(module_function)
-        self.call_python(module_function, python_task)
 
     def run_array(self, limit, test_mode=False):
 
@@ -1524,9 +1511,8 @@ class SlurmArrayParentTask:
                         yield line
 
         for task_key in gen_task_keys_to_launch():
-            TaskProcess.run(
-                os.path.join(self.tracker.pipeline_work_dir, task_key),
-                as_subprocess=True,
+            tp = TaskProcess(os.path.join(self.tracker.pipeline_work_dir, task_key), as_subprocess=True)
+            tp.run(
                 wait_for_completion=True
             )
 

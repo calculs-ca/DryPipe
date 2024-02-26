@@ -26,9 +26,8 @@ class PipelineRunner:
             while True:
                 c = 0
                 for state_file in self.state_machine.iterate_tasks_to_launch():
-                    yield lambda: TaskProcess.run(
-                        state_file.control_dir(),
-                        as_subprocess=not self.run_tasks_in_process,
+                    tp = TaskProcess(state_file.control_dir(), as_subprocess=not self.run_tasks_in_process)
+                    yield lambda: tp.run(
                         wait_for_completion=not self.run_tasks_async,
                         by_pipeline_runner=True
                     ), None

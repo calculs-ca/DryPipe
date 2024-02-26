@@ -1,10 +1,11 @@
+import glob
 import json
 import os
 import pathlib
 from hashlib import blake2b
 
 
-from dry_pipe.core_lib import FileCreationDefaultModes, TaskInputs, TaskOutputs
+from dry_pipe.core_lib import FileCreationDefaultModes
 
 
 class Task:
@@ -218,3 +219,353 @@ class TaskStep:
             call["container"] = container
 
         return call
+
+
+class TaskInput:
+
+    @staticmethod
+    def from_json(json_string):
+        j = json_string
+        return TaskInput(
+            j["name"],
+            j["type"],
+            upstream_task_key=j.get("upstream_task_key"),
+            name_in_upstream_task=j.get("name_in_upstream_task"),
+            file_name=j.get("file_name"),
+            value=j.get("value")
+        )
+
+    def _dict(self):
+        return {
+            "upstream_task_key": self.upstream_task_key,
+            "name_in_upstream_task": self.name_in_upstream_task,
+            "file_name": self.file_name,
+            "value": self.value
+        }
+
+    def as_string(self):
+
+        def f(p):
+            return f"TaskInput({self.name},{self.type},{p})"
+
+        return f(
+            ",".join([
+                f"{k}={v}" for k, v in self._dict().items()
+            ])
+        )
+
+
+    def __init__(self, name, type, upstream_task_key=None, name_in_upstream_task=None, file_name=None, value=None):
+
+        if type not in ['file', 'str', 'int', 'float', 'task-list']:
+            raise Exception(f"invalid type {type}")
+
+        if type != 'file' and file_name is not None:
+            raise Exception(f"inputs of type '{type}' can't have file_name: {file_name}")
+
+        if value is not None:
+            if name_in_upstream_task is not None or upstream_task_key is not None:
+                raise Exception(f"invalid constant {name}")
+
+        self.name = name
+        self.type = type
+        self.name_in_upstream_task = name_in_upstream_task
+        self.upstream_task_key = upstream_task_key
+        self.value = value
+
+        self.file_name = file_name
+        self._cached_task_list_hash_codes = None
+        self.resolved_value = None
+
+    def _digest_if_task_list(self):
+        if self._cached_task_list_hash_codes is None:
+            d = blake2b(digest_size=20)
+            for t in self.value:
+                d.update(t.key.encode("utf8"))
+
+            self._cached_task_list_hash_codes = d.hexdigest()
+
+        return self._cached_task_list_hash_codes
+
+    def hash_values(self):
+        yield self.name
+        yield self.type
+        if self.type == 'task-list':
+            yield self._digest_if_task_list()
+        else:
+            if self.name_in_upstream_task is not None:
+                yield self.name_in_upstream_task
+            if self.upstream_task_key is not None:
+                yield str(self.upstream_task_key)
+            if self.value is not None:
+                yield str(self.value)
+            if self.file_name is not None:
+                yield str(self.file_name)
+
+
+    def parse(self, v):
+        if self.type == "int":
+            return int(v)
+        elif self.type == "float":
+            return float(v)
+        elif self.type == "glob_expression":
+            class GlobExpression:
+                def __call__(self, *args, **kwargs):
+                    return glob.glob(os.path.expandvars(v))
+
+                def __str__(self):
+                    return os.path.expandvars(v)
+            return GlobExpression()
+        else:
+            return v
+
+    def is_file(self):
+        return self.type == 'file'
+
+    def is_upstream_output(self):
+        return self.upstream_task_key is not None
+
+    def is_upstream_var_output(self):
+        return self.upstream_task_key is not None and self.type in ['str', 'int', 'float']
+
+    def is_constant(self):
+        return self.value is not None
+
+    def _ref(self):
+        return f"{self.upstream_task_key}/{self.name_in_upstream_task}"
+
+    def as_json(self):
+
+        d = self._dict().copy()
+        d["name"] = self.name
+        d["type"] = self.type
+
+        if self.type == 'task-list':
+            d["value"] = self._digest_if_task_list()
+
+        return d
+
+    def __int__(self):
+
+        if self.type == "float":
+            return int(self.resolved_value)
+
+        if self.type != "int":
+            raise Exception(f"Task input {self.name} is not of type int, actual type is: {self.type} ")
+
+        return self.resolved_value
+
+    def __float__(self):
+
+        if self.type == "int":
+            return float(self.resolved_value)
+
+        if self.type != "float":
+            raise Exception(f"Task input {self.name} is not of type float, actual type is: {self.type} ")
+
+        return self.resolved_value
+
+    def __str__(self):
+        return str(self.resolved_value)
+
+
+
+class TaskOutput:
+
+    @staticmethod
+    def from_json(json_dict):
+        j = json_dict
+        return TaskOutput(j["name"], j["type"], j.get("produced_file_name"))
+
+
+    def as_string(self):
+        p = "" if self.produced_file_name is None else f",{self.produced_file_name}"
+        return f"TaskOutput({self.name},{self.type}{p})"
+
+    def __init__(self, name, type, produced_file_name=None, task_key=None):
+        if type not in ['file', 'str', 'int', 'float']:
+            raise Exception(f"invalid type {type}")
+
+        if type != 'file' and produced_file_name is not None:
+            raise Exception(f"non file output can't have not None produced_file_name: {produced_file_name}")
+
+        self.name = name
+        self.type = type
+        self.produced_file_name = produced_file_name
+        self._resolved_value = None
+        self.task_key = task_key
+
+    def hash_values(self):
+        yield self.name
+        yield self.type
+        if self.produced_file_name is not None:
+            yield self.produced_file_name
+        if self._resolved_value is not None:
+            yield str(self._resolved_value)
+
+    def set_resolved_value(self, v):
+        self._resolved_value = self.parse(v)
+
+    def is_file(self):
+        return self.produced_file_name is not None
+
+    def as_json(self):
+        r = {
+            "name": self.name,
+            "type": self.type
+        }
+
+        if self.produced_file_name is not None:
+            r["produced_file_name"] = self.produced_file_name
+
+        return r
+
+    def parse(self, v):
+        if v == "null":
+            return None
+        elif self.type == "int":
+            return int(v)
+        elif self.type == "float":
+            return float(v)
+
+        return v
+
+    def ensure_valid_and_prescribed_type(self, v):
+
+        def expected_x_got_v(x, v):
+            return f"expected {x} got {v}"
+
+        if self.type == 'str':
+            if not isinstance(v, str):
+                return expected_x_got_v('str', v)
+        elif self.type == 'int':
+            if not isinstance(v, int):
+                return expected_x_got_v('int', v)
+        elif self.type == 'float':
+            if not isinstance(v, float):
+                return expected_x_got_v('float', v)
+
+    def __int__(self):
+
+        if self.type == "float":
+            return int(self._resolved_value)
+
+        if self.type != "int":
+            raise Exception(f"Task output {self.name} is not of type int, actual type is: {self.type} ")
+
+        return self._resolved_value
+
+    def __float__(self):
+
+        if self.type == "int":
+            return float(self._resolved_value)
+
+        if self.type != "float":
+            raise Exception(f"Task output {self.name} is not of type float, actual type is: {self.type} ")
+
+        return self._resolved_value
+
+    def __str__(self):
+        return str(self._resolved_value)
+
+    def __fspath__(self):
+
+        if self.type != "file":
+            raise Exception(f"Task output {self.name} is not of type file, actual type is: {self.type} ")
+
+        return self._resolved_value
+
+class TaskInputs:
+
+    def __init__(self, task_key, task_inputs):
+        self.task_key = task_key
+        self._task_inputs = task_inputs
+
+    def __iter__(self):
+        yield from self._task_inputs.values()
+
+    def as_json(self):
+        return [
+            o.as_json()
+            for o in  self._task_inputs.values()
+        ]
+
+    def hash_values(self):
+        for i in self._task_inputs.values():
+            yield from i.hash_values()
+
+    def __getattr__(self, name):
+
+        p = self._task_inputs.get(name)
+
+        if p is None:
+            raise Exception(
+                f"task {self.task_key} does not declare input '{name}' in it's consumes() clause.\n" +
+                f"Use task({self.task_key}).consumes({name}=...) to specify input"
+            )
+
+        return p
+
+    def rsync_file_list_produced_upstream(self):
+        for i in self._task_inputs.values():
+            if i.is_upstream_output() and i.type == 'file':
+                yield i.name, f"output/{i.upstream_task_key}/{i.name_in_upstream_task}"
+
+    def rsync_output_var_file_list_produced_upstream(self):
+
+        upstream_output_var_deps = {
+            i.upstream_task_key
+            for i in self._task_inputs.values()
+            if i.is_upstream_var_output()
+        }
+
+        for task_key in upstream_output_var_deps:
+            yield f".drypipe/{task_key}/output_vars"
+
+    def rsync_external_file_list(self):
+        for i in self._task_inputs.values():
+            if not i.is_upstream_output() and i.is_file():
+                yield i.name, i.file_name
+
+class TaskOutputs:
+
+    def __init__(self, task_key, task_outputs):
+        self.task_key = task_key
+        self._task_outputs = task_outputs
+
+    def hash_values(self):
+        for o in self._task_outputs.values():
+            yield from o.hash_values()
+
+    def as_json(self):
+        return [
+            o.as_json()
+            for o in  self._task_outputs.values()
+        ]
+
+    def __getattr__(self, name):
+
+        p = self._task_outputs.get(name)
+
+        if p is None:
+            raise Exception(
+                f"task {self.task_key} does not declare output '{name}' in it's outputs() clause.\n" +
+                f"Use task({self.task_key}).outputs({name}=...) to specify outputs"
+            )
+
+        return p
+
+    def iterate_non_file_outputs(self):
+        for o in self._task_outputs.values():
+            if not o.is_file():
+                yield o
+
+    def rsync_file_list(self):
+        for o in self._task_outputs:
+            if o.is_file():
+                yield o.name, f"output/{self.task_key}/{o.produced_file_name}"
+
+    def iterate_file_task_outputs(self, task_output_dir):
+        for o in self._task_outputs.values():
+            if o.is_file():
+                yield o, o.name, os.path.join(task_output_dir, o.produced_file_name)

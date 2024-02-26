@@ -13,7 +13,7 @@ setup(
     name='dry_pipe',
     version='0.8.0',
     packages=['dry_pipe'],
-    install_requires=minimal_requirements,
+    #install_requires=minimal_requirements,
     include_package_data=True,
     entry_points='''
         [console_scripts]

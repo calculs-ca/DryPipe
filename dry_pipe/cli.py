@@ -116,11 +116,13 @@ class Cli:
     def invoke(self, test_mode=False):
 
         if self.parsed_args.command == 'submit-array':
-            TaskProcess.run(
+            tp = TaskProcess(
                 os.path.join(self.parsed_args.pipeline_instance_dir, ".drypipe", self.parsed_args.task_key),
                 as_subprocess=not test_mode,
-                array_limit=self.parsed_args.limit,
                 test_mode=test_mode
+            )
+            tp.run(
+                array_limit=self.parsed_args.limit
             )
         elif self.parsed_args.command == 'run':
             pipeline = func_from_mod_func(self.parsed_args.generator)()

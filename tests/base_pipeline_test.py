@@ -37,7 +37,8 @@ class BasePipelineTest(TestWithDirectorySandbox):
 
         self.assertFalse(state_file.is_completed())
         env_copy = os.environ.copy()
-        TaskProcess.run(state_file.control_dir(), as_subprocess=False, wait_for_completion=True)
+        tp = TaskProcess(state_file.control_dir(), as_subprocess=False)
+        tp.run(wait_for_completion=True)
         self.assertEqual(os.environ, env_copy)
 
 

@@ -7,9 +7,9 @@ import sys
 import textwrap
 from pathlib import Path
 
-from dry_pipe.core_lib import PortablePopen, parse_ssh_specs, TaskInput, TaskOutput
+from dry_pipe.core_lib import PortablePopen, parse_ssh_specs
 
-from dry_pipe.task import Task, TaskStep
+from dry_pipe.task import Task, TaskStep, TaskInput, TaskOutput
 
 
 class DryPipe:
