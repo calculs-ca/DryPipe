@@ -489,7 +489,10 @@ class TaskConf:
 
         with open(os.path.join(control_dir, "task-conf.json"), "w") as tc_file:
             d = as_json()
-            d["digest"] = digest
+            d = {
+                "digest": digest,
+                **d
+            }
             tc_file.write(json.dumps(d, indent=2))
 
     @staticmethod
