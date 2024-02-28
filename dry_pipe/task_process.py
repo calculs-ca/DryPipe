@@ -30,77 +30,6 @@ class RetryableRsyncException(Exception):
     def __init__(self, message):
         super().__init__(message)
 
-def _root_dir(d):
-    p = Path(d)
-    return os.path.join(p.parts[0], p.parts[1])
-
-
-def _fs_type(file):
-
-    stat_cmd = f"stat -f -L -c %T {file}"
-    with PortablePopen(stat_cmd.split()) as p:
-        p.wait_and_raise_if_non_zero()
-        return p.stdout_as_string().strip()
-
-
-def _rsync_error_codes(code):
-    """
-    Error codes as documented here: https://download.samba.org/pub/rsync/rsync.1
-    :param code rsync error code:
-    :return (is_retryable, message):
-    """
-    if code == 1:
-        return False, 'Syntax or usage error'
-    elif code == 2:
-        return False, 'Protocol incompatibility'
-    elif code == 3:
-        return True, 'Errors selecting input/output'
-    elif code == 4:
-        return False, 'Requested action not supported'
-    elif code == 5:
-        return True, 'Error starting client-serve'
-    elif code == 6:
-        return True, 'Daemon unable to append to log-file'
-    elif code == 10:
-        return True, 'Error in socket I/O'
-    elif code == 11:
-        return True, 'Error in file I/O'
-    elif code == 12:
-        return True, 'Error in rsync protocol data stream'
-    elif code == 13:
-        return True, 'Errors with program diagnostics'
-    elif code == 14:
-        return True, 'Error in IPC code'
-    elif code == 20:
-        return True, 'Received SIGUSR1 or SIGINT'
-    elif code == 21:
-        return True, 'Some error returned by waitpid()'
-    elif code == 22:
-        return True, 'Error allocating core memory'
-    elif code == 23:
-        return True, 'Partial transfer due to error'
-    elif code == 24:
-        return True, 'Partial transfer due to vanished source file'
-    elif code == 25:
-        return True, 'The --max-delete limit stopped deletions'
-    elif code == 30:
-        return True, 'Timeout in data send/received'
-    elif code == 35:
-        return True, 'Timeout waiting for daemon'
-    else:
-        return False, f'unknown error: {code}'
-
-def invoke_rsync(command):
-    with PortablePopen(command, shell=True) as p:
-        p.popen.wait()
-        if p.popen.returncode != 0:
-            is_retryable, rsync_message = _rsync_error_codes(p.popen.returncode)
-            msg = f"rsync failed: {rsync_message}, \n'{command}' \n{p.safe_stderr_as_string()}"
-            if not is_retryable:
-                raise Exception(msg)
-            else:
-                raise RetryableRsyncException(msg)
-
 class TaskProcess:
 
     def __init__(
@@ -761,6 +690,17 @@ class TaskProcess:
 
     def run_script(self, script, container=None):
 
+        def _root_dir(d):
+            p = Path(d)
+            return os.path.join(p.parts[0], p.parts[1])
+
+        def _fs_type(file):
+
+            stat_cmd = f"stat -f -L -c %T {file}"
+            with PortablePopen(stat_cmd.split()) as p:
+                p.wait_and_raise_if_non_zero()
+                return p.stdout_as_string().strip()
+
         env = {
             ** self.env,
             ** self._local_copy_adjusted_file_env_vars()
@@ -888,6 +828,64 @@ class TaskProcess:
         for file in self.inputs.rsync_output_var_file_list_produced_upstream():
             yield file
 
+    def invoke_rsync(self, command):
+        def _rsync_error_codes(code):
+            """
+            Error codes as documented here: https://download.samba.org/pub/rsync/rsync.1
+            :param code rsync error code:
+            :return (is_retryable, message):
+            """
+            if code == 1:
+                return False, 'Syntax or usage error'
+            elif code == 2:
+                return False, 'Protocol incompatibility'
+            elif code == 3:
+                return True, 'Errors selecting input/output'
+            elif code == 4:
+                return False, 'Requested action not supported'
+            elif code == 5:
+                return True, 'Error starting client-serve'
+            elif code == 6:
+                return True, 'Daemon unable to append to log-file'
+            elif code == 10:
+                return True, 'Error in socket I/O'
+            elif code == 11:
+                return True, 'Error in file I/O'
+            elif code == 12:
+                return True, 'Error in rsync protocol data stream'
+            elif code == 13:
+                return True, 'Errors with program diagnostics'
+            elif code == 14:
+                return True, 'Error in IPC code'
+            elif code == 20:
+                return True, 'Received SIGUSR1 or SIGINT'
+            elif code == 21:
+                return True, 'Some error returned by waitpid()'
+            elif code == 22:
+                return True, 'Error allocating core memory'
+            elif code == 23:
+                return True, 'Partial transfer due to error'
+            elif code == 24:
+                return True, 'Partial transfer due to vanished source file'
+            elif code == 25:
+                return True, 'The --max-delete limit stopped deletions'
+            elif code == 30:
+                return True, 'Timeout in data send/received'
+            elif code == 35:
+                return True, 'Timeout waiting for daemon'
+            else:
+                return False, f'unknown error: {code}'
+
+        with PortablePopen(command, shell=True) as p:
+            p.popen.wait()
+            if p.popen.returncode != 0:
+                is_retryable, rsync_message = _rsync_error_codes(p.popen.returncode)
+                msg = f"rsync failed: {rsync_message}, \n'{command}' \n{p.safe_stderr_as_string()}"
+                if not is_retryable:
+                    raise Exception(msg)
+                else:
+                    raise RetryableRsyncException(msg)
+
     def _create_local_scratch_and_rsync_inputs(self):
 
         Path(self._local_inputs_root()).mkdir(exist_ok=True)
@@ -901,10 +899,10 @@ class TaskProcess:
 
             pid = self.pipeline_instance_dir
 
-            invoke_rsync(f"rsync --files-from={tf.name} {pid}/ {self._local_inputs_root()}")
+            self.invoke_rsync(f"rsync --files-from={tf.name} {pid}/ {self._local_inputs_root()}")
 
     def _rsync_outputs_from_scratch(self):
-        invoke_rsync(
+        self.invoke_rsync(
             f"rsync -a --dirs {self._local_outputs_root()}/ {self.pipeline_output_dir}/{self.task_key}"
         )
 
@@ -1617,4 +1615,4 @@ class SlurmArrayParentTask:
 
         rsync_cmd = f"rsync --mkpath -a --dirs --files-from={dep_file_txt} {dn}/ {ssh_remote_dest}"
         self.task_process.task_logger.debug("%s", rsync_cmd)
-        invoke_rsync(rsync_cmd)
+        self.task_process.invoke_rsync(rsync_cmd)
