@@ -236,8 +236,6 @@ class CliTestsPipelineWithSlurmArray(PipelineWithSlurmArray):
             f'--ssh-remote-dest={ssh_dest}'
         ]).invoke(test_mode=True)
 
-        #remote_pid = f"{remote_base_dir}/{os.path.basename(pid)}"
-        
         Cli([
             '--pipeline-instance-dir', pid,
             'task',

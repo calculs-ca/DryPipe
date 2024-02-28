@@ -324,23 +324,21 @@ class StateFileTracker:
             return state_file, state_file
 
     def _load_task_conf(self, task_control_dir):
-        with open(os.path.join(task_control_dir, "task-conf.json")) as tc:
-            return json.loads(tc.read())
+        from dry_pipe import TaskConf
+        return TaskConf.from_json_file(task_control_dir)
 
     def load_from_existing_file_on_disc_and_resave_if_required(self, task, state_file_path):
 
         task_control_dir = os.path.dirname(state_file_path)
         task_key = os.path.basename(task_control_dir)
-        pipeline_work_dir = os.path.dirname(task_control_dir)
         assert task.key == task_key
-        task_conf = self._load_task_conf(task_control_dir)
         current_hash_code = task.compute_hash_code()
         state_file = StateFile(task_key, current_hash_code, self, path=state_file_path)
         if state_file.is_completed():
             pass
-            #load inputs and outputs
         else:
-            if task_conf["hash_code"] != state_file.hash_code:
+            task_conf = self._load_task_conf(task_control_dir)
+            if task_conf.digest != state_file.hash_code:
                 task.save(state_file, current_hash_code)
                 state_file.hash_code = current_hash_code
                 self.resave_count += 1
@@ -414,7 +412,7 @@ class StateFileTracker:
                 yield True, state_file, None
             else:
                 upstream_task_keys = set()
-                for i in task_conf["inputs"]:
+                for i in task_conf.inputs:
                     k = i.get("upstream_task_key")
                     if k is not None:
                         upstream_task_keys.add(k)

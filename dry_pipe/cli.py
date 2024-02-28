@@ -116,12 +116,12 @@ class Cli:
     def invoke(self, test_mode=False):
 
         if self.parsed_args.command == 'submit-array':
-            tp = TaskProcess(
+            task_process = TaskProcess(
                 os.path.join(self.parsed_args.pipeline_instance_dir, ".drypipe", self.parsed_args.task_key),
                 as_subprocess=not test_mode,
                 test_mode=test_mode
             )
-            tp.run(
+            task_process.run(
                 array_limit=self.parsed_args.limit
             )
         elif self.parsed_args.command == 'run':
@@ -130,36 +130,31 @@ class Cli:
             pipeline_instance.run_sync(until_patterns=self.parsed_args.until)
         elif self.parsed_args.command == 'task':
 
-            tp = TaskProcess(self._complete_control_dir(self.parsed_args.control_dir))
+            task_process = TaskProcess(self._complete_control_dir(self.parsed_args.control_dir))
 
             if self.parsed_args.ssh_remote_dest is not None:
-                tp.task_conf.ssh_remote_dest = self.parsed_args.ssh_remote_dest
-            elif tp.task_conf.executer_type == "slurm":
+                task_process.task_conf.ssh_remote_dest = self.parsed_args.ssh_remote_dest
+            elif task_process.task_conf.executer_type == "slurm":
                 if self.parsed_args.by_runner:
-                    tp.submit_sbatch_task(self._wait())
+                    task_process.submit_sbatch_task(self._wait())
                     return
 
-            tp.launch_task(self._wait(), exit_process_when_done=not test_mode)
+            task_process.launch_task(self._wait(), exit_process_when_done=not test_mode)
 
         elif self.parsed_args.command == 'sbatch':
-            tp = TaskProcess(self.parsed_args.control_dir)
-            tp.submit_sbatch_task(self._wait())
+            task_process = TaskProcess(self.parsed_args.control_dir)
+            task_process.submit_sbatch_task(self._wait())
 
         elif self.parsed_args.command == 'upload-array':
 
-            tp = TaskProcess(
+            task_process = TaskProcess(
                 os.path.join(self.parsed_args.pipeline_instance_dir, ".drypipe", self.parsed_args.task_key)
             )
 
             if self.parsed_args.ssh_remote_dest is not None:
-                tp.task_conf.ssh_remote_dest = self.parsed_args.ssh_remote_dest
+                task_process.task_conf.ssh_remote_dest = self.parsed_args.ssh_remote_dest
 
-            array_parent_task = SlurmArrayParentTask(
-                tp.task_key,
-                StateFileTracker(tp.pipeline_instance_dir),
-                task_conf=tp.task_conf,
-                logger=tp.task_logger
-            )
+            array_parent_task = SlurmArrayParentTask(task_process)
 
             array_parent_task.upload_array()
 
@@ -215,8 +210,8 @@ class Cli:
                        continue
 
                     # ensure upstream dependencies are met
-                    tp = TaskProcess(resolved_task.control_dir(), no_logger=True)
-                    tp._unserialize_and_resolve_inputs_outputs(ensure_all_upstream_deps_complete=True)
+                    task_process = TaskProcess(resolved_task.control_dir(), no_logger=True)
+                    task_process._unserialize_and_resolve_inputs_outputs(ensure_all_upstream_deps_complete=True)
 
                     if not resolved_task.is_ready():
                         not_ready_task_keys.append(resolved_task.key)

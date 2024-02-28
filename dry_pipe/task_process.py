@@ -126,33 +126,6 @@ def create_task_logger(task_control_dir, test_mode=False):
 
 class TaskProcess:
 
-    def run(self, wait_for_completion=False, array_limit=None, by_pipeline_runner=False):
-
-        if not self.as_subprocess:
-            self.launch_task(wait_for_completion, exit_process_when_done=False, array_limit=array_limit)
-        else:
-            pipeline_cli = os.path.join(self.pipeline_work_dir, "cli")
-            if wait_for_completion:
-                cmd = [pipeline_cli, "task", self.control_dir, "--wait"]
-            else:
-                cmd = [pipeline_cli, "task", self.control_dir]
-
-            if by_pipeline_runner:
-                cmd.append("--by-runner")
-
-            with PortablePopen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE
-            ) as p:
-                p.wait()
-                if p.popen.returncode != 0:
-                    self.task_logger.warning(
-                        "task ended with non zero code: %s, %s",
-                        p.popen.returncode,
-                        p.safe_stderr_as_string()
-                    )
-
     def __init__(
         self,
             control_dir,
@@ -215,6 +188,32 @@ class TaskProcess:
     def __repr__(self):
         return f"{self.task_key}"
 
+    def run(self, wait_for_completion=False, array_limit=None, by_pipeline_runner=False):
+
+        if not self.as_subprocess:
+            self.launch_task(wait_for_completion, exit_process_when_done=False, array_limit=array_limit)
+        else:
+            pipeline_cli = os.path.join(self.pipeline_work_dir, "cli")
+            if wait_for_completion:
+                cmd = [pipeline_cli, "task", self.control_dir, "--wait"]
+            else:
+                cmd = [pipeline_cli, "task", self.control_dir]
+
+            if by_pipeline_runner:
+                cmd.append("--by-runner")
+
+            with PortablePopen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE
+            ) as p:
+                p.wait()
+                if p.popen.returncode != 0:
+                    self.task_logger.warning(
+                        "task ended with non zero code: %s, %s",
+                        p.popen.returncode,
+                        p.safe_stderr_as_string()
+                    )
     def _exit_process(self):
         self._delete_pid_and_slurm_job_id()
         logging.shutdown()
@@ -945,17 +944,11 @@ class TaskProcess:
 
         self.transition_to_completed(state_file)
 
-    def run_array(self, limit, test_mode=False):
+    def run_array(self, limit):
 
         step_number, _, state_file, _ = self.read_task_state()
         try:
-            sapt = SlurmArrayParentTask(
-                self.task_key,
-                StateFileTracker(self.pipeline_instance_dir),
-                self.task_conf,
-                self.task_logger,
-                test_mode
-            )
+            sapt = SlurmArrayParentTask(self)
             all_children_completed = sapt.run_array(False, False, limit)
 
             if all_children_completed:
@@ -1142,26 +1135,15 @@ class TaskProcess:
 
 class SlurmArrayParentTask:
 
-    def __init__(
-            self, task_key, tracker, task_conf=None, logger=None,
-            mockup_run_launch_local_processes=False, test_mode=False
-    ):
-        self.task_key = task_key
-        self.task_conf = task_conf
-        self.tracker = tracker
+    def __init__(self, task_process, mockup_run_launch_local_processes=False):
+        self.task_process = task_process
+        self.tracker = StateFileTracker(pipeline_instance_dir=task_process.pipeline_instance_dir)
         self.pipeline_instance_dir = os.path.dirname(self.tracker.pipeline_work_dir)
         self.mockup_run_launch_local_processes = mockup_run_launch_local_processes
-        self.test_mode = test_mode
-        if logger is None:
-            self.logger = logging.getLogger('dummy')
-            self.logger.addHandler(logging.NullHandler())
-            self.debug = False
-        else:
-            self.logger = logger
-            self.debug = self.logger.isEnabledFor(logging.DEBUG)
+        self.debug = task_process.task_logger.isEnabledFor(logging.DEBUG)
 
     def control_dir(self):
-        return os.path.join(self.tracker.pipeline_work_dir,  self.task_key)
+        return os.path.join(self.tracker.pipeline_work_dir,  self.task_process.task_key)
 
     def task_keys_file(self):
         return os.path.join(self.control_dir(),  "task-keys.tsv")
@@ -1183,7 +1165,7 @@ class SlurmArrayParentTask:
         def sbatch_lines():
             yield "sbatch"
             yield f"--array={array_arg}"
-            a = self.task_conf.slurm_account
+            a = self.task_process.task_conf.slurm_account
             if a is not None:
                 yield f"--account={a}"
 
@@ -1214,7 +1196,7 @@ class SlurmArrayParentTask:
         job_ids_as_str = ",".join(list(submitted_job_ids))
         # see JOB STATE CODES: https://slurm.schedmd.com/squeue.html
         squeue_cmd = f'squeue -r --noheader --format="%i %t" --states=all --jobs={job_ids_as_str}'
-        self.logger.debug(squeue_cmd)
+        self.task_process.task_logger.debug(squeue_cmd)
         with PortablePopen(squeue_cmd, shell=True) as p:
             #p.wait()
             # "stderr: slurm_load_jobs error: Invalid job id specified"
@@ -1273,7 +1255,7 @@ class SlurmArrayParentTask:
                     return True
                 elif slurm_code in {"F", "CD", "TO", "ST", "PR", "RV", "SE", "BF", "CA", "DL", "OOM", "NF"}:
                     return False
-                self.logger.warning("rare code: %s", slurm_code)
+                self.task_process.task_logger.warning("rare code: %s", slurm_code)
                 return False
 
             is_running_or_will_run_count = 0
@@ -1297,7 +1279,7 @@ class SlurmArrayParentTask:
                                 f.write("\nBATCH_ENDED\n")
                             break
                         else:
-                            self.logger.warning("submission %s already ended")
+                            self.task_process.task_logger.warning("submission %s already ended")
 
         u_states = self._validate_squeue_states_and_state_files(
             submitted_arrays_files, job_ids_to_array_idx_to_squeue_state
@@ -1326,7 +1308,7 @@ class SlurmArrayParentTask:
             if unexpected_states is not None:
                 dict_unexpected_states[task_key] = unexpected_states
                 drypipe_state_as_string, expected_squeue_state, actual_queue_state = unexpected_states
-                self.logger.warning(
+                self.task_process.task_logger.warning(
                     "unexpected squeue state '%s', expected '%s' for task '%s'",
                     actual_queue_state, expected_squeue_state, task_key
                 )
@@ -1361,7 +1343,7 @@ class SlurmArrayParentTask:
                 array_idx = int(array_idx)
                 array_idx_to_state_dict[array_idx] = squeue_state
             except Exception as ex:
-                self.logger.error(f"failed while parsing squeue line: '%s'", line)
+                self.task_process.task_logger.error(f"failed while parsing squeue line: '%s'", line)
                 raise ex
         return res
 
@@ -1385,7 +1367,7 @@ class SlurmArrayParentTask:
 
         # see JOB STATE CODES at https://slurm.schedmd.com/squeue.html
 
-        self.logger.debug(
+        self.task_process.task_logger.debug(
             "task_key=%s, drypipe_state_as_string=%s, squeue_state=%s ",
             task_key, drypipe_state_as_string, squeue_state
         )
@@ -1498,12 +1480,12 @@ class SlurmArrayParentTask:
 
             if call_sbatch_mockup is not None:
                 call_sbatch_func = call_sbatch_mockup
-                self.logger.info("Will use SBATCH MOCKUP")
+                self.task_process.task_logger.info("Will use SBATCH MOCKUP")
             elif self.mockup_run_launch_local_processes:
-                self.logger.info("Will fake SBATCH as local process")
+                self.task_process.task_logger.info("Will fake SBATCH as local process")
                 call_sbatch_func = lambda: self._sbatch_mockup_launch_as_local_proceses()
             else:
-                self.logger.info("will submit array: %s", " ".join(command_args))
+                self.task_process.task_logger.info("will submit array: %s", " ".join(command_args))
                 call_sbatch_func = lambda: self.call_sbatch(command_args)
 
             job_id = call_sbatch_func()
@@ -1540,9 +1522,9 @@ class SlurmArrayParentTask:
         if self.mockup_run_launch_local_processes:
             return
 
-        self.logger.info("will run array %s", self.task_key)
+        self.task_process.task_logger.info("will run array %s", self.task_process.task_key)
 
-        if self.test_mode:
+        if self.debug:
             pause_in_seconds = [0, 0, 0, 0, 0, 1]
         else:
             pause_in_seconds = [2, 2, 3, 3, 4, 10, 30, 60, 120, 120, 180, 240, 300]
@@ -1554,7 +1536,7 @@ class SlurmArrayParentTask:
             if res is None:
                 break
             next_sleep = pause_in_seconds[pause_idx]
-            self.logger.debug("will sleep %s seconds", next_sleep)
+            self.task_process.task_logger.debug("will sleep %s seconds", next_sleep)
             time.sleep(next_sleep)
             if pause_idx < max_idx:
                 pause_idx += 1
@@ -1573,30 +1555,32 @@ class SlurmArrayParentTask:
                 completed_tasks += 1
 
         if completed_tasks == total_children_tasks:
-            self.logger.info("array %s completed", self.task_key)
+            self.task_process.task_logger.info("array %s completed", self.task_process.task_key)
             return True
 
         return False
 
     def upload_array(self):
 
-        if self.task_conf.ssh_remote_dest is None:
+        task_key = self.task_process.task_key
+
+        if self.task_process.task_logger.ssh_remote_dest is None:
             raise Exception(
-                f"upload_array not possible for task {self.task_key}, " +
+                f"upload_array not possible for task {task_key}, " +
                 f"requires ssh_remote_dest in TaskConf OR --ssh-remote-dest argument to be set"
             )
 
         def gen_dep_files_0():
-            for task_key in self.children_task_keys():
+            for child_task_key in self.children_task_keys():
 
                 p = TaskProcess(
-                    os.path.join(self.tracker.pipeline_work_dir, task_key),
+                    os.path.join(self.tracker.pipeline_work_dir, child_task_key),
                     ensure_all_upstream_deps_complete=True
                 )
 
                 yield from p.dependent_file_list()
-                yield f".drypipe/{task_key}/state.ready"
-                yield f".drypipe/{task_key}/task-conf.json"
+                yield f".drypipe/{child_task_key}/state.ready"
+                yield f".drypipe/{child_task_key}/task-conf.json"
 
             yield ".drypipe/cli"
             yield ".drypipe/dry_pipe/core_lib.py"
@@ -1605,16 +1589,16 @@ class SlurmArrayParentTask:
             yield ".drypipe/dry_pipe/task_process.py"
             yield ".drypipe/dry_pipe/task.py"
 
-            yield f".drypipe/{self.task_key}/task-conf.json"
-            yield f".drypipe/{self.task_key}/task-keys.tsv"
-            yield f".drypipe/{self.task_key}/state.ready"
+            yield f".drypipe/{task_key}/task-conf.json"
+            yield f".drypipe/{task_key}/task-keys.tsv"
+            yield f".drypipe/{task_key}/state.ready"
 
         def gen_dep_files():
             pipeline_instance_name = os.path.basename(self.pipeline_instance_dir)
             for f in gen_dep_files_0():
                 yield f"{pipeline_instance_name}/{f}"
 
-        self.logger.info("will generate file list for upload")
+        self.task_process.task_logger.info("will generate file list for upload")
         dep_file_txt = os.path.join(self.control_dir(), "deps.txt")
         uniq_files = set()
         with open(dep_file_txt, "w") as tf:
@@ -1624,14 +1608,14 @@ class SlurmArrayParentTask:
                     tf.write("\n")
                     uniq_files.add(dep_file)
 
-        self.logger.info("done")
+        self.task_process.task_logger.info("done")
 
-        user_at_host, remote_base_dire, ssh_key_file = self.task_conf.parse_ssh_remote_dest()
+        user_at_host, remote_base_dire, ssh_key_file = self.task_process.task_conf.parse_ssh_remote_dest()
 
         ssh_remote_dest = f"{user_at_host}:{remote_base_dire}/"
 
-        dn = os.path.abspath(os.path.dirname(self.pipeline_instance_dir))
+        dn = os.path.abspath(os.path.dirname(self.task_process.pipeline_instance_dir))
 
         rsync_cmd = f"rsync --mkpath -a --dirs --files-from={dep_file_txt} {dn}/ {ssh_remote_dest}"
-        self.logger.debug("%s", rsync_cmd)
+        self.task_process.task_logger.debug("%s", rsync_cmd)
         invoke_rsync(rsync_cmd)
