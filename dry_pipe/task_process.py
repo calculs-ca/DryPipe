@@ -101,29 +101,6 @@ def invoke_rsync(command):
             else:
                 raise RetryableRsyncException(msg)
 
-def create_task_logger(task_control_dir, test_mode=False):
-
-    if test_mode or os.environ.get("DRYPIPE_TASK_DEBUG") == "True":
-        logging_level = logging.DEBUG
-    else:
-        logging_level = logging.INFO
-
-    logger = logging.getLogger(f"task-logger-{os.path.basename(task_control_dir)}")
-
-    logger.setLevel(logging_level)
-
-    if len(logger.handlers) == 0:
-        filename = os.path.join(task_control_dir, "drypipe.log")
-        file_handler = logging.FileHandler(filename=filename)
-        file_handler.setLevel(logging_level)
-        file_handler.setFormatter(
-            logging.Formatter("%(asctime)s - %(levelname)s - %(message)s", datefmt='%Y-%m-%d %H:%M:%S%z')
-        )
-        logger.addHandler(file_handler)
-
-    logger.info("log level: %s", logging.getLevelName(logging_level))
-    return logger
-
 class TaskProcess:
 
     def __init__(
@@ -143,14 +120,15 @@ class TaskProcess:
             control_dir = array_task_control_dir
             os.environ["DRYPIPE_TASK_CONTROL_DIR"] = control_dir
 
+        self.control_dir = control_dir
+
         if no_logger:
             self.task_logger = logging.getLogger('dummy')
         else:
-            self.task_logger = create_task_logger(control_dir, test_mode)
+            self.task_logger = self._create_task_logger(test_mode)
 
         try:
 
-            self.control_dir = control_dir
             self.task_key = os.path.basename(control_dir)
             self.pipeline_work_dir = os.path.dirname(control_dir)
             self.pipeline_instance_dir = os.path.dirname(self.pipeline_work_dir)
@@ -184,6 +162,29 @@ class TaskProcess:
             if not no_logger:
                 self.task_logger.exception(ex)
             raise ex
+
+    def _create_task_logger(self, test_mode=False):
+
+        if test_mode or os.environ.get("DRYPIPE_TASK_DEBUG") == "True":
+            logging_level = logging.DEBUG
+        else:
+            logging_level = logging.INFO
+
+        logger = logging.getLogger(f"task-logger-{os.path.basename(self.control_dir)}")
+
+        logger.setLevel(logging_level)
+
+        if len(logger.handlers) == 0:
+            filename = os.path.join(self.control_dir, "drypipe.log")
+            file_handler = logging.FileHandler(filename=filename)
+            file_handler.setLevel(logging_level)
+            file_handler.setFormatter(
+                logging.Formatter("%(asctime)s - %(levelname)s - %(message)s", datefmt='%Y-%m-%d %H:%M:%S%z')
+            )
+            logger.addHandler(file_handler)
+
+        logger.info("log level: %s", logging.getLevelName(logging_level))
+        return logger
 
     def __repr__(self):
         return f"{self.task_key}"
@@ -221,8 +222,6 @@ class TaskProcess:
 
     def call_python(self, mod_func, python_task):
 
-        task_logger = create_task_logger(self.control_dir)
-
         pythonpath_in_env = os.environ.get("PYTHONPATH")
 
         if pythonpath_in_env is not None:
@@ -230,7 +229,7 @@ class TaskProcess:
                 if not os.path.exists(p):
                     msg = f"WARNING: path {p} in PYTHONPATH does not exist, if running in apptainer, ensure proper mount"
                     print(msg, file=sys.stderr)
-                    task_logger.warning(msg)
+                    self.task_logger.warning(msg)
 
         inputs_by_name = {}
         file_outputs_by_name = {}
@@ -275,7 +274,7 @@ class TaskProcess:
 
         args = [v for _, v in args_tuples]
         args_names = [k for k, _ in args_tuples]
-        task_logger.debug("args list: %s", args_names)
+        self.task_logger.debug("args list: %s", args_names)
 
         if "kwargs" not in python_task.signature.parameters:
             kwargs = {}
@@ -286,12 +285,12 @@ class TaskProcess:
                 if k not in args_names
             }
 
-        task_logger.info("will invoke PythonCall: %s(%s,%s)", mod_func, args, kwargs)
+        self.task_logger.info("will invoke PythonCall: %s(%s,%s)", mod_func, args, kwargs)
 
         try:
             out_vars = python_task.func(* args, ** kwargs)
         except Exception as ex:
-            task_logger.exception(ex)
+            self.task_logger.exception(ex)
             logging.shutdown()
             exit(1)
 
