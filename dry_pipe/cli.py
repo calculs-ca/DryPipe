@@ -132,7 +132,9 @@ class Cli:
 
             task_process = TaskProcess(
                 self._complete_control_dir(self.parsed_args.control_dir),
-                wait_for_completion=self._wait()
+                wait_for_completion=self._wait(),
+                test_mode=test_mode,
+                as_subprocess=not test_mode
             )
 
             if self.parsed_args.ssh_remote_dest is not None:
@@ -166,66 +168,14 @@ class Cli:
             new_task_key = self.parsed_args.new_task_key
             matcher = self.parsed_args.matcher
 
-            if self.parsed_args.slurm_account is not None:
-                executer_type = "slurm"
-                slurm_account = self.parsed_args.slurm_account
-            else:
-                executer_type = "process"
-                slurm_account = None
+            SlurmArrayParentTask.create_array_parent(
+                self.parsed_args.pipeline_instance_dir,
+                new_task_key,
+                matcher,
+                self.parsed_args.slurm_account,
+                split_into=self.parsed_args.split
+            )
 
-            split_into = self.parsed_args.split
-
-            state_file_tracker = StateFileTracker(self.parsed_args.pipeline_instance_dir)
-
-            control_dir = Path(state_file_tracker.pipeline_work_dir, new_task_key)
-
-            if os.path.exists(control_dir):
-                if not self.parsed_args.force:
-                    raise Exception(
-                        f"Directory {control_dir} already exists, use --force to overwrite"
-                    )
-
-            control_dir.mkdir(exist_ok=True)
-
-            not_ready_task_keys = []
-
-            with open(os.path.join(control_dir, "task-conf.json"), "w") as f:
-                f.write(json.dumps({
-                  "executer_type": executer_type,
-                  "slurm_account": slurm_account,
-                  "is_slurm_parent": True,
-                  "inputs": [
-                    {
-                      "upstream_task_key": None,
-                      "name_in_upstream_task": None,
-                      "file_name": None,
-                      "value": None,
-                      "name": "children_tasks",
-                      "type": "task-list"
-                    }
-                  ]
-                }, indent=2))
-
-            with open(os.path.join(control_dir, "task-keys.tsv"), "w") as tc:
-                for resolved_task in state_file_tracker.load_tasks_for_query(matcher, include_non_completed=True):
-
-                    if resolved_task.is_completed():
-                       continue
-
-                    # ensure upstream dependencies are met
-                    task_process = TaskProcess(resolved_task.control_dir(), no_logger=True)
-                    task_process._unserialize_and_resolve_inputs_outputs(ensure_all_upstream_deps_complete=True)
-
-                    if not resolved_task.is_ready():
-                        not_ready_task_keys.append(resolved_task.key)
-
-                    tc.write(resolved_task.key)
-                    tc.write("\n")
-
-            if len(not_ready_task_keys) > 0:
-                print(f"Warning: {len(not_ready_task_keys)} are not in 'ready' state:")
-
-            Path(os.path.join(control_dir, "state.ready")).touch(exist_ok=True)
 
     def _sub_parsers(self):
 

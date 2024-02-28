@@ -1566,7 +1566,7 @@ class SlurmArrayParentTask:
 
         task_key = self.task_process.task_key
 
-        if self.task_process.task_logger.ssh_remote_dest is None:
+        if self.task_process.task_conf.ssh_remote_dest is None:
             raise Exception(
                 f"upload_array not possible for task {task_key}, " +
                 f"requires ssh_remote_dest in TaskConf OR --ssh-remote-dest argument to be set"
@@ -1621,3 +1621,51 @@ class SlurmArrayParentTask:
         rsync_cmd = f"rsync --mkpath -a --dirs --files-from={dep_file_txt} {dn}/ {ssh_remote_dest}"
         self.task_process.task_logger.debug("%s", rsync_cmd)
         self.task_process.invoke_rsync(rsync_cmd)
+
+
+    @staticmethod
+    def create_array_parent(pipeline_instance_dir, new_task_key, matcher, slurm_account, split_into):
+
+        state_file_tracker = StateFileTracker(pipeline_instance_dir)
+
+        control_dir = Path(state_file_tracker.pipeline_work_dir, new_task_key)
+
+        control_dir.mkdir(exist_ok=True)
+
+        not_ready_task_keys = []
+
+        tc = TaskConf(
+            executer_type="slurm",
+            slurm_account=slurm_account
+        )
+        tc.is_slurm_parent = True
+        tc.inputs.append({
+            "upstream_task_key": None,
+            "name_in_upstream_task": None,
+            "file_name": None,
+            "value": None,
+            "name": "children_tasks",
+            "type": "task-list"
+        })
+        tc.save_as_json(control_dir, "")
+
+        with open(os.path.join(control_dir, "task-keys.tsv"), "w") as tc:
+            for resolved_task in state_file_tracker.load_tasks_for_query(matcher, include_non_completed=True):
+
+                if resolved_task.is_completed():
+                    continue
+
+                # ensure upstream dependencies are met
+                task_process = TaskProcess(resolved_task.control_dir(), no_logger=True)
+                task_process._unserialize_and_resolve_inputs_outputs(ensure_all_upstream_deps_complete=True)
+
+                if not resolved_task.is_ready():
+                    not_ready_task_keys.append(resolved_task.key)
+
+                tc.write(resolved_task.key)
+                tc.write("\n")
+
+        if len(not_ready_task_keys) > 0:
+            print(f"Warning: {len(not_ready_task_keys)} are not in 'ready' state:")
+
+        Path(os.path.join(control_dir, "state.ready")).touch(exist_ok=True)
