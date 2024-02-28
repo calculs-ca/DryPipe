@@ -130,20 +130,23 @@ class Cli:
             pipeline_instance.run_sync(until_patterns=self.parsed_args.until)
         elif self.parsed_args.command == 'task':
 
-            task_process = TaskProcess(self._complete_control_dir(self.parsed_args.control_dir))
+            task_process = TaskProcess(
+                self._complete_control_dir(self.parsed_args.control_dir),
+                wait_for_completion=self._wait()
+            )
 
             if self.parsed_args.ssh_remote_dest is not None:
                 task_process.task_conf.ssh_remote_dest = self.parsed_args.ssh_remote_dest
             elif task_process.task_conf.executer_type == "slurm":
                 if self.parsed_args.by_runner:
-                    task_process.submit_sbatch_task(self._wait())
+                    task_process.submit_sbatch_task()
                     return
 
-            task_process.launch_task(self._wait(), exit_process_when_done=not test_mode)
+            task_process.launch_task()
 
         elif self.parsed_args.command == 'sbatch':
-            task_process = TaskProcess(self.parsed_args.control_dir)
-            task_process.submit_sbatch_task(self._wait())
+            task_process = TaskProcess(self.parsed_args.control_dir, wait_for_completion=self._wait())
+            task_process.submit_sbatch_task()
 
         elif self.parsed_args.command == 'upload-array':
 

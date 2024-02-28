@@ -39,9 +39,11 @@ class TaskProcess:
             as_subprocess=True,
             ensure_all_upstream_deps_complete=True,
             no_logger=False,
-            test_mode=False
+            test_mode=False,
+            wait_for_completion=False
     ):
 
+        self.wait_for_completion = wait_for_completion
         self.record_history = False
 
         array_task_control_dir = self._script_location_of_array_task_id_if_applies(control_dir)
@@ -118,13 +120,13 @@ class TaskProcess:
     def __repr__(self):
         return f"{self.task_key}"
 
-    def run(self, wait_for_completion=False, array_limit=None, by_pipeline_runner=False):
+    def run(self, array_limit=None, by_pipeline_runner=False):
 
         if not self.as_subprocess:
-            self.launch_task(wait_for_completion, exit_process_when_done=False, array_limit=array_limit)
+            self.launch_task(array_limit=array_limit)
         else:
             pipeline_cli = os.path.join(self.pipeline_work_dir, "cli")
-            if wait_for_completion:
+            if self.wait_for_completion:
                 cmd = [pipeline_cli, "task", self.control_dir, "--wait"]
             else:
                 cmd = [pipeline_cli, "task", self.control_dir]
@@ -955,14 +957,14 @@ class TaskProcess:
             self._transition_state_file(state_file, "failed", step_number)
             raise ex
 
-    def _sbatch_cmd_lines(self, wait_for_completion=False):
+    def _sbatch_cmd_lines(self):
 
         if self.task_conf.executer_type != "slurm":
             raise Exception(f"not a slurm task")
 
         yield "sbatch"
 
-        if wait_for_completion:
+        if self.wait_for_completion:
             yield "--wait"
 
         sacc = self.task_conf.slurm_account
@@ -977,10 +979,10 @@ class TaskProcess:
         yield "--parsable"
         yield f"{self.pipeline_instance_dir}/.drypipe/cli"
 
-    def submit_sbatch_task(self, wait_for_completion):
+    def submit_sbatch_task(self):
 
         p = PortablePopen(
-            list(self._sbatch_cmd_lines(wait_for_completion)),
+            list(self._sbatch_cmd_lines()),
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT
         )
 
@@ -1044,8 +1046,9 @@ class TaskProcess:
             remote_cli, "task", remote_task_control_dir
         ])
 
-    def launch_task(self, wait_for_completion, exit_process_when_done=True, array_limit=None):
+    def launch_task(self, array_limit=None):
 
+        exit_process_when_done = self.as_subprocess
         def task_func_wrapper():
             try:
                 self.task_logger.debug("task func started")
@@ -1067,7 +1070,7 @@ class TaskProcess:
                 if exit_process_when_done:
                     self._exit_process()
 
-        if wait_for_completion or not self.as_subprocess:
+        if self.wait_for_completion or not self.as_subprocess:
             task_func_wrapper()
         else:
             slurm_job_id = os.environ.get("SLURM_JOB_ID")
@@ -1505,10 +1508,12 @@ class SlurmArrayParentTask:
                         yield line
 
         for task_key in gen_task_keys_to_launch():
-            tp = TaskProcess(os.path.join(self.tracker.pipeline_work_dir, task_key), as_subprocess=True)
-            tp.run(
+            tp = TaskProcess(
+                os.path.join(self.tracker.pipeline_work_dir, task_key),
+                as_subprocess=True,
                 wait_for_completion=True
             )
+            tp.run()
 
         return f"123400{launch_idx}"
 
