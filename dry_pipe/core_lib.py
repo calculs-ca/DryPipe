@@ -1,56 +1,11 @@
 import fnmatch
-import glob
 import importlib
 import json
 import os
 import shutil
 import subprocess
-from hashlib import blake2b
 from pathlib import Path
 
-
-
-
-def parse_ssh_remote_dest(ssh_remote_dest):
-    """
-
-     :param ssh_specs:
-
-     me@somehost.org:/remote-base-dir
-
-     me@somehost.org:/remote-base-dir:/x/y/.ssh/id_rsa
-
-    :return:
-    """
-
-    ssh_specs_parts = ssh_remote_dest.split(":")
-
-    if len(ssh_specs_parts) == 2:
-        user_at_host, remote_base_dire = ssh_specs_parts
-        ssh_key_file = "~/.ssh/id_rsa"
-    elif len(ssh_specs_parts) == 3:
-        user_at_host, remote_base_dire, ssh_key_file = ssh_specs_parts
-    else:
-        raise Exception(
-            f"invalid format for ssh_remote_dest {ssh_remote_dest} should be: <user>@<host>:/<dir>(:ssh_key)?"
-        )
-
-    return user_at_host, remote_base_dire, ssh_key_file
-
-
-def parse_ssh_specs(ssh_specs):
-    ssh_specs_parts = ssh_specs.split(":")
-    if len(ssh_specs_parts) == 2:
-        ssh_username_ssh_host, key_filename = ssh_specs_parts
-    elif len(ssh_specs_parts) == 1:
-        ssh_username_ssh_host = ssh_specs_parts[0]
-        key_filename = "~/.ssh/id_rsa"
-    else:
-        raise Exception(f"bad ssh_specs format: {ssh_specs}")
-
-    ssh_username, ssh_host = ssh_username_ssh_host.split("@")
-
-    return ssh_username, ssh_host, key_filename
 
 class PortablePopen:
 

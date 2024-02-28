@@ -212,30 +212,37 @@ class CliTestsPipelineWithSlurmArray(PipelineWithSlurmArray):
 
         pipeline_instance = self.create_prepare_and_run_pipeline(d)
 
-        ssh_dest = "maxl@mp2.ccs.usherbrooke.ca:/home/maxl/tests-drypipe"
+        remote_base_dir = "/home/maxl/tests-drypipe"
+        ssh_dest = f"maxl@mp2.ccs.usherbrooke.ca:{remote_base_dir}"
 
         user_at_host, root_dir = ssh_dest.split(":")
 
         self.exec_remote(user_at_host, ["rm", "-Rf", root_dir])
         self.exec_remote(user_at_host, ["mkdir", "-p", root_dir])
 
+        pid = pipeline_instance.state_file_tracker.pipeline_instance_dir
+
         Cli([
-            '--pipeline-instance-dir', pipeline_instance.state_file_tracker.pipeline_instance_dir,
+            '--pipeline-instance-dir', pid,
             'task',
-            f'{pipeline_instance.state_file_tracker.pipeline_instance_dir}/.drypipe/z',
+            f'{pid}/.drypipe/z',
             '--wait'
         ]).invoke(test_mode=True)
 
         Cli([
-            '--pipeline-instance-dir', pipeline_instance.state_file_tracker.pipeline_instance_dir,
+            '--pipeline-instance-dir', pid,
             'upload-array',
             '--task-key=array_parent',
             f'--ssh-remote-dest={ssh_dest}'
         ]).invoke(test_mode=True)
 
+        #remote_pid = f"{remote_base_dir}/{os.path.basename(pid)}"
+        
         Cli([
-            '--pipeline-instance-dir', pipeline_instance.state_file_tracker.pipeline_instance_dir,
-            'task', '--wait',
+            '--pipeline-instance-dir', pid,
+            'task',
+            f'{pid}/.drypipe/array_parent',
+            '--wait',
             f'--ssh-remote-dest={ssh_dest}'
         ]).invoke(test_mode=True)
 

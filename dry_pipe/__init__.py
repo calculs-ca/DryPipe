@@ -7,7 +7,7 @@ import sys
 import textwrap
 from pathlib import Path
 
-from dry_pipe.core_lib import PortablePopen, parse_ssh_specs
+from dry_pipe.core_lib import PortablePopen
 
 from dry_pipe.task import Task, TaskStep, TaskInput, TaskOutput
 
@@ -344,14 +344,14 @@ def host_has_sbatch():
 class TaskConf:
     """
     :param executer_type: 'process' or 'slurm'
-    :param ssh_specs: me@a-host:PORT:/path/to/ssh-private-key
+    :param ssh_remote_dest: me@a-host:PORT:/path/to/ssh-private-key
     :param slurm_account: a slurm username
     :param sbatch_options: list of string for every sbatch option, ex: ["--time=0:1:00", "--mem=30G", "--cpus-per-task=24"]
     :param container: the file name of the container, ex: my-container.sif (without path, containers
         the file must exist in
           $__containers_dir/<container>
         the default value of $__containers_dir is $__pipeline_code_dir/containers
-        Note: for remote tasks (when ssh_specs is defined, the container file must exist in `remote_containers_dir`)
+        Note: for remote tasks (when ssh_remote_dest is defined, the container file must exist in `remote_containers_dir`)
     :param command_before_task:
     :param remote_pipeline_code_dir:
     :param python_bin:
@@ -377,7 +377,7 @@ class TaskConf:
     def __init__(
             self,
             executer_type=None,
-            ssh_specs=None,
+            ssh_remote_dest=None,
             slurm_account=None,
             sbatch_options=[],
             container=None,
@@ -418,7 +418,7 @@ class TaskConf:
             return
 
         self.executer_type = executer_type
-        self.ssh_specs = ssh_specs
+        self.ssh_remote_dest = ssh_remote_dest
         self.slurm_account = slurm_account
         self.sbatch_options = sbatch_options
         self.container = container
@@ -450,14 +450,34 @@ class TaskConf:
             else:
                 self.python_bin = sys.executable
 
-        if self.ssh_specs is not None:
-            self.ssh_username, self.ssh_host, self.key_filename = parse_ssh_specs(self.ssh_specs)
+    def parse_ssh_remote_dest(self):
+        """
 
-            self.remote_site_key = ":".join([
-                self.ssh_username,
-                self.ssh_host,
-                self.remote_base_dir
-            ])
+         :param ssh_specs:
+
+         me@somehost.org:/remote-base-dir
+
+         me@somehost.org:/remote-base-dir:/x/y/.ssh/id_rsa
+
+        :return:
+        """
+
+        ssh_specs_parts = self.ssh_remote_dest.split(":")
+
+        if len(ssh_specs_parts) == 2:
+            user_at_host, remote_base_dire = ssh_specs_parts
+            ssh_key_file = "~/.ssh/id_rsa"
+        elif len(ssh_specs_parts) == 3:
+            user_at_host, remote_base_dire, ssh_key_file = ssh_specs_parts
+        else:
+            raise Exception(
+                f"invalid format for ssh_remote_dest {self.ssh_remote_dest} should be: <user>@<host>:/<dir>(:ssh_key)?"
+            )
+
+        if user_at_host.endswith("/"):
+            user_at_host = user_at_host[:-1]
+
+        return user_at_host, remote_base_dire, ssh_key_file
 
     def hash_values(self):
         yield self.executer_type
@@ -476,9 +496,6 @@ class TaskConf:
             yield self.slurm_account
         if self.python_bin is not None:
             yield self.python_bin
-
-    def full_remote_path(self, pipeline_instance):
-        return f"{self.remote_site_key}/{pipeline_instance.instance_dir_base_name()}"
 
     def save_as_json(self, control_dir, digest):
         def as_json():
@@ -501,7 +518,7 @@ class TaskConf:
             return TaskConf(fields_from_json=json.loads(f.read()))
 
     def is_remote(self):
-        return self.ssh_specs is not None
+        return self.ssh_remote_dest is not None
 
     def is_slurm(self):
         return self.executer_type == "slurm"
@@ -522,7 +539,7 @@ class TaskConf:
     def override_container(self, container):
         return TaskConf(
             self.executer_type,
-            self.ssh_specs,
+            self.ssh_remote_dest,
             self.slurm_account,
             self.sbatch_options,
             container,
@@ -539,7 +556,7 @@ class TaskConf:
     def override_python_bin(self, python_bin):
         return TaskConf(
             self.executer_type,
-            self.ssh_specs,
+            self.ssh_remote_dest,
             self.slurm_account,
             self.sbatch_options,
             self.container,
@@ -556,7 +573,7 @@ class TaskConf:
     def override_executer(self, executer_type):
         return TaskConf(
             executer_type,
-            self.ssh_specs,
+            self.ssh_remote_dest,
             self.slurm_account,
             self.sbatch_options,
             self.container,

@@ -17,8 +17,7 @@ from threading import Thread
 from typing import List, Iterator, Tuple
 
 from dry_pipe import TaskConf
-from dry_pipe.core_lib import (UpstreamTasksNotCompleted,
-                               PortablePopen, func_from_mod_func, StateFileTracker, parse_ssh_remote_dest)
+from dry_pipe.core_lib import UpstreamTasksNotCompleted, PortablePopen, func_from_mod_func, StateFileTracker
 
 from dry_pipe.task import TaskOutput, TaskInputs, TaskOutputs, TaskInput
 
@@ -473,7 +472,7 @@ class TaskProcess:
         # stderr defaults to stdout, by default
         yield "__err_log", os.path.join(self.control_dir, "out.log")
 
-        if self.task_conf.ssh_specs is not None:
+        if self.task_conf.ssh_remote_dest is not None:
             yield "__is_remote", "True"
         else:
             yield "__is_remote", "False"
@@ -1038,14 +1037,29 @@ class TaskProcess:
             p.wait_and_raise_if_non_zero()
 
     def launch_remote_task(self):
-        user_at_host, remote_base_dire, ssh_key_file = parse_ssh_remote_dest(self.task_conf.ssh_specs)
+
+        user_at_host, remote_base_dire, ssh_key_file = self.task_conf.parse_ssh_remote_dest()
+
+        remote_instance_work_dir = os.path.join(
+            remote_base_dire,
+            self.pipeline_instance_base_dir(),
+            ".drypipe"
+        )
+
+        remote_task_control_dir = os.path.join(remote_instance_work_dir, self.task_key)
+
+        remote_cli = os.path.join(remote_instance_work_dir, "cli")
+
+        self.exec_remote(user_at_host, [
+            remote_cli, "task", remote_task_control_dir
+        ])
 
     def launch_task(self, wait_for_completion, exit_process_when_done=True, array_limit=None):
 
         def task_func_wrapper():
             try:
                 self.task_logger.debug("task func started")
-                if self.task_conf.ssh_specs is not None:
+                if self.task_conf.ssh_remote_dest is not None:
                     self.launch_remote_task()
                 else:
                     is_slurm_parent = self.task_conf.is_slurm_parent
@@ -1121,6 +1135,10 @@ class TaskProcess:
                 os.remove(f)
 
         return True
+
+    def pipeline_instance_base_dir(self):
+        return os.path.basename(self.pipeline_instance_dir)
+
 
 class SlurmArrayParentTask:
 
@@ -1251,7 +1269,7 @@ class SlurmArrayParentTask:
 
         for job_id, array_idx_to_state_codes in job_ids_to_array_idx_to_squeue_state.items():
             def is_running_or_will_run(slurm_code):
-                if slurm_code in {"PD", "R"}:
+                if slurm_code in {"PD", "R", "CG", "CF"}:
                     return True
                 elif slurm_code in {"F", "CD", "TO", "ST", "PR", "RV", "SE", "BF", "CA", "DL", "OOM", "NF"}:
                     return False
@@ -1560,9 +1578,15 @@ class SlurmArrayParentTask:
 
         return False
 
-    def upload_array(self, ssh_remote_dest):
+    def upload_array(self):
 
-        def gen_dep_files():
+        if self.task_conf.ssh_remote_dest is None:
+            raise Exception(
+                f"upload_array not possible for task {self.task_key}, " +
+                f"requires ssh_remote_dest in TaskConf OR --ssh-remote-dest argument to be set"
+            )
+
+        def gen_dep_files_0():
             for task_key in self.children_task_keys():
 
                 p = TaskProcess(
@@ -1575,11 +1599,20 @@ class SlurmArrayParentTask:
                 yield f".drypipe/{task_key}/task-conf.json"
 
             yield ".drypipe/cli"
-            yield ".drypipe/core_lib.py"
+            yield ".drypipe/dry_pipe/core_lib.py"
+            yield ".drypipe/dry_pipe/__init__.py"
+            yield ".drypipe/dry_pipe/cli.py"
+            yield ".drypipe/dry_pipe/task_process.py"
+            yield ".drypipe/dry_pipe/task.py"
 
             yield f".drypipe/{self.task_key}/task-conf.json"
             yield f".drypipe/{self.task_key}/task-keys.tsv"
             yield f".drypipe/{self.task_key}/state.ready"
+
+        def gen_dep_files():
+            pipeline_instance_name = os.path.basename(self.pipeline_instance_dir)
+            for f in gen_dep_files_0():
+                yield f"{pipeline_instance_name}/{f}"
 
         self.logger.info("will generate file list for upload")
         dep_file_txt = os.path.join(self.control_dir(), "deps.txt")
@@ -1593,9 +1626,12 @@ class SlurmArrayParentTask:
 
         self.logger.info("done")
 
-        if not ssh_remote_dest.endswith("/"):
-            ssh_remote_dest = f"{ssh_remote_dest}/"
+        user_at_host, remote_base_dire, ssh_key_file = self.task_conf.parse_ssh_remote_dest()
 
-        rsync_cmd = f"rsync -a --dirs --files-from={dep_file_txt} {self.pipeline_instance_dir}/ {ssh_remote_dest}"
+        ssh_remote_dest = f"{user_at_host}:{remote_base_dire}/"
+
+        dn = os.path.abspath(os.path.dirname(self.pipeline_instance_dir))
+
+        rsync_cmd = f"rsync --mkpath -a --dirs --files-from={dep_file_txt} {dn}/ {ssh_remote_dest}"
         self.logger.debug("%s", rsync_cmd)
         invoke_rsync(rsync_cmd)

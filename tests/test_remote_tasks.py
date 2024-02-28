@@ -145,9 +145,9 @@ class RemoteTaskTests1(unittest.TestCase):
         pipeline_instance = d.pipeline_instance_from_generator(create_pipeline_generator_two_remote_sites(tc1, tc2))
 
         for task_conf in pipeline_instance.remote_sites_task_confs():
-            if task_conf.ssh_specs.startswith("maxl@ip32"):
+            if task_conf.ssh_remote_dest.startswith("maxl@ip32"):
                 task_conf_ip32 = task_conf
-            elif task_conf.ssh_specs.startswith("maxl@ip29"):
+            elif task_conf.ssh_remote_dest.startswith("maxl@ip29"):
                 task_conf_ip29 = task_conf
             else:
                 raise Exception("!")
@@ -188,7 +188,7 @@ class RemoteTaskTests1(unittest.TestCase):
                         self.assertEqual(len(res), 1)
                         return res[0].strip()
                     except FileNotFoundError as fnfe:
-                        raise Exception(f"{fnfe} while fetching {f} from {task_conf.ssh_specs}")
+                        raise Exception(f"{fnfe} while fetching {f} from {task_conf.ssh_remote_dest}")
 
                 self.assertEqual(fetch_containers_dir_in_pipeline_env(remote_executor_ip32, tc1), "dummy1")
                 self.assertEqual(fetch_containers_dir_in_pipeline_env(remote_executor_ip29, tc2), "dummy2")
