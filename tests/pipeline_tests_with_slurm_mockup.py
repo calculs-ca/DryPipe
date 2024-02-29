@@ -100,13 +100,16 @@ class PipelineWithSlurmArray(BasePipelineTest):
                     i=i,
                     f=t0.outputs.f
                 ).outputs(
-                    slurm_result=int
+                    slurm_result=int,
+                    slurm_result_in_file=dsl.file('slurm_result.txt')
                 ).calls("""
                     #!/usr/bin/env bash
                     echo "$r $i"  
                     value_f=$(<$f)          
                     export slurm_result=$(( $r + $i + $value_f))
                     echo "$slurm_result"
+                    mkdir -p $__task_output_dir
+                    echo "$slurm_result" > $slurm_result_in_file
                 """)()
 
         for match in dsl.query_all_or_nothing("t_*", state="ready"):
@@ -151,6 +154,13 @@ class PipelineWithSlurmArray(BasePipelineTest):
             int(tasks_by_keys["t_b_2"].outputs.slurm_result),
             12+25
         )
+
+        for k, t in tasks_by_keys.items():
+            if k.startswith("t_"):
+                with open(t.outputs.slurm_result_in_file) as f:
+                    r = int(f.read().strip())
+                    expected = int(t.outputs.slurm_result)
+                    self.assertEqual(expected, r, "slurm_result_in_file does not match expected result")
 
 
 

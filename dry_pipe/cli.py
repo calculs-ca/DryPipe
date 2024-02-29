@@ -54,7 +54,7 @@ class Cli:
                 default_pid = os.path.dirname(os.path.dirname(control_dir))
 
         if default_pid is None:
-            default_pid = Path(__file__).parent.parent
+            default_pid = Path(__file__).parent.parent.parent
 
         parser.add_argument(
             '--pipeline-instance-dir',
@@ -163,6 +163,19 @@ class Cli:
 
             array_parent_task.upload_array()
 
+        elif self.parsed_args.command == 'download-array':
+
+            task_process = TaskProcess(
+                os.path.join(self.parsed_args.pipeline_instance_dir, ".drypipe", self.parsed_args.task_key)
+            )
+
+            if self.parsed_args.ssh_remote_dest is not None:
+                task_process.task_conf.ssh_remote_dest = self.parsed_args.ssh_remote_dest
+
+            array_parent_task = SlurmArrayParentTask(task_process)
+
+            array_parent_task.download_array()
+
         elif self.parsed_args.command == 'create-array-parent':
 
             new_task_key = self.parsed_args.new_task_key
@@ -175,6 +188,18 @@ class Cli:
                 self.parsed_args.slurm_account,
                 split_into=self.parsed_args.split
             )
+        elif self.parsed_args.command == 'list-array-states':
+            task_process = TaskProcess(
+                os.path.join(self.parsed_args.pipeline_instance_dir, ".drypipe", self.parsed_args.task_key)
+            )
+
+            array_parent_task = SlurmArrayParentTask(task_process)
+
+            for task_key, state in array_parent_task.list_array_states():
+                print(f"{task_key}/{state}")
+
+
+
 
 
     def _sub_parsers(self):
@@ -186,8 +211,13 @@ class Cli:
         self.add_sbatch_args(self.subparsers.add_parser('sbatch'))
         self.add_sbatch_args(self.subparsers.add_parser('sbatch-gen'))
         self.add_array_args(self.subparsers.add_parser('submit-array'))
-        self.add_upload_array_args(self.subparsers.add_parser('upload-array'))
+        self.add_upload_download_array_args(self.subparsers.add_parser('upload-array'))
+        self.add_upload_download_array_args(self.subparsers.add_parser('download-array'))
         self.add_create_array_parent_args(self.subparsers.add_parser('create-array-parent'))
+        self._add_task_key_parser_arg(
+            self.subparsers.add_parser('list-array-states')
+        )
+
 
     def add_status_args(self):
         pass
@@ -209,7 +239,7 @@ class Cli:
 
         self._add_task_key_parser_arg(run_parser)
 
-    def add_upload_array_args(self, upload_array_parser):
+    def add_upload_download_array_args(self, upload_array_parser):
 
         self.upload_array_parser = upload_array_parser
 

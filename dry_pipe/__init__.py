@@ -340,6 +340,21 @@ def host_has_sbatch():
 
         raise Exception(f"Funny return from which sbatch: {out}")
 
+class RemotePipelineSpecs:
+
+    def __init__(self, task_conf, pipeline_instance_dir):
+
+        self.user_at_host, self.remote_base_dir, self.ssh_key_file = task_conf.parse_ssh_remote_dest()
+
+        self.remote_instance_work_dir = os.path.join(
+            self.remote_base_dir,
+            os.path.basename(pipeline_instance_dir),
+            ".drypipe"
+        )
+
+        self.remote_cli = os.path.join(self.remote_instance_work_dir, "cli")
+
+
 
 class TaskConf:
     """
@@ -478,6 +493,9 @@ class TaskConf:
             user_at_host = user_at_host[:-1]
 
         return user_at_host, remote_base_dire, ssh_key_file
+
+    def remote_pipeline_specs(self, pipeline_instance_dir):
+        return RemotePipelineSpecs(self, pipeline_instance_dir)
 
     def hash_values(self):
         yield self.executer_type

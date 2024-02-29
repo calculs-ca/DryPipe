@@ -1027,6 +1027,7 @@ class TaskProcess:
     def exec_remote(self, user_at_host, cmd):
         with PortablePopen(["ssh", user_at_host, " ".join(cmd)]) as p:
             p.wait_and_raise_if_non_zero()
+            return p.stdout_as_string()
 
     def launch_remote_task(self):
 
@@ -1584,6 +1585,11 @@ class SlurmArrayParentTask:
                 yield f".drypipe/{child_task_key}/state.ready"
                 yield f".drypipe/{child_task_key}/task-conf.json"
 
+                for step in p.task_conf.step_invocations:
+                    if step["call"] == "bash":
+                        _, script = step["script"].rsplit("/", 1)
+                        yield f".drypipe/{child_task_key}/{script}"
+
             yield ".drypipe/cli"
             yield ".drypipe/dry_pipe/core_lib.py"
             yield ".drypipe/dry_pipe/__init__.py"
@@ -1622,6 +1628,61 @@ class SlurmArrayParentTask:
         self.task_process.task_logger.debug("%s", rsync_cmd)
         self.task_process.invoke_rsync(rsync_cmd)
 
+    def download_array(self):
+        def gen_result_files():
+            for child_task_key in self.children_task_keys():
+                p = TaskProcess(
+                    os.path.join(self.tracker.pipeline_work_dir, child_task_key),
+                    ensure_all_upstream_deps_complete=False
+                )
+                for file in p.outputs.rsync_file_list():
+                    yield file
+
+        result_file_txt = os.path.join(self.control_dir(), "result-files.txt")
+        uniq_files = set()
+        with open(result_file_txt, "w") as tf:
+            for result_file in gen_result_files():
+                if result_file not in uniq_files:
+                    tf.write(result_file)
+                    tf.write("\n")
+                    uniq_files.add(result_file)
+
+        rps = self.task_process.task_conf.remote_pipeline_specs(self.tracker.pipeline_instance_dir)
+
+        pid = self.task_process.pipeline_instance_dir
+
+        pipeline_base_name = os.path.basename(pid)
+
+        ssh_remote_dest = \
+            f"{rps.user_at_host}:{rps.remote_base_dir}/{pipeline_base_name}/"
+
+        rsync_cmd = f"rsync -a --dirs --files-from={result_file_txt} {ssh_remote_dest} {pid}/"
+
+        self.task_process.task_logger.debug("%s", rsync_cmd)
+        self.task_process.invoke_rsync(rsync_cmd)
+
+        remote_exec_result = self.task_process.exec_remote(rps.user_at_host, [
+            rps.remote_cli,
+            "list-array-states",
+            f"--task-key={self.task_process.task_key}"
+        ])
+
+        for task_key_task_state in remote_exec_result.split("\n"):
+
+            task_key_task_state = task_key_task_state.strip()
+
+            if task_key_task_state == "":
+                continue
+
+            task_key, task_state = task_key_task_state.split("/")
+
+            task_control_dir = os.path.join(self.task_process.pipeline_work_dir, task_key)
+
+            state_file_path = StateFileTracker.find_state_file_if_exists(task_control_dir)
+
+            if state_file_path is not None:
+                actual_state = os.path.join(task_control_dir, task_state)
+                os.rename(state_file_path.path, actual_state)
 
     @staticmethod
     def create_array_parent(pipeline_instance_dir, new_task_key, matcher, slurm_account, split_into):
@@ -1669,3 +1730,11 @@ class SlurmArrayParentTask:
             print(f"Warning: {len(not_ready_task_keys)} are not in 'ready' state:")
 
         Path(os.path.join(control_dir, "state.ready")).touch(exist_ok=True)
+
+    def list_array_states(self):
+        for child_task_key in self.children_task_keys():
+            child_task_control_dir = os.path.join(self.task_process.pipeline_work_dir, child_task_key)
+
+            state_file_path = StateFileTracker.find_state_file_if_exists(child_task_control_dir)
+            if state_file_path is not None:
+                yield child_task_key, state_file_path.name

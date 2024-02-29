@@ -294,15 +294,24 @@ class StateFileTracker:
     def lookup_state_file_from_memory(self, task_key):
         return self.state_files_in_memory[task_key]
 
-    def _find_state_file_path_in_task_control_dir(self, task_key) -> str :
+    @staticmethod
+    def find_state_file_if_exists(control_dir):
         try:
-            with os.scandir(os.path.join(self.pipeline_work_dir, task_key)) as i:
+            with os.scandir(control_dir) as i:
                 for f in i:
                     if f.name.startswith("state."):
-                        return f.path
+                        return f
         except FileNotFoundError:
             pass
+
         return None
+
+    def _find_state_file_path_in_task_control_dir(self, task_key) -> str:
+        p = StateFileTracker.find_state_file_if_exists(os.path.join(self.pipeline_work_dir, task_key))
+        if p is not None:
+            return p.path
+        else:
+            return None
 
     def load_state_file(self, task_key, slurm_array_id=None):
         state_file_path = self._find_state_file_path_in_task_control_dir(task_key)

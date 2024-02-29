@@ -551,9 +551,16 @@ class TaskOutputs:
                 yield o
 
     def rsync_file_list(self):
-        for o in self._task_outputs:
+        has_output_var = False
+        for o in self._task_outputs.values():
             if o.is_file():
-                yield o.name, f"output/{self.task_key}/{o.produced_file_name}"
+                yield f"output/{self.task_key}/{o.produced_file_name}"
+            else:
+                has_output_var = True
+
+        if has_output_var:
+            yield f".drypipe/{self.task_key}/output_vars"
+
 
     def iterate_file_task_outputs(self, task_output_dir):
         for o in self._task_outputs.values():

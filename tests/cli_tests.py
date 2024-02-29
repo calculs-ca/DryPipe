@@ -5,9 +5,13 @@ import unittest
 from dry_pipe import DryPipe, TaskConf
 from dry_pipe.cli import Cli
 from dry_pipe.core_lib import UpstreamTasksNotCompleted, PortablePopen
+from dry_pipe.task_process import TaskProcess, SlurmArrayParentTask
 from pipeline_tests_with_single_tasks import PipelineWithSinglePythonTask
 from pipeline_tests_with_slurm_mockup import PipelineWithSlurmArrayForRealSlurmTest, PipelineWithSlurmArray
 from test_utils import TestSandboxDir
+
+def test_cli(*args):
+    Cli(args).invoke(test_mode=True)
 
 def pipeline_with_slurm_array_1():
     t = PipelineWithSlurmArrayForRealSlurmTest()
@@ -44,11 +48,11 @@ class CliArrayTests1(PipelineWithSlurmArrayForRealSlurmTest):
     def test_complete_run(self):
         d = TestSandboxDir(self)
 
-        Cli([
+        test_cli(
             f'--pipeline-instance-dir={d.sandbox_dir}',
             'run',
             f'--generator=cli_tests:pipeline_with_slurm_array_1'
-        ]).invoke(test_mode=True)
+        )
 
         pipeline_instance = self.create_pipeline_instance(d.sandbox_dir)
 
@@ -59,11 +63,11 @@ class CliArrayTests1(PipelineWithSlurmArrayForRealSlurmTest):
 
         pipeline_instance = self.create_prepare_and_run_pipeline(TestSandboxDir(self))
 
-        Cli([
+        test_cli(
             f'--pipeline-instance-dir={pipeline_instance.state_file_tracker.pipeline_instance_dir}',
             'submit-array',
             '--task-key=array-parent'
-        ]).invoke(test_mode=True)
+        )
 
         self.do_validate(pipeline_instance)
 
@@ -75,12 +79,12 @@ class CliArrayTests1(PipelineWithSlurmArrayForRealSlurmTest):
     def test_array_launch_one_task_in_array(self):
         pipeline_instance = self.create_prepare_and_run_pipeline(TestSandboxDir(self))
 
-        Cli([
+        test_cli(
             '--pipeline-instance-dir', pipeline_instance.state_file_tracker.pipeline_instance_dir,
             'submit-array',
             '--task-key', 'array-parent',
             '--limit', '1'
-        ]).invoke(test_mode=True)
+        )
 
         self.assertEqual(
             len(self._get_job_files(pipeline_instance,"array-parent")),
@@ -105,12 +109,12 @@ class CliArrayTests1(PipelineWithSlurmArrayForRealSlurmTest):
         pipeline_instance = self.create_prepare_and_run_pipeline(TestSandboxDir(self))
 
         for _ in [1, 1, 1]:
-            Cli([
+            test_cli(
                 '--pipeline-instance-dir', pipeline_instance.state_file_tracker.pipeline_instance_dir,
                 'submit-array',
                 '--task-key', 'array-parent',
                 '--limit=1'
-            ]).invoke(test_mode=True)
+            )
 
         self.assertEqual(
             len(self._get_job_files(pipeline_instance,"array-parent")),
@@ -140,21 +144,21 @@ class CliTestsPipelineWithSlurmArray(PipelineWithSlurmArray):
         pipeline_instance = self.create_prepare_and_run_pipeline(TestSandboxDir(self))
 
         def create_parent_task(parent_task_key, match):
-            Cli([
+            test_cli(
                 '--pipeline-instance-dir', pipeline_instance.state_file_tracker.pipeline_instance_dir,
                 'create-array-parent',
                 parent_task_key, match,
                 '--slurm-account=dummy', '--force'
-            ]).invoke(test_mode=True)
+            )
 
         self.assertRaises(UpstreamTasksNotCompleted, lambda: create_parent_task('p1', 't_a_*'))
 
-        Cli([
+        test_cli(
             '--pipeline-instance-dir', pipeline_instance.state_file_tracker.pipeline_instance_dir,
             'task',
             f'{pipeline_instance.state_file_tracker.pipeline_instance_dir}/.drypipe/z',
             '--wait'
-        ]).invoke(test_mode=True)
+        )
 
         create_parent_task('p1', 't_a_*')
 
@@ -169,12 +173,12 @@ class CliTestsPipelineWithSlurmArray(PipelineWithSlurmArray):
         self.assertEqual({k for k in keys_p1('p1')}, {'t_a_2', 't_a_1'})
 
         def run_parent_task(parent_task_key):
-            Cli([
+            test_cli(
                 '--pipeline-instance-dir', pipeline_instance.state_file_tracker.pipeline_instance_dir,
                 'task',
                 f'{pipeline_instance.state_file_tracker.pipeline_instance_dir}/.drypipe/{parent_task_key}',
                 '--wait'
-            ]).invoke(test_mode=True)
+            )
 
         run_parent_task('p1')
 
@@ -182,19 +186,28 @@ class CliTestsPipelineWithSlurmArray(PipelineWithSlurmArray):
 
         self.assertEqual({k for k in keys_p1('p2')}, {'t_b_2', 't_b_1'})
 
-        Cli([
+        test_cli(
             f'--pipeline-instance-dir={pipeline_instance.state_file_tracker.pipeline_instance_dir}',
             'submit-array',
             '--task-key=p2',
             '--limit=1'
-        ]).invoke(test_mode=True)
+        )
 
-        Cli([
+        test_cli(
             f'--pipeline-instance-dir={pipeline_instance.state_file_tracker.pipeline_instance_dir}',
             'submit-array',
             '--task-key=p2',
             '--limit=1'
-        ]).invoke(test_mode=True)
+        )
+
+        array_parent_task = SlurmArrayParentTask(TaskProcess(
+            os.path.join(pipeline_instance.state_file_tracker.pipeline_work_dir, "p2")
+        ))
+
+        self.assertEqual(
+            {task_key: state for task_key, state in array_parent_task.list_array_states()},
+            {"t_b_1": "state.completed", "t_b_2": "state.completed"}
+        )
 
         self.do_validate(pipeline_instance)
 
@@ -217,33 +230,41 @@ class CliTestsPipelineWithSlurmArray(PipelineWithSlurmArray):
 
         user_at_host, root_dir = ssh_dest.split(":")
 
+        pid = pipeline_instance.state_file_tracker.pipeline_instance_dir
+
         self.exec_remote(user_at_host, ["rm", "-Rf", root_dir])
         self.exec_remote(user_at_host, ["mkdir", "-p", root_dir])
 
-        pid = pipeline_instance.state_file_tracker.pipeline_instance_dir
-
-        Cli([
+        test_cli(
             '--pipeline-instance-dir', pid,
             'task',
             f'{pid}/.drypipe/z',
             '--wait'
-        ]).invoke(test_mode=True)
+        )
 
-        Cli([
+        test_cli(
             '--pipeline-instance-dir', pid,
             'upload-array',
             '--task-key=array_parent',
             f'--ssh-remote-dest={ssh_dest}'
-        ]).invoke(test_mode=True)
+        )
 
-        Cli([
+        test_cli(
             '--pipeline-instance-dir', pid,
             'task',
             f'{pid}/.drypipe/array_parent',
             '--wait',
             f'--ssh-remote-dest={ssh_dest}'
-        ]).invoke(test_mode=True)
+        )
 
+        test_cli(
+            '--pipeline-instance-dir', pid,
+            'download-array',
+            '--task-key=array_parent',
+            f'--ssh-remote-dest={ssh_dest}'
+        )
+
+        self.do_validate(pipeline_instance)
 
 
 class CliTestScenario2(PipelineWithSlurmArray):
@@ -251,9 +272,9 @@ class CliTestScenario2(PipelineWithSlurmArray):
     def test_run_until(self):
         d = TestSandboxDir(self)
 
-        Cli([
+        test_cli(
             '--pipeline-instance-dir', d.sandbox_dir,
             'run',
             '--generator', 'cli_tests:pipeline_with_slurm_array_2',
             '--until', 't_a*'
-        ]).invoke(test_mode=True)
+        )
