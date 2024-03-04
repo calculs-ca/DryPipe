@@ -79,6 +79,9 @@ class StateMachine:
     def file(self, p):
         return Path(p)
 
+    def pipeline_instance_dir(self):
+        return self.state_file_tracker.pipeline_instance_dir
+
     def query_all_or_nothing(self, glob_expression, state="completed"):
 
         def is_required_state(state_file):
