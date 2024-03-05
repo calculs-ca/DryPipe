@@ -1,12 +1,11 @@
 import argparse
-import json
 import logging
 import os
 import sys
 import textwrap
 from pathlib import Path
 
-from dry_pipe.core_lib import func_from_mod_func, StateFileTracker, is_inside_slurm_job
+from dry_pipe.core_lib import func_from_mod_func, is_inside_slurm_job
 from dry_pipe.task_process import TaskProcess, SlurmArrayParentTask
 
 
@@ -128,6 +127,10 @@ class Cli:
             pipeline = func_from_mod_func(self.parsed_args.generator)()
             pipeline_instance = pipeline.create_pipeline_instance(self.parsed_args.pipeline_instance_dir)
             pipeline_instance.run_sync(until_patterns=self.parsed_args.until)
+        elif self.parsed_args.command == 'call':
+
+            call(self.parsed_args.module_function)
+
         elif self.parsed_args.command == 'task':
 
             task_process = TaskProcess(
@@ -207,6 +210,7 @@ class Cli:
 
         self.subparsers = self.parser.add_subparsers(required=True, dest='command')
         self.add_run_args(self.subparsers.add_parser('run'))
+        self.add_call_args(self.subparsers.add_parser('call'))
         self.add_task_args(self.subparsers.add_parser('task'))
         self.add_sbatch_args(self.subparsers.add_parser('sbatch'))
         self.add_sbatch_args(self.subparsers.add_parser('sbatch-gen'))
@@ -339,6 +343,10 @@ class Cli:
         self._add_task_key_parser_arg(parser)
         self.__wait_arg(parser)
 
+    def add_call_args(self, parser):
+        parser.add_argument('module_function', type=str)
+
+
 def handle_script_lib_main():
     try:
         cli = Cli(sys.argv[1:])
@@ -348,4 +356,8 @@ def handle_script_lib_main():
 
 
 if __name__ == '__main__':
-    call(sys.argv[2])
+
+    if "SLURM_JOB_ID" in os.environ:
+        call(sys.argv[2])
+    else:
+        handle_script_lib_main()
