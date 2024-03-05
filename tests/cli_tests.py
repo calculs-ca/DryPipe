@@ -5,6 +5,7 @@ import unittest
 from dry_pipe import DryPipe, TaskConf
 from dry_pipe.cli import Cli
 from dry_pipe.core_lib import UpstreamTasksNotCompleted, PortablePopen
+from dry_pipe.pipeline import Pipeline
 from dry_pipe.task_process import TaskProcess, SlurmArrayParentTask
 from pipeline_tests_with_single_tasks import PipelineWithSinglePythonTask
 from pipeline_tests_with_slurm_mockup import PipelineWithSlurmArrayForRealSlurmTest, PipelineWithSlurmArray
@@ -61,7 +62,22 @@ class CliArrayTests1(PipelineWithSlurmArrayForRealSlurmTest):
 
     def test_array_launch_one_complete_array(self):
 
-        pipeline_instance = self.create_prepare_and_run_pipeline(TestSandboxDir(self))
+        d = TestSandboxDir(self)
+
+        pipeline_with_slurm_array_1_modfunc = 'cli_tests:pipeline_with_slurm_array_1'
+        test_cli(
+            f'--pipeline-instance-dir={d.sandbox_dir}',
+            'prepare',
+            f'--generator={pipeline_with_slurm_array_1_modfunc}'
+        )
+
+        pipeline_instance = Pipeline.load_from_module_func(
+            pipeline_with_slurm_array_1_modfunc
+        ).create_pipeline_instance(d.sandbox_dir)
+
+        # ensure no task has been executed
+        for task in pipeline_instance.query("*", include_incomplete_tasks=True):
+            self.assertEqual(task.state_name(), 'state.ready')
 
         test_cli(
             f'--pipeline-instance-dir={pipeline_instance.state_file_tracker.pipeline_instance_dir}',

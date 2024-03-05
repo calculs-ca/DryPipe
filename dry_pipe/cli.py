@@ -127,6 +127,10 @@ class Cli:
             pipeline = func_from_mod_func(self.parsed_args.generator)()
             pipeline_instance = pipeline.create_pipeline_instance(self.parsed_args.pipeline_instance_dir)
             pipeline_instance.run_sync(until_patterns=self.parsed_args.until)
+        elif self.parsed_args.command == 'prepare':
+            pipeline = func_from_mod_func(self.parsed_args.generator)()
+            pipeline_instance = pipeline.create_pipeline_instance(self.parsed_args.pipeline_instance_dir)
+            pipeline_instance.run_sync(["*"])
         elif self.parsed_args.command == 'call':
 
             call(self.parsed_args.module_function)
@@ -210,6 +214,7 @@ class Cli:
 
         self.subparsers = self.parser.add_subparsers(required=True, dest='command')
         self.add_run_args(self.subparsers.add_parser('run'))
+        self.add_generator_arg(self.subparsers.add_parser('prepare'))
         self.add_call_args(self.subparsers.add_parser('call'))
         self.add_task_args(self.subparsers.add_parser('task'))
         self.add_sbatch_args(self.subparsers.add_parser('sbatch'))
@@ -226,14 +231,17 @@ class Cli:
     def add_status_args(self):
         pass
 
-    def add_run_args(self, run_parser):
-
-        run_parser.add_argument(
+    def add_generator_arg(self, parser):
+        parser.add_argument(
             '--generator',
             help='<module>:<function> task generator function, can also be set with environment var DRYPIPE_PIPELINE_GENERATOR',
             metavar="GENERATOR",
             default=self.env.get("DRYPIPE_PIPELINE_GENERATOR")
         )
+
+    def add_run_args(self, run_parser):
+
+        self.add_generator_arg(run_parser)
 
         run_parser.add_argument(
             '--until', help='tasks matching PATTERN will not be started',
