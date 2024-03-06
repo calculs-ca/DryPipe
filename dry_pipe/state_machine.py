@@ -29,9 +29,9 @@ class InvalidTaskDefinition(Exception):
 
     def __str__(self):
         file_of_dag_gen = self.dag_gen.__globals__['__file__']
-        raise Exception(f"bad task definition task({self.task_builder.key}) in {file_of_dag_gen}" +
-                        ", expression is a function " +
-                        f" with zero args that must be called before yield.")
+        return f"bad task definition task(key='{self.task_builder.key}') in {file_of_dag_gen}" + \
+               ", expression is a function " + \
+               f" with zero args that must be called before yield."
 
 
 

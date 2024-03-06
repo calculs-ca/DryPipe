@@ -23,7 +23,7 @@ class PipelineInstance:
 
         state_machine = StateMachine(
             self.state_file_tracker,
-            lambda dsl: self.pipeline.task_generator(dsl),
+            self.pipeline.task_generator,
             until_patterns=until_patterns
         )
         pr = PipelineRunner(
