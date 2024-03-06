@@ -20,6 +20,20 @@ class InvalidQueryInTaskGenerator(Exception):
     def __str__(self):
         return self.msg
 
+class InvalidTaskDefinition(Exception):
+
+    def __init__(self, task_builder, dag_gen):
+        self.task_builder = task_builder
+        self.dag_gen = dag_gen
+
+    def __str__(self):
+        file_of_dag_gen = self.dag_gen.__globals__['__file__']
+        raise Exception(f"bad task definition task({self.task_builder.key}) in {file_of_dag_gen}" +
+                        ", expression is a function " +
+                        f" with zero args that must be called before yield.")
+
+
+
 class StateMachine:
 
     def __init__(self, state_file_tracker: StateFileTracker, task_generator=None, observer=None, until_patterns=None):
@@ -181,6 +195,10 @@ class StateMachine:
         new_generated_tasks = 0
 
         for task in self._task_generator(self):
+
+            if isinstance(task, TaskBuilder):
+                raise InvalidTaskDefinition(task, self._task_generator)
+
             is_new, state_file = self.state_file_tracker.create_true_state_if_new_else_fetch_from_memory(task)
             if is_new:
                 new_generated_tasks += 1

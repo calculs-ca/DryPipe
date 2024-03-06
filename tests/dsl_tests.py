@@ -2,6 +2,33 @@ import unittest
 
 
 from dry_pipe import TaskBuilder, TaskConf
+from dry_pipe.core_lib import StateFileTracker
+from dry_pipe.state_machine import InvalidTaskDefinition
+from tests.test_state_machine import StateMachineTester
+from tests.test_utils import TestSandboxDir
+
+
+class DslErrorsTests(unittest.TestCase):
+
+    def test_bad_task_definitions(self):
+
+        d = TestSandboxDir(self)
+
+        def dag_gen(dsl):
+
+            yield dsl.task(key="t1").calls("""
+                #!/usr/bin/bash
+                echo "z"
+            """)# missing ()
+
+        tester = StateMachineTester(self, dag_gen, StateFileTracker(d.sandbox_dir))
+
+        self.assertRaises(
+            InvalidTaskDefinition,
+            lambda: tester.iterate_once_and_mutate_set_of_next_state_files_ready()
+        )
+
+
 
 
 class TaskChangeTrackingTests(unittest.TestCase):
