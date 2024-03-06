@@ -1,5 +1,6 @@
 import fnmatch
 import os.path
+import typing
 from pathlib import Path
 
 from dry_pipe import TaskBuilder, TaskConf
@@ -187,7 +188,7 @@ class StateMachine:
         else:
             return False
 
-    def set_of_completed_task_keys(self) ->  set[str]:
+    def set_of_completed_task_keys(self) -> typing.Set:
         return set(self.state_file_tracker.completed_task_keys())
 
     def _ready_state_files_from_generator(self):
