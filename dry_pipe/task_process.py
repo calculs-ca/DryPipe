@@ -40,11 +40,13 @@ class TaskProcess:
             ensure_all_upstream_deps_complete=True,
             no_logger=False,
             test_mode=False,
-            wait_for_completion=False
+            wait_for_completion=False,
+            tail=False
     ):
 
         self.wait_for_completion = wait_for_completion
         self.record_history = False
+        self.tail = tail
 
         array_task_control_dir = self._script_location_of_array_task_id_if_applies(control_dir)
         if array_task_control_dir is not None:
@@ -1047,6 +1049,39 @@ class TaskProcess:
             remote_cli, "task", remote_task_control_dir
         ])
 
+    def _launch_and_tail(self, launch_func):
+
+        all_logs = [
+            os.path.join(self.control_dir, log)
+            for log in ["drypipe.log", "out.log"]
+        ]
+
+        tail_cmd = ["tail", "-f"] + all_logs
+
+        def tail_func():
+            def files_ready():
+                for f in all_logs:
+                    if os.path.exists(f):
+                        yield 1
+
+            while True:
+                if len(list(files_ready())) == 2:
+                    break
+                else:
+                    time.sleep(1)
+
+            with PortablePopen(tail_cmd, stdout=sys.stdout, stderr=sys.stderr, stdin=sys.stdin) as p:
+                p.wait()
+
+        launcher = Thread(target=launch_func)
+        launcher.start()
+
+        tail_thread = Thread(target=tail_func)
+        tail_thread.start()
+
+        launcher.join()
+
+
     def launch_task(self, array_limit=None):
 
         exit_process_when_done = self.as_subprocess
@@ -1072,7 +1107,10 @@ class TaskProcess:
                     self._exit_process()
 
         if self.wait_for_completion or not self.as_subprocess:
-            task_func_wrapper()
+            if self.tail:
+                self._launch_and_tail(task_func_wrapper)
+            else:
+                task_func_wrapper()
         else:
             slurm_job_id = os.environ.get("SLURM_JOB_ID")
             is_slurm = slurm_job_id is not None

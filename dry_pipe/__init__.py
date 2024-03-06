@@ -297,7 +297,7 @@ class TaskBuilder:
 
         if task_step is None:
             raise Exception(
-                f"invalid args, task.calls(...) can take a sigle a single positional argument, was given: {args}"
+                f"invalid args, task.calls(...) can take a single a single positional argument, was given: {args}"
             )
 
         return TaskBuilder(** {

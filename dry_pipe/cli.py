@@ -4,6 +4,7 @@ import os
 import sys
 import textwrap
 from pathlib import Path
+from threading import Thread
 
 from dry_pipe.core_lib import func_from_mod_func, is_inside_slurm_job
 from dry_pipe.task_process import TaskProcess, SlurmArrayParentTask
@@ -104,6 +105,9 @@ class Cli:
     def _wait(self):
         return self.parsed_args.wait
 
+    def _tail(self):
+        return self.parsed_args.tail
+
     def get_ssh_remote_dest_or_none(self, task_conf):
         ssh_remote_dest = task_conf.get("ssh_remote_dest")
         if ssh_remote_dest is None:
@@ -156,7 +160,8 @@ class Cli:
                 self._complete_control_dir(self.parsed_args.control_dir),
                 wait_for_completion=self._wait(),
                 test_mode=test_mode,
-                as_subprocess=not test_mode
+                as_subprocess=not test_mode,
+                tail=self._tail()
             )
 
             if self.parsed_args.ssh_remote_dest is not None:
@@ -361,6 +366,8 @@ class Cli:
         parser.add_argument("--by-runner", dest="by_runner", action="store_true")
         parser.set_defaults(by_runner=False)
         self.add_ssh_remote_dest_arg(parser)
+        parser.add_argument("--tail", dest="tail", action="store_true")
+
 
     def add_sbatch_args(self, parser):
         self._add_task_key_parser_arg(parser)
