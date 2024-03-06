@@ -19,8 +19,11 @@ def call(mod_func):
 
 class Cli:
 
-    def __init__(self, args, invocation_script=None, env={}):
-        self.env = env
+    def __init__(self, args, invocation_script=None, env=None):
+
+        if env is None:
+            self.env = os.environ
+
         self.parser = argparse.ArgumentParser(
             description="DryPipe CLI"
         )
@@ -114,6 +117,20 @@ class Cli:
 
     def invoke(self, test_mode=False):
 
+        def pipeline_instance_from_args():
+            g = self.parsed_args.generator
+            if g is None:
+                raise Exception(f"--generator is required")
+            pipeline = func_from_mod_func(g)()
+
+            if self.parsed_args.pipeline_instance_dir is None:
+                raise Exception(
+                    f"--pipeline-instance-dir is required, " +
+                    "or DRYPIPE_PIPELINE_INSTANCE_DIR environment variable must be set"
+                )
+
+            return pipeline.create_pipeline_instance(self.parsed_args.pipeline_instance_dir)
+
         if self.parsed_args.command == 'submit-array':
             task_process = TaskProcess(
                 os.path.join(self.parsed_args.pipeline_instance_dir, ".drypipe", self.parsed_args.task_key),
@@ -124,12 +141,10 @@ class Cli:
                 array_limit=self.parsed_args.limit
             )
         elif self.parsed_args.command == 'run':
-            pipeline = func_from_mod_func(self.parsed_args.generator)()
-            pipeline_instance = pipeline.create_pipeline_instance(self.parsed_args.pipeline_instance_dir)
+            pipeline_instance = pipeline_instance_from_args()
             pipeline_instance.run_sync(until_patterns=self.parsed_args.until)
         elif self.parsed_args.command == 'prepare':
-            pipeline = func_from_mod_func(self.parsed_args.generator)()
-            pipeline_instance = pipeline.create_pipeline_instance(self.parsed_args.pipeline_instance_dir)
+            pipeline_instance = pipeline_instance_from_args()
             pipeline_instance.run_sync(["*"])
         elif self.parsed_args.command == 'call':
 
