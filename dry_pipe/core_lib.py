@@ -233,11 +233,11 @@ class StateFileTracker:
 
     def prepare_instance_dir(self, conf_dict):
         Path(self.pipeline_instance_dir).mkdir(
-            exist_ok=False, mode=FileCreationDefaultModes.pipeline_instance_directories)
+            exist_ok=True, mode=FileCreationDefaultModes.pipeline_instance_directories)
         Path(self.pipeline_work_dir).mkdir(
-            exist_ok=False, mode=FileCreationDefaultModes.pipeline_instance_directories)
+            exist_ok=True, mode=FileCreationDefaultModes.pipeline_instance_directories)
         Path(self.pipeline_instance_dir, "output").mkdir(
-            exist_ok=False, mode=FileCreationDefaultModes.pipeline_instance_directories)
+            exist_ok=True, mode=FileCreationDefaultModes.pipeline_instance_directories)
 
         with open(Path(self.pipeline_work_dir, "conf.json"), "w") as conf_file:
             conf_file.write(json.dumps(conf_dict, indent=4))
