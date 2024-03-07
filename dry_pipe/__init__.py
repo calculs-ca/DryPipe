@@ -167,7 +167,7 @@ class TaskBuilder:
 
     def inputs(self, *args, **kwargs):
         """
-        The consumes clause
+        The inputs clause
         :param args:
         :param kwargs:
         :return a new :py:meth:`dry_pipe.TaskBuilder` with the added inputs declaration
@@ -195,7 +195,7 @@ class TaskBuilder:
                     yield k, TaskInput(k, 'task-list', value=v)
                 else:
                     raise Exception(
-                        f"_consumes can only take DryPipe.file() or _consumes(a_file=other_task.out.name_of_file()" +
+                        f"inputs can only take DryPipe.file() or inputs(a_file=other_task.out.name_of_file()" +
                         f"task(key={self.key}) was given {type(v)}"
                     )
 
@@ -210,7 +210,7 @@ class TaskBuilder:
 
         for o, count in collections.Counter([k for k, _ in deps_from_args()]).items():
             if count > 1:
-                raise Exception(f"duplicate variable {o} in task(key={self.key}).consumes(...) clause")
+                raise Exception(f"duplicate variable {o} in task(key={self.key}).inputs(...) clause")
 
         return TaskBuilder(** {
             ** vars(self),
@@ -249,7 +249,7 @@ class TaskBuilder:
                 #    yield k, v
                 else:
                     raise Exception(
-                        f"invalid arg in Task({self.key}).consumes({k})\n"+
+                        f"invalid arg in Task({self.key}).inputs({k})\n"+
                         f"produces takes only DryPipe.file or DryPipe.vars, ex:\n " +
                         "1:    task(...).produces(var_name=DryPipe.file('abc.tsv'))\n"
                         " 2:    task(...).produces(vars=DryPipe.vars(x=123,s='a'))"
