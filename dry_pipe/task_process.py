@@ -49,6 +49,7 @@ class TaskProcess:
         self.record_history = False
         self.tail = tail
         self.tail_all = tail_all
+        self.has_ended = False
 
         array_task_control_dir = self._script_location_of_array_task_id_if_applies(control_dir)
         if array_task_control_dir is not None:
@@ -98,9 +99,10 @@ class TaskProcess:
                 self.task_logger.exception(ex)
             raise ex
 
-    def _create_task_logger(self, test_mode=False):
+    def launched_from_cli_with_tail(self):
+        return self.tail is not None or self.tail_all is not None
 
-        #logging.getLogger().handlers.clear()
+    def _create_task_logger(self, test_mode=False):
 
         if test_mode or os.environ.get("DRYPIPE_TASK_DEBUG") == "True":
             logging_level = logging.DEBUG
@@ -108,10 +110,6 @@ class TaskProcess:
             logging_level = logging.INFO
 
         logger = logging.getLogger(f"task-logger-{os.path.basename(self.control_dir)}")
-
-
-        logger.propagate = False
-
         logger.setLevel(logging_level)
 
         if len(logger.handlers) == 0:
@@ -121,6 +119,17 @@ class TaskProcess:
                 logging.Formatter("%(asctime)s - %(levelname)s - %(message)s", datefmt='%Y-%m-%d %H:%M:%S%z')
             )
             logger.addHandler(file_handler)
+
+            if self.tail_all:
+                h = logging.StreamHandler(sys.stdout)
+                h.setLevel(logging_level)
+                h.setFormatter(
+                    logging.Formatter(
+                        "drypipe.log - %(asctime)s - %(levelname)s - %(message)s",
+                        datefmt='%H:%M:%S%z'
+                    )
+                )
+                logger.addHandler(h)
 
         logger.info("log level: %s", logging.getLevelName(logging_level))
         return logger
@@ -156,6 +165,7 @@ class TaskProcess:
                     )
     def _exit_process(self):
         self._delete_pid_and_slurm_job_id()
+        self.task_logger.info("will exit")
         logging.shutdown()
         os._exit(0)
 
@@ -805,7 +815,6 @@ class TaskProcess:
                 self._transition_state_file(state_file, "failed", step_number)
                 self._exit_process()
 
-
     def _is_work_on_local_copy(self):
         work_on_local_copy = self.task_conf.work_on_local_file_copies
         return work_on_local_copy is not None and work_on_local_copy
@@ -1063,36 +1072,28 @@ class TaskProcess:
         ])
 
     def _launch_and_tail(self, launch_func):
+        def func():
+            flf = os.path.join(self.control_dir, "out.log")
 
-        no_gc = []
-        def tail(log_file):
+            while not os.path.exists(flf):
+                time.sleep(1)
+                if self.has_ended:
+                    break
 
-            def func():
-                flf = os.path.join(self.control_dir, log_file)
+            with open(flf) as f:
+                for line in tail_file(f, 1):
+                    print(f"out.log - {line}")
+                    if self.has_ended:
+                        break
 
-                while not os.path.exists(flf):
-                    time.sleep(1)
-
-                with open(flf) as f:
-                    for line in tail_file(f, 1):
-                        if self.tail_all and log_file == "drypipe.log":
-                            print(f"=======> {flf}")
-                        print(line)
-
-            t = Thread(target=func)
-            no_gc.append(t)
-            t.start()
-
-        tail("out.log")
-
-        if self.tail_all:
-            tail("drypipe.log")
-
+        t = Thread(target=func)
+        t.start()
         launch_func()
 
     def launch_task(self, array_limit=None):
 
         exit_process_when_done = self.as_subprocess
+
         def task_func_wrapper():
             try:
                 self.task_logger.debug("task func started")
@@ -1111,7 +1112,8 @@ class TaskProcess:
                     raise ex
                 self.task_logger.exception(ex)
             finally:
-                if exit_process_when_done:
+                self.has_ended = True
+                if exit_process_when_done and not self.launched_from_cli_with_tail():
                     self._exit_process()
 
         if self.wait_for_completion or not self.as_subprocess:
