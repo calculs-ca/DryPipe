@@ -224,7 +224,7 @@ class TaskProcess:
                 if k not in args_names
             }
 
-        func_log = f"{mod_func}({','.join(args)},{kwargs})"
+        func_log = f"{mod_func}({','.join(map(str, args))},{kwargs})"
         log_msg = f"will invoke PythonCall: {func_log}"
         self.task_logger.info(log_msg)
 
