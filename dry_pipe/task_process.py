@@ -1074,13 +1074,15 @@ class TaskProcess:
         tail_cmd = ["tail", "-f"] + all_logs
 
         def tail_func():
-            def files_ready():
-                for f in _all_logs():
+            def count_files_ready():
+                c = 0
+                for f in all_logs:
                     if os.path.exists(f):
-                        yield 1
+                        c += 1
+                return c
 
             while True:
-                if len(list(files_ready())) == len(all_logs):
+                if count_files_ready() == len(all_logs):
                     break
                 else:
                     time.sleep(1)
