@@ -1064,6 +1064,30 @@ class TaskProcess:
 
     def _launch_and_tail(self, launch_func):
 
+        no_gc = []
+        def tail(log_file):
+
+            def func():
+                flf = os.path.join(self.control_dir, log_file)
+                with open(flf) as f:
+                    for line in tail_file(f, 1):
+                        if self.tail_all and log_file == "drypipe.log":
+                            print(f"=======> {flf}")
+                        print(line)
+
+            t = Thread(target=func)
+            no_gc.append(t)
+            t.start()
+
+        tail("out.log")
+
+        if self.tail_all:
+            tail("drypipe.log")
+
+        launch_func()
+
+    def old_launch_and_tail(self, launch_func):
+
         def _all_logs():
             if self.tail_all:
                 yield "drypipe.log"
@@ -1087,16 +1111,14 @@ class TaskProcess:
                 else:
                     time.sleep(1)
 
-            with PortablePopen(tail_cmd, stdout=sys.stdout, stderr=sys.stderr, stdin=sys.stdin) as p:
+            with PortablePopen(tail_cmd, stdout=sys.stdout, stderr=sys.stderr) as p:
+                self._tail_process = p
                 p.wait()
-
-        launcher = Thread(target=launch_func)
-        launcher.start()
 
         tail_thread = Thread(target=tail_func)
         tail_thread.start()
 
-        launcher.join()
+        launch_func()
 
 
     def launch_task(self, array_limit=None):
@@ -1793,3 +1815,28 @@ class SlurmArrayParentTask:
             state_file_path = StateFileTracker.find_state_file_if_exists(child_task_control_dir)
             if state_file_path is not None:
                 yield child_task_key, state_file_path.name
+
+
+def tail_file(file, delay=1.0):
+    line_terminators = ("\r\n", "\n", "\r")
+    trailing = True
+
+    while 1:
+        where = file.tell()
+        line = file.readline()
+        if line:
+            if trailing and line in line_terminators:
+                trailing = False
+                continue
+
+            if line[-1] in line_terminators:
+                line = line[:-1]
+                if line[-1:] == "\r\n" and "\r\n" in line_terminators:
+                    line = line[:-1]
+
+            trailing = False
+            yield line
+        else:
+            trailing = True
+            file.seek(where, 0)
+            time.sleep(delay)
