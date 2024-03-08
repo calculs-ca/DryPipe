@@ -41,12 +41,14 @@ class TaskProcess:
             no_logger=False,
             test_mode=False,
             wait_for_completion=False,
-            tail=False
+            tail=False,
+            tail_all=False
     ):
 
         self.wait_for_completion = wait_for_completion
         self.record_history = False
         self.tail = tail
+        self.tail_all = tail_all
 
         array_task_control_dir = self._script_location_of_array_task_id_if_applies(control_dir)
         if array_task_control_dir is not None:
@@ -98,6 +100,8 @@ class TaskProcess:
 
     def _create_task_logger(self, test_mode=False):
 
+        #logging.getLogger().handlers.clear()
+
         if test_mode or os.environ.get("DRYPIPE_TASK_DEBUG") == "True":
             logging_level = logging.DEBUG
         else:
@@ -105,11 +109,13 @@ class TaskProcess:
 
         logger = logging.getLogger(f"task-logger-{os.path.basename(self.control_dir)}")
 
+
+        logger.propagate = False
+
         logger.setLevel(logging_level)
 
         if len(logger.handlers) == 0:
-            filename = os.path.join(self.control_dir, "drypipe.log")
-            file_handler = logging.FileHandler(filename=filename)
+            file_handler = logging.FileHandler(filename=os.path.join(self.control_dir, "drypipe.log"))
             file_handler.setLevel(logging_level)
             file_handler.setFormatter(
                 logging.Formatter("%(asctime)s - %(levelname)s - %(message)s", datefmt='%Y-%m-%d %H:%M:%S%z')
@@ -194,8 +200,8 @@ class TaskProcess:
                 tk = self.task_key
                 raise Exception(
                     f"Task {tk} called {mod_func} with None assigned to arg {k}\n" +
-                    f"make sure task has var {k} declared in it's consumes clause. Ex:\n" +
-                    f"  dsl.task(key={tk}).consumes({k}=...)"
+                    f"make sure task has var {k} declared in it's inputs clause. Ex:\n" +
+                    f"  dsl.task(key={tk}).inputs({k}=...)"
                 )
             return v
 
@@ -218,7 +224,14 @@ class TaskProcess:
                 if k not in args_names
             }
 
-        self.task_logger.info("will invoke PythonCall: %s(%s,%s)", mod_func, args, kwargs)
+        func_log = f"{mod_func}({','.join(args)},{kwargs})"
+        log_msg = f"will invoke PythonCall: {func_log}"
+        self.task_logger.info(log_msg)
+
+        with open(os.path.join(self.control_dir, "out.log"), mode="w+") as out:
+            out.write(f"================ {func_log} ====================")
+            out.write(log_msg)
+            out.write("=================================================\n")
 
         try:
             out_vars = python_task.func(* args, ** kwargs)
@@ -1051,21 +1064,23 @@ class TaskProcess:
 
     def _launch_and_tail(self, launch_func):
 
-        all_logs = [
-            os.path.join(self.control_dir, log)
-            for log in ["drypipe.log", "out.log"]
-        ]
+        def _all_logs():
+            if self.tail_all:
+                yield "drypipe.log"
+            yield "out.log"
+
+        all_logs = [os.path.join(self.control_dir, log) for log in _all_logs()]
 
         tail_cmd = ["tail", "-f"] + all_logs
 
         def tail_func():
             def files_ready():
-                for f in all_logs:
+                for f in _all_logs():
                     if os.path.exists(f):
                         yield 1
 
             while True:
-                if len(list(files_ready())) == 2:
+                if len(list(files_ready())) == len(all_logs):
                     break
                 else:
                     time.sleep(1)
@@ -1107,7 +1122,7 @@ class TaskProcess:
                     self._exit_process()
 
         if self.wait_for_completion or not self.as_subprocess:
-            if self.tail:
+            if self.tail or self.tail_all:
                 self._launch_and_tail(task_func_wrapper)
             else:
                 task_func_wrapper()

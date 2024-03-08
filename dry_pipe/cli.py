@@ -9,6 +9,8 @@ from threading import Thread
 from dry_pipe.core_lib import func_from_mod_func, is_inside_slurm_job
 from dry_pipe.task_process import TaskProcess, SlurmArrayParentTask
 
+logging.getLogger().handlers.clear()
+logging.getLogger().propagate = False
 
 def call(mod_func):
 
@@ -108,6 +110,9 @@ class Cli:
     def _tail(self):
         return self.parsed_args.tail
 
+    def _tail_all(self):
+        return self.parsed_args.tail_all
+
     def get_ssh_remote_dest_or_none(self, task_conf):
         ssh_remote_dest = task_conf.get("ssh_remote_dest")
         if ssh_remote_dest is None:
@@ -161,7 +166,8 @@ class Cli:
                 wait_for_completion=self._wait(),
                 test_mode=test_mode,
                 as_subprocess=not test_mode,
-                tail=self._tail()
+                tail=self._tail(),
+                tail_all=self._tail_all()
             )
 
             if self.parsed_args.ssh_remote_dest is not None:
@@ -367,6 +373,7 @@ class Cli:
         parser.set_defaults(by_runner=False)
         self.add_ssh_remote_dest_arg(parser)
         parser.add_argument("--tail", dest="tail", action="store_true")
+        parser.add_argument("--tail-all", dest="tail_all", action="store_true")
 
 
     def add_sbatch_args(self, parser):
