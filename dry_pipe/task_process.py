@@ -1090,41 +1090,6 @@ class TaskProcess:
 
         launch_func()
 
-    def old_launch_and_tail(self, launch_func):
-
-        def _all_logs():
-            if self.tail_all:
-                yield "drypipe.log"
-            yield "out.log"
-
-        all_logs = [os.path.join(self.control_dir, log) for log in _all_logs()]
-
-        tail_cmd = ["tail", "-f"] + all_logs
-
-        def tail_func():
-            def count_files_ready():
-                c = 0
-                for f in all_logs:
-                    if os.path.exists(f):
-                        c += 1
-                return c
-
-            while True:
-                if count_files_ready() == len(all_logs):
-                    break
-                else:
-                    time.sleep(1)
-
-            with PortablePopen(tail_cmd, stdout=sys.stdout, stderr=sys.stderr) as p:
-                self._tail_process = p
-                p.wait()
-
-        tail_thread = Thread(target=tail_func)
-        tail_thread.start()
-
-        launch_func()
-
-
     def launch_task(self, array_limit=None):
 
         exit_process_when_done = self.as_subprocess
