@@ -228,7 +228,7 @@ class TaskProcess:
         log_msg = f"will invoke PythonCall: {func_log}"
         self.task_logger.info(log_msg)
 
-        with open(os.path.join(self.control_dir, "out.log"), mode="w+") as out:
+        with open(os.path.join(self.control_dir, "out.log"), mode="a") as out:
             out.write(f"================ {func_log} ====================")
             out.write(log_msg)
             out.write("=================================================\n")
