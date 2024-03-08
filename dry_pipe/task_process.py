@@ -1069,6 +1069,10 @@ class TaskProcess:
 
             def func():
                 flf = os.path.join(self.control_dir, log_file)
+
+                while not os.path.exists(flf):
+                    time.sleep(1)
+
                 with open(flf) as f:
                     for line in tail_file(f, 1):
                         if self.tail_all and log_file == "drypipe.log":
