@@ -151,9 +151,11 @@ class Cli:
             )
         elif self.parsed_args.command == 'run':
             pipeline_instance = pipeline_instance_from_args()
+            pipeline_instance.prepare_instance_dir()
             pipeline_instance.run_sync(until_patterns=self.parsed_args.until)
         elif self.parsed_args.command == 'prepare':
             pipeline_instance = pipeline_instance_from_args()
+            pipeline_instance.prepare_instance_dir()
             pipeline_instance.run_sync(["*"])
         elif self.parsed_args.command == 'call':
 
