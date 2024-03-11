@@ -69,6 +69,8 @@ class TaskProcess:
             self.pipeline_work_dir = os.path.dirname(control_dir)
             self.pipeline_instance_dir = os.path.dirname(self.pipeline_work_dir)
 
+            self.task_logger.debug(f"pipeline_instance_dir %s", self.pipeline_instance_dir)
+
             if self.pipeline_instance_dir == "":
                 raise Exception(f"pipeline_instance_dir can't be empty string")
 
@@ -168,6 +170,10 @@ class TaskProcess:
         self.task_logger.info("will exit")
         logging.shutdown()
         os._exit(0)
+
+    def sbatch_options(self):
+        if self.task_conf.sbatch_options is not None and len(self.task_conf.sbatch_options) > 0:
+            yield " ".join(self.task_conf.sbatch_options)
 
     def call_python(self, mod_func, python_task):
 
@@ -981,7 +987,7 @@ class TaskProcess:
             self._transition_state_file(state_file, "failed", step_number)
             raise ex
 
-    def _sbatch_cmd_lines(self):
+    def sbatch_cmd_lines(self):
 
         if self.task_conf.executer_type != "slurm":
             raise Exception(f"not a slurm task")
@@ -995,6 +1001,8 @@ class TaskProcess:
         if sacc is not None:
             yield f"--account={sacc}"
 
+        yield from self.sbatch_options()
+
         yield f"--output={self.control_dir}/out.log"
 
 
@@ -1006,7 +1014,7 @@ class TaskProcess:
     def submit_sbatch_task(self):
 
         p = PortablePopen(
-            list(self._sbatch_cmd_lines()),
+            list(self.sbatch_cmd_lines()),
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT
         )
 
@@ -1080,11 +1088,12 @@ class TaskProcess:
                 if self.has_ended:
                     break
 
-            with open(flf) as f:
-                for line in tail_file(f, 1):
-                    print(f"out.log - {line}")
-                    if self.has_ended:
-                        break
+            if not self.has_ended:
+                with open(flf) as f:
+                    for line in tail_file(f, 1):
+                        print(f"out.log - {line}")
+                        if self.has_ended:
+                            break
 
         t = Thread(target=func)
         t.start()
@@ -1219,6 +1228,8 @@ class SlurmArrayParentTask:
                 yield f"--account={a}"
 
             yield "--output=/dev/null"
+
+            yield from self.task_process.sbatch_options()
 
             if self.debug:
                 yield f"--error={self.control_dir()}/err-%A_%a.log"
