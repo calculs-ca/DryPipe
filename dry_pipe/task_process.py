@@ -54,7 +54,6 @@ class TaskProcess:
         array_task_control_dir = self._script_location_of_array_task_id_if_applies(control_dir)
         if array_task_control_dir is not None:
             control_dir = array_task_control_dir
-            os.environ["DRYPIPE_TASK_CONTROL_DIR"] = control_dir
 
         self.control_dir = control_dir
 
@@ -1048,7 +1047,6 @@ class TaskProcess:
             for task_key in children_task_keys():
                 if c == slurm_array_task_id:
                     p = os.path.join(_drypipe_dir, task_key)
-                    os.environ['DRYPIPE_TASK_CONTROL_DIR'] = p
                     return p
                 else:
                     c += 1
