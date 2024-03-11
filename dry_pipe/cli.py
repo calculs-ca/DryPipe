@@ -183,6 +183,10 @@ class Cli:
             task_process = TaskProcess(self.parsed_args.control_dir, wait_for_completion=self._wait())
             task_process.submit_sbatch_task()
 
+        elif self.parsed_args.command == 'sbatch-gen':
+            task_process = TaskProcess(self.parsed_args.control_dir, wait_for_completion=self._wait())
+            print(" ".join(task_process.sbatch_cmd_lines()))
+
         elif self.parsed_args.command == 'upload-array':
 
             task_process = TaskProcess(
@@ -377,8 +381,7 @@ class Cli:
 
 
     def add_sbatch_args(self, parser):
-        self._add_task_key_parser_arg(parser)
-        self.__wait_arg(parser)
+        self.add_task_args(parser)
 
     def add_call_args(self, parser):
         parser.add_argument('module_function', type=str)
