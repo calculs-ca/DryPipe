@@ -102,7 +102,7 @@ class TaskProcess:
             raise ex
 
     def launched_from_cli_with_tail(self):
-        return self.tail is not None or self.tail_all is not None
+        return self.tail or self.tail_all
 
     def _create_task_logger(self, test_mode=False):
 

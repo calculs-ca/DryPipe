@@ -26,6 +26,8 @@ class Cli:
 
         if env is None:
             self.env = os.environ
+        else:
+            self.env = env
 
         self.parser = argparse.ArgumentParser(
             description="DryPipe CLI"

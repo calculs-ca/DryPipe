@@ -115,7 +115,7 @@ class CliArrayTests1(PipelineWithSlurmArrayForRealSlurmTest):
         }).invoke(test_mode=True)
 
         self.assertEqual(
-            len(self._get_job_files(pipeline_instance,"array-parent")),
+            len(self._get_job_files(pipeline_instance, "array-parent")),
             2
         )
 
