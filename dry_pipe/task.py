@@ -530,7 +530,7 @@ class TaskOutputs:
     def as_json(self):
         return [
             o.as_json()
-            for o in  self._task_outputs.values()
+            for o in self._task_outputs.values()
         ]
 
     def __getattr__(self, name):
@@ -549,6 +549,11 @@ class TaskOutputs:
         for o in self._task_outputs.values():
             if not o.is_file():
                 yield o
+
+    def has_var_outputs(self):
+        for _ in self.iterate_non_file_outputs():
+            return True
+        return False
 
     def rsync_file_list(self):
         has_output_var = False

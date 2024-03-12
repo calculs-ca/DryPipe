@@ -745,11 +745,17 @@ class TaskProcess:
             os.path.basename(script)
         )
 
-        dump_env = f'python3 -c "import os, json; print(json.dumps(dict(os.environ)))"'
+        has_var_outputs = self.outputs.has_var_outputs()
+
+        if has_var_outputs:
+            dump_env = f' ; python3 -c "import os, json; print(json.dumps(dict(os.environ)))"'
+        else:
+            dump_env = ''
+
         out = env['__out_log']
         err = env['__err_log']
 
-        cmd = ["bash", "-c", f". {script} 1>> {out} 2>> {err} ; {dump_env}"]
+        cmd = ["bash", "-c", f". {script} 1>> {out} 2>> {err}{dump_env}"]
 
         if container is not None:
             cmd = [
@@ -795,22 +801,18 @@ class TaskProcess:
 
             with PortablePopen(cmd, env={** os.environ, ** env}) as p:
                 p.wait_and_raise_if_non_zero()
-                out = p.stdout_as_string()
-                step_output_vars = json.loads(out)
-                task_output_vars = dict(self.iterate_out_vars_from())
+                if has_var_outputs:
+                    out = p.stdout_as_string()
+                    step_output_vars = json.loads(out)
+                    task_output_vars = dict(self.iterate_out_vars_from())
+                    for o in self.outputs.iterate_non_file_outputs():
+                        v = step_output_vars.get(o.name)
+                        self.task_logger.debug("script exported output var %s = %s", o.name, v)
+                        task_output_vars[o.name] = v
+                        if v is not None:
+                            self.env[o.name] = v
 
-                with open(os.path.join(env["__control_dir"], "task-conf.json")) as _task_conf:
-                    task_conf_as_json = json.loads(_task_conf.read())
-                    for o in task_conf_as_json["outputs"]:
-                        o = TaskOutput.from_json(o)
-                        if o.type != "file":
-                            v = step_output_vars.get(o.name)
-                            self.task_logger.debug("script exported output var %s = %s", o.name, v)
-                            task_output_vars[o.name] = v
-                            if v is not None:
-                                self.env[o.name] = v
-
-                self.write_out_vars(task_output_vars)
+                    self.write_out_vars(task_output_vars)
 
 
         except Exception as ex:
