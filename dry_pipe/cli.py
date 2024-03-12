@@ -239,8 +239,14 @@ class Cli:
             for task_key, state in array_parent_task.list_array_states():
                 print(f"{task_key}/{state}")
 
+        elif self.parsed_args.command == 'restart-failed-array-tasks':
+            task_process = TaskProcess(
+                os.path.join(self.parsed_args.pipeline_instance_dir, ".drypipe", self.parsed_args.task_key)
+            )
 
+            array_parent_task = SlurmArrayParentTask(task_process)
 
+            array_parent_task.prepare_and_launch_next_array(restart_failed=True)
 
 
     def _sub_parsers(self):
@@ -259,6 +265,9 @@ class Cli:
         self.add_create_array_parent_args(self.subparsers.add_parser('create-array-parent'))
         self._add_task_key_parser_arg(
             self.subparsers.add_parser('list-array-states')
+        )
+        self._add_task_key_parser_arg(
+            self.subparsers.add_parser('restart-failed-array-tasks')
         )
 
 
