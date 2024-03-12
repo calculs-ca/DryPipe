@@ -42,7 +42,8 @@ class TaskProcess:
             test_mode=False,
             wait_for_completion=False,
             tail=False,
-            tail_all=False
+            tail_all=False,
+            is_python_call=False
     ):
 
         self.wait_for_completion = wait_for_completion
@@ -51,9 +52,10 @@ class TaskProcess:
         self.tail_all = tail_all
         self.has_ended = False
 
-        array_task_control_dir = self._script_location_of_array_task_id_if_applies(control_dir)
-        if array_task_control_dir is not None:
-            control_dir = array_task_control_dir
+        if not is_python_call:
+            array_task_control_dir = self._script_location_of_array_task_id_if_applies(control_dir)
+            if array_task_control_dir is not None:
+                control_dir = array_task_control_dir
 
         self.control_dir = control_dir
 

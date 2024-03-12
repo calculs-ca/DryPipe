@@ -198,6 +198,9 @@ class CliTestsPipelineWithSlurmArray(PipelineWithSlurmArray):
 
         run_parent_task('p1')
 
+        for task in pipeline_instance.query("t_a_*", include_incomplete_tasks=True):
+            self.assertEqual("state.completed", task.state_name())
+
         create_parent_task('p2', 't_*')
 
         self.assertEqual({k for k in keys_p1('p2')}, {'t_b_2', 't_b_1'})

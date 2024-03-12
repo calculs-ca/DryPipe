@@ -6,6 +6,7 @@ from functools import reduce
 from pathlib import Path
 from typing import Tuple, List
 
+import dry_pipe
 from base_pipeline_test import BasePipelineTest, TestWithDirectorySandbox
 from dry_pipe import TaskConf
 from dry_pipe.core_lib import StateFileTracker
@@ -68,6 +69,16 @@ def format_sbatch_array(array_indexes):
     return r2
 
 
+@dry_pipe.DryPipe.python_call()
+def test_func(r, i, f):
+
+    with open(f) as _f:
+        f_int = int(_f.read().strip())
+
+        return {
+            "var_result": r + i + f_int
+        }
+
 
 class PipelineWithSlurmArray(BasePipelineTest):
 
@@ -101,7 +112,8 @@ class PipelineWithSlurmArray(BasePipelineTest):
                     f=t0.outputs.f
                 ).outputs(
                     slurm_result=int,
-                    slurm_result_in_file=dsl.file('slurm_result.txt')
+                    slurm_result_in_file=dsl.file('slurm_result.txt'),
+                    var_result=int
                 ).calls("""
                     #!/usr/bin/env bash
                     echo "$r $i"  
@@ -110,7 +122,7 @@ class PipelineWithSlurmArray(BasePipelineTest):
                     echo "$slurm_result"
                     mkdir -p $__task_output_dir
                     echo "$slurm_result" > $slurm_result_in_file
-                """)()
+                """).calls(test_func)()
 
         for match in dsl.query_all_or_nothing("t_*", state="ready"):
             yield dsl.task(
@@ -161,6 +173,7 @@ class PipelineWithSlurmArray(BasePipelineTest):
                     r = int(f.read().strip())
                     expected = int(t.outputs.slurm_result)
                     self.assertEqual(expected, r, "slurm_result_in_file does not match expected result")
+                    self.assertEqual(expected, int(t.outputs.var_result), "var_result does not match expected result")
 
 
 
