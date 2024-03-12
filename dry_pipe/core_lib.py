@@ -138,8 +138,15 @@ class StateFile:
             self.outputs = None
             self.inputs = None
 
-    def transition_to_pre_launch(self):
-        self.path = os.path.join(self.tracker.pipeline_work_dir, self.task_key, "state._step-started")
+    def transition_to_pre_launch(self, restart_failed):
+        suffix = self.path.rsplit(".", 1)[1]
+        #print(f"------>{self.path}, {suffix}")
+        if suffix.isdigit():
+            s = suffix
+        else:
+            s = 0
+
+        self.path = os.path.join(self.tracker.pipeline_work_dir, self.task_key, f"state._step-started.{s}")
 
     def transition_to_crashed(self):
         self.path = os.path.join(self.tracker.pipeline_work_dir, self.task_key, "state.crashed")
@@ -278,9 +285,9 @@ class StateFileTracker:
         state_file.transition_to_crashed()
         os.rename(previous_path, state_file.path)
 
-    def register_pre_launch(self, state_file):
+    def register_pre_launch(self, state_file, restart_failed=False):
         previous_path = state_file.path
-        state_file.transition_to_pre_launch()
+        state_file.transition_to_pre_launch(restart_failed)
         os.rename(previous_path, state_file.path)
 
     def completed_task_keys(self):

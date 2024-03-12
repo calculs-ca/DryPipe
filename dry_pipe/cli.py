@@ -244,6 +244,9 @@ class Cli:
                 os.path.join(self.parsed_args.pipeline_instance_dir, ".drypipe", self.parsed_args.task_key)
             )
 
+            if self._wait():
+                task_process.wait_for_completion = True
+
             array_parent_task = SlurmArrayParentTask(task_process)
 
             array_parent_task.prepare_and_launch_next_array(restart_failed=True)
@@ -266,9 +269,11 @@ class Cli:
         self._add_task_key_parser_arg(
             self.subparsers.add_parser('list-array-states')
         )
-        self._add_task_key_parser_arg(
-            self.subparsers.add_parser('restart-failed-array-tasks')
-        )
+
+        restart_array = self.subparsers.add_parser('restart-failed-array-tasks')
+
+        #self._add_task_key_parser_arg(restart_array)
+        self.add_array_args(restart_array)
 
 
     def add_status_args(self):
@@ -351,6 +356,8 @@ class Cli:
             action='store_true', default=False,
             help='delete and re submit failed tasks in array'
         )
+
+        self.__wait_arg(run_parser)
 
     def add_create_array_parent_args(self, parser):
         parser.add_argument('new_task_key', type=str)

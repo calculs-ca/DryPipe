@@ -349,10 +349,10 @@ class SlurmArrayNormalScenario1(BaseSlurmArrayScenarioWithSlurmMockup):
         )
 
         self.assert_task_state_file_states({
-            "t1": "state._step-started",
-            "t2": "state._step-started",
-            "t3": "state._step-started",
-            "t4": "state._step-started"
+            "t1": "state._step-started.0",
+            "t2": "state._step-started.0",
+            "t3": "state._step-started.0",
+            "t4": "state._step-started.0"
         })
 
         self.set_states_on_disc({
@@ -412,9 +412,9 @@ class SlurmArrayNormalScenario1(BaseSlurmArrayScenarioWithSlurmMockup):
 
         self.assert_task_state_file_states({
             "t1": "state.completed",
-            "t2": "state._step-started",
+            "t2": "state._step-started.0",
             "t3": "state.completed",
-            "t4": "state._step-started"
+            "t4": "state._step-started.0"
         })
 
         dict_unexpected_states = self.parent_task.mock_compare_and_reconcile_squeue_with_state_files([
@@ -453,8 +453,8 @@ class SlurmArrayCrashScenario(BaseSlurmArrayScenarioWithSlurmMockup):
         self.assertEqual(2, size_of_array_launched)
 
         self.assert_task_state_file_states({
-            "t1": "state._step-started",
-            "t2": "state._step-started"
+            "t1": "state._step-started.0",
+            "t2": "state._step-started.0"
         })
 
         dict_unexpected_states = self.parent_task.mock_compare_and_reconcile_squeue_with_state_files([])
@@ -511,6 +511,78 @@ class PipelineWithSlurmArrayForRealSlurmTest(BasePipelineTest):
                 res += int(task.outputs.r)
 
         self.assertEqual(res, 14)
+
+
+@dry_pipe.DryPipe.python_call()
+def array_test_1(r):
+    pass
+
+@dry_pipe.DryPipe.python_call()
+def array_test_2(i, __task_output_dir):
+
+    flag = os.path.join(__task_output_dir, "ok")
+    if not os.path.exists(flag):
+        raise Exception(f"expected failure, {flag} is not found")
+
+    return {
+        "r": i * i
+    }
+
+@dry_pipe.DryPipe.python_call()
+def array_test_3(i, r):
+
+    print(f"3--->{i}, {r}")
+
+    return {
+        "r2": r + i
+    }
+
+
+class PipelineWithSlurmArrayForRestarts(BasePipelineTest):
+
+    def task_conf(self):
+        return TaskConf(executer_type="slurm", slurm_account="dummy", extra_env={"DRYPIPE_TASK_DEBUG": "True"})
+
+    def dag_gen(self, dsl):
+
+        for i in [1, 2]:
+            yield dsl.task(
+                key=f"t_{i}",
+                is_slurm_array_child=True,
+                task_conf=self.task_conf()
+            ).inputs(
+                i=i,
+                r=0
+            ).outputs(
+                r=int,
+                r2=int
+            ).calls(
+                array_test_1
+            ).calls(
+                array_test_2
+            ).calls(
+                array_test_3
+            )()
+
+        for match in dsl.query_all_or_nothing("t_*", state="ready"):
+            yield dsl.task(
+                key=f"array_parent",
+                task_conf=self.task_conf()
+            ).slurm_array_parent(
+                children_tasks=match.tasks
+            )()
+
+    def validate(self, tasks_by_keys):
+
+        t1 = tasks_by_keys["t_1"]
+        t2 = tasks_by_keys["t_2"]
+
+        self.assertEqual(int(t1.outputs.r), 1)
+        self.assertEqual(int(t1.outputs.r2), 2)
+
+        self.assertEqual(int(t2.outputs.r), 3)
+        self.assertEqual(int(t2.outputs.r2), 5)
+
 
 
 def all_low_level_tests_with_mockup_slurm():

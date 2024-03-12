@@ -1,6 +1,7 @@
 import glob
 import os.path
 import unittest
+from pathlib import Path
 
 from dry_pipe import DryPipe, TaskConf
 from dry_pipe.cli import Cli
@@ -8,7 +9,8 @@ from dry_pipe.core_lib import UpstreamTasksNotCompleted, PortablePopen
 from dry_pipe.pipeline import Pipeline
 from dry_pipe.task_process import TaskProcess, SlurmArrayParentTask
 from pipeline_tests_with_single_tasks import PipelineWithSinglePythonTask
-from pipeline_tests_with_slurm_mockup import PipelineWithSlurmArrayForRealSlurmTest, PipelineWithSlurmArray
+from pipeline_tests_with_slurm_mockup import PipelineWithSlurmArrayForRealSlurmTest, PipelineWithSlurmArray, \
+    PipelineWithSlurmArrayForRestarts
 from test_utils import TestSandboxDir
 
 def test_cli(*args):
@@ -138,6 +140,59 @@ class CliArrayTests1(PipelineWithSlurmArrayForRealSlurmTest):
         )
 
         self.do_validate(pipeline_instance)
+
+
+class CliTestsPipelineWithSlurmArrayForRestarts(PipelineWithSlurmArrayForRestarts):
+
+    def create_prepare_and_run_pipeline(self, d, until_patterns=["*"]):
+        pipeline_instance = self.create_pipeline_instance(d.sandbox_dir)
+        pipeline_instance.run_sync(until_patterns)
+        return pipeline_instance
+
+    def test_array_restart(self):
+        pipeline_instance = self.create_prepare_and_run_pipeline(TestSandboxDir(self))
+
+        pid = pipeline_instance.state_file_tracker.pipeline_instance_dir
+        test_cli(
+            f'--pipeline-instance-dir={pid}',
+            'submit-array',
+            '--task-key=array_parent'
+        )
+
+        for task in pipeline_instance.query("t_*", include_incomplete_tasks=True):
+            self.assertEqual("state.failed.1", task.state_name())
+
+        Path(f"{pid}/output/t_1/ok").touch()
+
+        test_cli(
+            f'--pipeline-instance-dir={pid}',
+            'restart-failed-array-tasks',
+            '--task-key=array_parent',
+            '--wait'
+        )
+
+        for task in pipeline_instance.query("t_1", include_incomplete_tasks=True):
+            self.assertEqual("state.completed", task.state_name())
+            self.assertEqual(1, int(task.outputs.r))
+            self.assertEqual(1, int(task.outputs.r2))
+
+
+        for task in pipeline_instance.query("t_2", include_incomplete_tasks=True):
+            self.assertEqual("state.failed.1", task.state_name())
+
+        Path(f"{pid}/output/t_2/ok").touch()
+
+        test_cli(
+            f'--pipeline-instance-dir={pid}',
+            'restart-failed-array-tasks',
+            '--task-key=array_parent',
+            '--wait'
+        )
+
+        for task in pipeline_instance.query("t_2", include_incomplete_tasks=True):
+            self.assertEqual("state.completed", task.state_name())
+            self.assertEqual(4, int(task.outputs.r))
+            self.assertEqual(2, int(task.outputs.r2))
 
 
 class CliTestsPipelineWithSlurmArray(PipelineWithSlurmArray):

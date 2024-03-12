@@ -1242,6 +1242,9 @@ class SlurmArrayParentTask:
                 f"DRYPIPE_TASK_DEBUG={self.debug}"
             ]))
 
+            if self.task_process.wait_for_completion:
+                yield "--wait"
+
             yield "--signal=B:USR1@50"
             yield "--parsable"
             yield f"{self.pipeline_instance_dir}/.drypipe/cli"
@@ -1510,7 +1513,7 @@ class SlurmArrayParentTask:
                 yield state_file
                 i += 1
             elif restart_failed and (state_file.is_failed() or state_file.is_timed_out()):
-                self.tracker.register_pre_launch(state_file)
+                self.tracker.register_pre_launch(state_file, restart_failed)
                 yield state_file
                 i += 1
             if start_next_n is not None and i >= start_next_n:
