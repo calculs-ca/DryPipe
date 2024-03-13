@@ -19,7 +19,7 @@ class PipelineInstance:
             "__containers_dir": self.pipeline.containers_dir
         })
 
-    def run_sync(self, until_patterns=None, run_tasks_in_process=True):
+    def run_sync(self, until_patterns=None, run_tasks_in_process=True, monitor=None):
 
         if until_patterns is not None and not isinstance(until_patterns, list):
             raise Exception(f"invalid type for until_patterns: {type(until_patterns).__name__}, must be List[str]")
@@ -33,7 +33,8 @@ class PipelineInstance:
             state_machine,
             run_tasks_in_process=run_tasks_in_process,
             run_tasks_async=False,
-            sleep_schedule=[0, 0, 0, 1]
+            sleep_schedule=[0, 0, 0, 1],
+            monitor=monitor
         )
 
         for func, suggested_sleep in pr.iterate_work_rounds():

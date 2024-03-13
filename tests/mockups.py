@@ -66,6 +66,9 @@ class StateFileTrackerMockup:
         for k, state_file in self.state_files_in_memory.items():
             if state_file.is_completed():
                 yield k
+    def all_state_files(self):
+        for s in self.state_files_in_memory:
+            yield StateFile(s, s, self)
 
     def fetch_true_state_and_update_memory_if_changed(self, task_key):
 

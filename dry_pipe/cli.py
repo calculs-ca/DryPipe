@@ -7,6 +7,7 @@ from pathlib import Path
 from threading import Thread
 
 from dry_pipe.core_lib import func_from_mod_func, is_inside_slurm_job
+from dry_pipe.pipeline_runner import Monitor
 from dry_pipe.task_process import TaskProcess, SlurmArrayParentTask
 
 logging.getLogger().handlers.clear()
@@ -18,6 +19,16 @@ def call(mod_func):
     control_dir = os.environ["__control_dir"]
     task_runner = TaskProcess(control_dir, is_python_call=True)
     task_runner.call_python(mod_func, python_task)
+
+
+
+class CliMonitor(Monitor):
+    def dump(self, all_state_files):
+        for task_group, state_counts in self.produce_report(all_state_files):
+            dump_counts = ",".join([
+                f"{s}: {c}" for s, c in state_counts
+            ])
+            print(f" - {task_group}: ({dump_counts})")
 
 
 class Cli:
@@ -154,7 +165,11 @@ class Cli:
         elif self.parsed_args.command == 'run':
             pipeline_instance = pipeline_instance_from_args()
             pipeline_instance.prepare_instance_dir()
-            pipeline_instance.run_sync(until_patterns=self.parsed_args.until)
+            if not test_mode:
+                monitor = CliMonitor()
+            else:
+                monitor = None
+            pipeline_instance.run_sync(until_patterns=self.parsed_args.until, monitor=monitor)
         elif self.parsed_args.command == 'prepare':
             pipeline_instance = pipeline_instance_from_args()
             pipeline_instance.prepare_instance_dir()

@@ -3,6 +3,7 @@ import shutil
 import unittest
 from pathlib import Path
 
+from dry_pipe.pipeline_runner import Monitor
 from dry_pipe.state_machine import StateMachine, AllRunnableTasksCompletedOrInError, InvalidQueryInTaskGenerator
 from dry_pipe.core_lib import StateFileTracker
 from mockups import TaskMockup, StateFileTrackerMockup
@@ -253,6 +254,14 @@ class StateMachineTests(unittest.TestCase):
             "t3": ["t2"]
         }, state_file_tracker, save_dag_and_restart)[0]
 
+
+        def group_t(k):
+            return k[:1]
+
+        monitor = Monitor(group_t)
+
+        monitor.dump(state_file_tracker.all_state_files())
+
         # mutate
         tester.iterate_once_and_mutate_set_of_next_state_files_ready()
 
@@ -274,6 +283,8 @@ class StateMachineTests(unittest.TestCase):
             "t3": ["t2"]
         })
 
+        monitor.dump(state_file_tracker.all_state_files())
+
         # mutate
         tester.set_completed_on_disk("t2")
         tester.iterate_once_and_mutate_set_of_next_state_files_ready()
@@ -286,6 +297,8 @@ class StateMachineTests(unittest.TestCase):
         tester.set_completed_on_disk("t3")
         tester.iterate_once_and_mutate_set_of_next_state_files_ready()
 
+        monitor.dump(state_file_tracker.all_state_files())
+
         # verify
         tester.assert_no_new_task_to_launch()
         tester.assert_completed_task_keys("t1", "t2", "t3")
@@ -294,6 +307,8 @@ class StateMachineTests(unittest.TestCase):
             "t2": [],
             "t3": []
         })
+
+        monitor.dump(state_file_tracker.all_state_files())
 
         self.assertRaises(
             AllRunnableTasksCompletedOrInError,

@@ -139,12 +139,7 @@ class StateFile:
             self.inputs = None
 
     def transition_to_pre_launch(self, restart_failed):
-        suffix = self.path.rsplit(".", 1)[1]
-        #print(f"------>{self.path}, {suffix}")
-        if suffix.isdigit():
-            s = suffix
-        else:
-            s = 0
+        _, _, s = self.key_state_step()
 
         self.path = os.path.join(self.tracker.pipeline_work_dir, self.task_key, f"state._step-started.{s}")
 
@@ -156,6 +151,20 @@ class StateFile:
 
     def state_as_string(self):
         return os.path.basename(self.path)
+
+    def key_state_step(self):
+
+        state = os.path.basename(self.path)[6:]
+
+        step = 0
+
+        if "." in state:
+            state_p, suffix = state.rsplit(".", 1)
+            if suffix.isdigit():
+                step = int(suffix)
+                state = state_p
+
+        return self.task_key, state, step
 
     def is_completed(self):
         return self.path.endswith("state.completed")
@@ -257,6 +266,8 @@ class StateFileTracker:
         shutil.copy(os.path.join(src_dir_drypipe, "__init__.py"), dp_dir)
         shutil.copy(os.path.join(src_dir_drypipe, "core_lib.py"), dp_dir)
         shutil.copy(os.path.join(src_dir_drypipe, "task_process.py"), dp_dir)
+        shutil.copy(os.path.join(src_dir_drypipe, "pipeline_runner.py"), dp_dir)
+        shutil.copy(os.path.join(src_dir_drypipe, "state_machine.py"), dp_dir)
         shutil.copy(os.path.join(src_dir_drypipe, "task.py"), dp_dir)
         shutil.copy(os.path.join(src_dir_drypipe, "cli.py"), dp_dir)
         shutil.copy(os.path.join(src_dir_drypipe, "cli"), self.pipeline_work_dir)

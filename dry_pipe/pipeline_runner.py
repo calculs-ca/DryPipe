@@ -1,4 +1,5 @@
 import time
+from itertools import groupby
 from timeit import default_timer as timer
 
 from dry_pipe.task_process import TaskProcess
@@ -7,16 +8,18 @@ from dry_pipe.state_machine import AllRunnableTasksCompletedOrInError
 
 class PipelineRunner:
 
-    def __init__(self, state_machines, run_tasks_in_process=False, run_tasks_async=True, sleep_schedule=None):
+    def __init__(
+        self, state_machines, run_tasks_in_process=False, run_tasks_async=True, sleep_schedule=None, monitor=None
+    ):
         self.state_machine = state_machines
         self._shutdown_requested = False
-        self.running_status = "idle"
         self.run_tasks_in_process = run_tasks_in_process
         if sleep_schedule is None:
             self.sleep_schedule = [1, 1, 1, 1, 2, 2, 2, 3, 3, 5]
         else:
             self.sleep_schedule = sleep_schedule
         self.run_tasks_async = run_tasks_async
+        self.monitor = monitor
 
 
     def iterate_work_rounds(self):
@@ -33,6 +36,10 @@ class PipelineRunner:
                     )
                     yield lambda: tp.run(by_pipeline_runner=True), None
                     c += 1
+                    if self.monitor is not None:
+                        self.monitor.dump(
+                            self.state_machine.state_file_tracker.all_state_files()
+                        )
                 if c == 0:
                     if sleep_idx < max_sleep_idx:
                         sleep_idx += 1
@@ -74,3 +81,50 @@ class WorkiteratorBlender:
 
             if i in terminated_idx:
                 del self.work_unit_iterators[i]
+
+
+class Monitor:
+    def __init__(self, task_grouper=None):
+
+        if task_grouper is None:
+            self.task_grouper = lambda s: self.default_grouper(s)
+        else:
+            self.task_grouper = task_grouper
+
+
+    def default_grouper(self, task_key):
+        if "." in task_key:
+            task_group_key = task_key.rsplit(".", 1)[0]
+            task_group_key = f"{task_group_key}.*"
+            return task_group_key
+        else:
+            return task_key
+
+    def dump(self, all_state_files):
+        for task_group, state_counts in self.produce_report(all_state_files):
+            dump_counts = ",".join([
+                f"{s}: {c}" for s, c in state_counts
+            ])
+            #print(f"{task_group}: ({dump_counts})")
+
+    def produce_report(self, all_state_files):
+        def g():
+            for state_file in all_state_files:
+                key, state, _ = state_file.key_state_step()
+
+                task_group_key = self.task_grouper(key)
+
+                if state.startswith("_"):
+                    state = "launched"
+
+                yield task_group_key, state
+
+        def gf(t):
+            task_group_key, state = t
+            return task_group_key
+
+        for task_group, states in groupby(sorted(g(), key=gf), key=gf):
+            yield task_group, [
+                (state, len(list(all_states)))
+                for state, all_states in groupby(sorted([s for _, s in states]))
+            ]
