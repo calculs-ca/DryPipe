@@ -26,6 +26,9 @@ APPTAINER_COMMAND="singularity"
 
 APPTAINER_BIND="APPTAINER_BIND"
 
+
+module_logger = logging.getLogger(__name__)
+
 class RetryableRsyncException(Exception):
     def __init__(self, message):
         super().__init__(message)
@@ -51,6 +54,11 @@ class TaskProcess:
         self.tail = tail
         self.tail_all = tail_all
         self.has_ended = False
+        self.as_subprocess = as_subprocess
+        # For test cases:
+        self.test_mode = test_mode
+        self.run_python_calls_in_process = run_python_calls_in_process
+        self.env = {}
 
         if not is_python_call:
             array_task_control_dir = self._script_location_of_array_task_id_if_applies(control_dir)
@@ -70,6 +78,10 @@ class TaskProcess:
             self.pipeline_work_dir = os.path.dirname(control_dir)
             self.pipeline_instance_dir = os.path.dirname(self.pipeline_work_dir)
 
+            module_logger.debug(
+                f"TaskProcess(%s, as_subprocess=%s, wait_for_completion=%s)",
+                self.task_key, self.as_subprocess, self.wait_for_completion
+            )
             self.task_logger.debug(f"pipeline_instance_dir %s", self.pipeline_instance_dir)
 
             if self.pipeline_instance_dir == "":
@@ -77,30 +89,33 @@ class TaskProcess:
 
             self.pipeline_output_dir = os.path.join(self.pipeline_instance_dir, "output")
             self.task_output_dir = os.path.join(self.pipeline_output_dir, self.task_key)
-            # For test cases:
-            self.test_mode = test_mode
-            self.run_python_calls_in_process = run_python_calls_in_process
-            self.as_subprocess = as_subprocess
             self.task_conf = TaskConf.from_json_file(self.control_dir)
-            self.env = {}
             task_inputs, task_outputs = self._unserialize_and_resolve_inputs_outputs(ensure_all_upstream_deps_complete)
 
             self.inputs = TaskInputs(self.task_key, task_inputs)
             self.outputs = TaskOutputs(self.task_key, task_outputs)
+
+            self.task_logger.debug(f"will iterate env")
 
             for k, v in self.iterate_task_env(False):
                 v = str(v)
                 self.task_logger.debug("env var %s = %s", k, v)
                 self.env[k] = v
 
+            self.task_logger.debug(f"done iterating env")
+
             command_before_task = self.task_conf.command_before_task
 
             if command_before_task is not None:
                 self.exec_cmd_before_launch(command_before_task)
+
+            self.task_logger.debug(f"normal TaskProcess constructor end")
         except Exception as ex:
             if not no_logger:
                 self.task_logger.exception(ex)
             raise ex
+        finally:
+            self.task_logger.debug(f"TaskProcess constructor finally")
 
     def launched_from_cli_with_tail(self):
         return self.tail or self.tail_all
@@ -143,6 +158,7 @@ class TaskProcess:
     def run(self, array_limit=None, by_pipeline_runner=False):
 
         if not self.as_subprocess:
+            module_logger.debug(f"will run %s INSIDE process", self.task_key)
             self.launch_task(array_limit=array_limit)
         else:
             pipeline_cli = os.path.join(self.pipeline_work_dir, "cli")
@@ -153,6 +169,9 @@ class TaskProcess:
 
             if by_pipeline_runner:
                 cmd.append("--by-runner")
+
+            if module_logger.getEffectiveLevel() == logging.DEBUG:
+                module_logger.debug(f"will launch sub process '%s'", " ".join(cmd))
 
             with PortablePopen(
                 cmd,
@@ -307,7 +326,7 @@ class TaskProcess:
                             if not "completed" in state_file:
                                 msg = f"upstream task {i.upstream_task_key} " + \
                                       f"not completed (state={state_file}), this task " + \
-                                      f"dependency on {i.name_in_upstream_task} not satisfied"
+                                      f"dependency on {i.name}: {i.name_in_upstream_task} not satisfied"
                                 raise UpstreamTasksNotCompleted(i.upstream_task_key, msg)
 
                     if ensure_all_upstream_deps_complete:
@@ -496,7 +515,9 @@ class TaskProcess:
                 with PortablePopen(cmd, stdout=out, stderr=err, env={** os.environ, ** env}) as p:
                     try:
                         p.wait()
-                        has_failed = p.popen.returncode != 0
+                        if p.popen.returncode != 0:
+                            self.task_logger.info(f"python_call process returned {p.popen.returncode}")
+                            has_failed = True
                     except Exception as ex:
                         has_failed = True
                         self.task_logger.exception(ex)
@@ -981,6 +1002,7 @@ class TaskProcess:
         step_number, _, state_file, _ = self.read_task_state()
         try:
             sapt = SlurmArrayParentTask(self)
+
             all_children_completed = sapt.run_array(False, False, limit)
 
             if all_children_completed:
@@ -1253,6 +1275,7 @@ class SlurmArrayParentTask:
 
     def call_sbatch(self, command_args):
         cmd = " ".join(command_args)
+        print(f"{cmd}")
         with PortablePopen(cmd, shell=True) as p:
             p.wait_and_raise_if_non_zero()
             return p.stdout_as_string().strip()

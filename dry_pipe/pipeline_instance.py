@@ -1,9 +1,11 @@
+import logging
 import time
 
 from dry_pipe.pipeline_runner import PipelineRunner
 from dry_pipe.state_machine import StateMachine
 from dry_pipe.core_lib import StateFileTracker
 
+logger = logging.getLogger(__name__)
 
 class PipelineInstance:
 
@@ -20,6 +22,12 @@ class PipelineInstance:
         })
 
     def run_sync(self, until_patterns=None, run_tasks_in_process=True, monitor=None):
+        self._run(until_patterns, run_tasks_in_process, True, monitor, [0, 0, 0, 1])
+
+    def run(self, until_patterns=None, monitor=None):
+        self._run(until_patterns, False, False, monitor, [0, 1, 5, 10])
+
+    def _run(self, until_patterns, run_tasks_in_process, run_tasks_sync, monitor, sleep_schedule):
 
         if until_patterns is not None and not isinstance(until_patterns, list):
             raise Exception(f"invalid type for until_patterns: {type(until_patterns).__name__}, must be List[str]")
@@ -32,10 +40,15 @@ class PipelineInstance:
         pr = PipelineRunner(
             state_machine,
             run_tasks_in_process=run_tasks_in_process,
-            run_tasks_async=False,
-            sleep_schedule=[0, 0, 0, 1],
-            monitor=monitor
+            run_tasks_sync=run_tasks_sync,
+            sleep_schedule=sleep_schedule
         )
+
+        def mon():
+            if monitor is not None:
+                monitor.dump(
+                    state_machine.state_file_tracker.all_state_files()
+                )
 
         for func, suggested_sleep in pr.iterate_work_rounds():
             if func is not None:
@@ -43,7 +56,10 @@ class PipelineInstance:
             elif suggested_sleep is not None:
                 time.sleep(suggested_sleep)
             else:
+                mon()
                 break
+            mon()
+
 
     def query(self, glob_pattern, include_incomplete_tasks=False):
         yield from self.state_file_tracker.load_tasks_for_query(

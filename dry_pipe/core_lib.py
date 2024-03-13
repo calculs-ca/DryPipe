@@ -1,4 +1,5 @@
 import fnmatch
+import glob
 import importlib
 import json
 import os
@@ -262,15 +263,22 @@ class StateFileTracker:
 
         dp_dir = Path(self.pipeline_work_dir, "dry_pipe")
         dp_dir.mkdir(exist_ok=True)
+        shutil.copy(os.path.join(src_dir_drypipe, "cli"), self.pipeline_work_dir)
 
+        for py_file in glob.glob(os.path.join(src_dir_drypipe, "*.py")):
+            shutil.copy(py_file, dp_dir)
+
+        """        
         shutil.copy(os.path.join(src_dir_drypipe, "__init__.py"), dp_dir)
         shutil.copy(os.path.join(src_dir_drypipe, "core_lib.py"), dp_dir)
         shutil.copy(os.path.join(src_dir_drypipe, "task_process.py"), dp_dir)
+        shutil.copy(os.path.join(src_dir_drypipe, "pipeline_instance.py"), dp_dir)
         shutil.copy(os.path.join(src_dir_drypipe, "pipeline_runner.py"), dp_dir)
         shutil.copy(os.path.join(src_dir_drypipe, "state_machine.py"), dp_dir)
         shutil.copy(os.path.join(src_dir_drypipe, "task.py"), dp_dir)
         shutil.copy(os.path.join(src_dir_drypipe, "cli.py"), dp_dir)
-        shutil.copy(os.path.join(src_dir_drypipe, "cli"), self.pipeline_work_dir)
+        """
+
         #os.chmod(script_lib_file, FileCreationDefaultModes.pipeline_instance_scripts)
 
 

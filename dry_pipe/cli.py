@@ -4,14 +4,15 @@ import os
 import sys
 import textwrap
 from pathlib import Path
-from threading import Thread
 
 from dry_pipe.core_lib import func_from_mod_func, is_inside_slurm_job
 from dry_pipe.pipeline_runner import Monitor
 from dry_pipe.task_process import TaskProcess, SlurmArrayParentTask
 
-logging.getLogger().handlers.clear()
-logging.getLogger().propagate = False
+logger = logging.getLogger(__name__)
+
+#logging.getLogger().handlers.clear()
+#logging.getLogger().propagate = False
 
 def call(mod_func):
 
@@ -20,10 +21,40 @@ def call(mod_func):
     task_runner = TaskProcess(control_dir, is_python_call=True)
     task_runner.call_python(mod_func, python_task)
 
+def setup_cli_logging(logging_level):
+
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setLevel(logging_level)
+    handler.setFormatter(
+        logging.Formatter(
+            "%(asctime)s - %(levelname)s - %(message)s",
+            datefmt='%H:%M:%S%z'
+        )
+    )
+
+    def add_handler(name):
+        logger = logging.getLogger(name)
+        logger.setLevel(logging_level)
+        logger.addHandler(handler)
+
+    add_handler("dry_pipe.pipeline_runner")
+    add_handler("dry_pipe.pipeline_instance")
+    add_handler("dry_pipe.task_process")
+    add_handler(__name__)
+
+    logger.info(f"Logging level: {logging.getLevelName(logging_level)}")
+
+
+def setup_verbose1():
+    setup_cli_logging(logging.INFO)
+
+def setup_verbose2():
+    setup_cli_logging(logging.DEBUG)
 
 
 class CliMonitor(Monitor):
     def dump(self, all_state_files):
+        print("==========================")
         for task_group, state_counts in self.produce_report(all_state_files):
             dump_counts = ",".join([
                 f"{s}: {c}" for s, c in state_counts
@@ -47,8 +78,15 @@ class Cli:
         self._add_pipeline_instance_dir_arg(self.parser)
 
         self.parser.add_argument(
-            '--verbose'
+            '--v',
+            action='store_true', default=False, help="verbose (logging_level.INFO)"
         )
+
+        self.parser.add_argument(
+            '--vv',
+            action='store_true', default=False, help="very verbose (logging_level.DEBUG)"
+        )
+
         self.parser.add_argument(
             '--dry-run',
             help="don't actualy run, but print what will run (implicit --verbose)",
@@ -139,6 +177,11 @@ class Cli:
 
     def invoke(self, test_mode=False):
 
+        if self.parsed_args.v:
+            setup_verbose1()
+        elif self.parsed_args.vv:
+            setup_verbose2()
+
         def pipeline_instance_from_args():
             g = self.parsed_args.generator
             if g is None:
@@ -169,7 +212,11 @@ class Cli:
                 monitor = CliMonitor()
             else:
                 monitor = None
-            pipeline_instance.run_sync(until_patterns=self.parsed_args.until, monitor=monitor)
+
+            pipeline_instance.run(
+                until_patterns=self.parsed_args.until,
+                monitor=monitor
+            )
         elif self.parsed_args.command == 'prepare':
             pipeline_instance = pipeline_instance_from_args()
             pipeline_instance.prepare_instance_dir()
@@ -192,7 +239,7 @@ class Cli:
             if self.parsed_args.ssh_remote_dest is not None:
                 task_process.task_conf.ssh_remote_dest = self.parsed_args.ssh_remote_dest
             elif task_process.task_conf.executer_type == "slurm":
-                if self.parsed_args.by_runner:
+                if self.parsed_args.by_runner and not task_process.task_conf.is_slurm_parent:
                     task_process.submit_sbatch_task()
                     return
 

@@ -1,3 +1,5 @@
+import logging
+import os.path
 import time
 from itertools import groupby
 from timeit import default_timer as timer
@@ -5,11 +7,13 @@ from timeit import default_timer as timer
 from dry_pipe.task_process import TaskProcess
 from dry_pipe.state_machine import AllRunnableTasksCompletedOrInError
 
+logger = logging.getLogger(__name__)
+
 
 class PipelineRunner:
 
     def __init__(
-        self, state_machines, run_tasks_in_process=False, run_tasks_async=True, sleep_schedule=None, monitor=None
+        self, state_machines, run_tasks_in_process=False, run_tasks_sync=False, sleep_schedule=None
     ):
         self.state_machine = state_machines
         self._shutdown_requested = False
@@ -18,8 +22,13 @@ class PipelineRunner:
             self.sleep_schedule = [1, 1, 1, 1, 2, 2, 2, 3, 3, 5]
         else:
             self.sleep_schedule = sleep_schedule
-        self.run_tasks_async = run_tasks_async
-        self.monitor = monitor
+        self.run_tasks_sync = run_tasks_sync
+
+        logger.debug(
+            f"PipelineRunner(run_tasks_in_process=%s, run_tasks_sync=%s)",
+            self.run_tasks_in_process,
+            self.run_tasks_sync
+        )
 
 
     def iterate_work_rounds(self):
@@ -29,22 +38,20 @@ class PipelineRunner:
             while True:
                 c = 0
                 for state_file in self.state_machine.iterate_tasks_to_launch():
-                    tp = TaskProcess(
-                        state_file.control_dir(),
-                        as_subprocess=not self.run_tasks_in_process,
-                        wait_for_completion=not self.run_tasks_async
-                    )
+                    control_dir = state_file.control_dir()
+                    as_subprocess = not self.run_tasks_in_process
+                    wait_for_completion = self.run_tasks_sync
+                    tp = TaskProcess(control_dir, as_subprocess=as_subprocess, wait_for_completion=wait_for_completion)
                     yield lambda: tp.run(by_pipeline_runner=True), None
                     c += 1
-                    if self.monitor is not None:
-                        self.monitor.dump(
-                            self.state_machine.state_file_tracker.all_state_files()
-                        )
+                    sleep_idx = 0
+
                 if c == 0:
                     if sleep_idx < max_sleep_idx:
                         sleep_idx += 1
                     yield None, self.sleep_schedule[sleep_idx]
         except AllRunnableTasksCompletedOrInError:
+            logger.info(f"no more tasks to launch")
             yield None, None
 
 
