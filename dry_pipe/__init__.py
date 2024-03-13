@@ -432,6 +432,9 @@ class TaskConf:
                 self.command_before_task = None
             return
 
+        if isinstance(sbatch_options, str):
+            sbatch_options = [sbatch_options]
+
         self.executer_type = executer_type
         self.ssh_remote_dest = ssh_remote_dest
         self.slurm_account = slurm_account
