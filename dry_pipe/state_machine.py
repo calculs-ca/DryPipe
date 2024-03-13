@@ -37,7 +37,7 @@ class InvalidTaskDefinition(Exception):
 
 class StateMachine:
 
-    def __init__(self, state_file_tracker: StateFileTracker, task_generator=None, observer=None, until_patterns=None):
+    def __init__(self, state_file_tracker: StateFileTracker, task_generator=None, until_patterns=None):
 
         if state_file_tracker is None:
             raise Exception(f"state_file_tracker can't be None")
@@ -60,7 +60,6 @@ class StateMachine:
             self._queue_only_func = _queue_only
 
         self._task_generator = task_generator
-        self._observer = observer
 
         self._keys_of_waiting_tasks_to_set_of_incomplete_upstream_task_keys: dict[str, set[str]] = {}
         self._keys_of_tasks_waiting_for_external_events: set[str] = set()
