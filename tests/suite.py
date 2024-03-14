@@ -5,7 +5,8 @@ from unittest import TextTestRunner, TestSuite, defaultTestLoader
 import pipeline_tests_with_single_tasks
 import pipeline_tests_with_multiple_tasks
 import task_launch_tests
-from cli_tests import CliArrayTests1, CliTestsPipelineWithSlurmArray, CliTestScenario2
+from cli_tests import CliArrayTests1, CliTestsPipelineWithSlurmArray, CliTestScenario2, \
+    CliTestsPipelineWithSlurmArrayRemote
 from dsl_tests import TaskChangeTrackingTests
 from pipeline_tests_with_slurm_mockup import all_low_level_tests_with_mockup_slurm
 from test_state_machine import StateMachineTests, StateFileTrackerTest, MockupStateFileTrackerTest
@@ -35,6 +36,7 @@ def array_tests():
     return [
         CliArrayTests1,
         CliTestsPipelineWithSlurmArray,
+        CliTestsPipelineWithSlurmArrayRemote,
         CliTestScenario2,
     ]
 

@@ -7,11 +7,14 @@ from dry_pipe import DryPipe, TaskConf
 from dry_pipe.cli import Cli
 from dry_pipe.core_lib import UpstreamTasksNotCompleted, PortablePopen
 from dry_pipe.pipeline import Pipeline
-from dry_pipe.task_process import TaskProcess, SlurmArrayParentTask
-from pipeline_tests_with_single_tasks import PipelineWithSinglePythonTask
+from dry_pipe.task_process import TaskProcess
+from dry_pipe.slurm_array_task import SlurmArrayParentTask
+
 from pipeline_tests_with_slurm_mockup import PipelineWithSlurmArrayForRealSlurmTest, PipelineWithSlurmArray, \
     PipelineWithSlurmArrayForRestarts
 from test_utils import TestSandboxDir
+from tests.base_pipeline_test import BasePipelineTest
+
 
 def test_cli(*args):
     Cli(args).invoke(test_mode=True)
@@ -195,6 +198,94 @@ class CliTestsPipelineWithSlurmArrayForRestarts(PipelineWithSlurmArrayForRestart
             self.assertEqual(2, int(task.outputs.r2))
 
 
+class CliTestsPipelineWithSlurmArrayRemote(PipelineWithSlurmArray):
+
+    def create_prepare_and_run_pipeline(self, d, until_patterns=["*"]):
+        pipeline_instance = self.create_pipeline_instance(d.sandbox_dir)
+        pipeline_instance.run_sync(until_patterns)
+        return pipeline_instance
+
+    def do_validate(self, pipeline_instance):
+        self.validate({
+            task.key: task
+            for task in pipeline_instance.query("*")
+        })
+
+    def test_run_pipeline(self):
+        pass
+
+    def task_conf(self):
+
+        repo_dir = os.path.abspath(os.path.dirname(os.path.dirname(__file__)))
+
+        tc = TaskConf(
+            executer_type="slurm",
+            slurm_account="def-xroucou",
+            extra_env={
+                "DRYPIPE_TASK_DEBUG": "True",
+                "PYTHONPATH": ":".join([
+                    f"{self.remote_base_dir()}/CliTestsPipelineWithSlurmArrayRemote.test_array_upload/.drypipe",
+                    f"{self.remote_base_dir()}/CliTestsPipelineWithSlurmArrayRemote.test_array_upload/external-file-deps/{repo_dir}"
+                ])
+            }
+        )
+        tc.python_bin = None
+        return tc
+
+    def exec_remote(self, cmd):
+        with PortablePopen(["ssh", self.user_at_host(), " ".join(cmd)]) as p:
+            p.wait_and_raise_if_non_zero()
+
+    def remote_base_dir(self):
+        return "/home/maxl/tests-drypipe"
+
+    def user_at_host(self):
+        return "maxl@mp2.ccs.usherbrooke.ca"
+
+    def test_array_upload(self):
+        d = TestSandboxDir(self)
+
+        pipeline_instance = self.create_prepare_and_run_pipeline(d)
+
+        pid = pipeline_instance.state_file_tracker.pipeline_instance_dir
+
+        self.exec_remote(["rm", "-Rf", self.remote_base_dir()])
+        self.exec_remote(["mkdir", "-p", self.remote_base_dir()])
+
+        ssh_dest = f"{self.user_at_host()}:{self.remote_base_dir()}"
+
+        test_cli(
+            '--pipeline-instance-dir', pid,
+            'task',
+            f'{pid}/.drypipe/z',
+            '--wait'
+        )
+
+        test_cli(
+            '--pipeline-instance-dir', pid,
+            'upload-array',
+            '--task-key=array_parent',
+            f'--ssh-remote-dest={ssh_dest}'
+        )
+
+        test_cli(
+            '--pipeline-instance-dir', pid,
+            'task',
+            f'{pid}/.drypipe/array_parent',
+            '--wait',
+            f'--ssh-remote-dest={ssh_dest}'
+        )
+
+        test_cli(
+            '--pipeline-instance-dir', pid,
+            'download-array',
+            '--task-key=array_parent',
+            f'--ssh-remote-dest={ssh_dest}'
+        )
+
+        self.do_validate(pipeline_instance)
+
+
 class CliTestsPipelineWithSlurmArray(PipelineWithSlurmArray):
 
     def create_prepare_and_run_pipeline(self, d, until_patterns=["*"]):
@@ -281,61 +372,6 @@ class CliTestsPipelineWithSlurmArray(PipelineWithSlurmArray):
         self.assertEqual(
             {task_key: state for task_key, state in array_parent_task.list_array_states()},
             {"t_b_1": "state.completed", "t_b_2": "state.completed"}
-        )
-
-        self.do_validate(pipeline_instance)
-
-    def task_conf(self):
-        return TaskConf(executer_type="slurm", slurm_account="def-xroucou", extra_env={"DRYPIPE_TASK_DEBUG": "True"})
-
-
-    def exec_remote(self, user_at_host, cmd):
-
-        with PortablePopen(["ssh", user_at_host, " ".join(cmd)]) as p:
-            p.wait_and_raise_if_non_zero()
-
-    def test_array_upload(self):
-        d = TestSandboxDir(self)
-
-        pipeline_instance = self.create_prepare_and_run_pipeline(d)
-
-        remote_base_dir = "/home/maxl/tests-drypipe"
-        ssh_dest = f"maxl@mp2.ccs.usherbrooke.ca:{remote_base_dir}"
-
-        user_at_host, root_dir = ssh_dest.split(":")
-
-        pid = pipeline_instance.state_file_tracker.pipeline_instance_dir
-
-        self.exec_remote(user_at_host, ["rm", "-Rf", root_dir])
-        self.exec_remote(user_at_host, ["mkdir", "-p", root_dir])
-
-        test_cli(
-            '--pipeline-instance-dir', pid,
-            'task',
-            f'{pid}/.drypipe/z',
-            '--wait'
-        )
-
-        test_cli(
-            '--pipeline-instance-dir', pid,
-            'upload-array',
-            '--task-key=array_parent',
-            f'--ssh-remote-dest={ssh_dest}'
-        )
-
-        test_cli(
-            '--pipeline-instance-dir', pid,
-            'task',
-            f'{pid}/.drypipe/array_parent',
-            '--wait',
-            f'--ssh-remote-dest={ssh_dest}'
-        )
-
-        test_cli(
-            '--pipeline-instance-dir', pid,
-            'download-array',
-            '--task-key=array_parent',
-            f'--ssh-remote-dest={ssh_dest}'
         )
 
         self.do_validate(pipeline_instance)

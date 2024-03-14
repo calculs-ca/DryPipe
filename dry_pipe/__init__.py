@@ -408,6 +408,9 @@ class TaskConf:
             label=None,
             work_on_local_file_copies=None
     ):
+
+        self.external_files_root = None
+
         if init_bash_command is not None:
             raise Exception(f"init_bash_command is deprecated")
 
@@ -536,7 +539,7 @@ class TaskConf:
     @staticmethod
     def from_json_file(control_dir):
         with open(os.path.join(control_dir, "task-conf.json")) as f:
-            return TaskConf(fields_from_json=json.loads(f.read()))
+            return TaskConf(fields_from_json=json.load(f))
 
     def is_remote(self):
         return self.ssh_remote_dest is not None

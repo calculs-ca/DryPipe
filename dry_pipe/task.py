@@ -1,5 +1,4 @@
 import glob
-import json
 import os
 import pathlib
 from hashlib import blake2b
@@ -204,7 +203,6 @@ class TaskStep:
                 "script": script_or_snippet_file
             }
 
-
         if container is not None:
             call["container"] = container
 
@@ -243,7 +241,6 @@ class TaskInput:
                 f"{k}={v}" for k, v in self._dict().items()
             ])
         )
-
 
     def __init__(self, name, type, upstream_task_key=None, name_in_upstream_task=None, file_name=None, value=None):
 
@@ -291,7 +288,6 @@ class TaskInput:
                 yield str(self.value)
             if self.file_name is not None:
                 yield str(self.file_name)
-
 
     def parse(self, v):
         if self.type == "int":
@@ -359,14 +355,12 @@ class TaskInput:
         return str(self.resolved_value)
 
 
-
 class TaskOutput:
 
     @staticmethod
     def from_json(json_dict):
         j = json_dict
         return TaskOutput(j["name"], j["type"], j.get("produced_file_name"))
-
 
     def as_string(self):
         p = "" if self.produced_file_name is None else f",{self.produced_file_name}"
@@ -465,6 +459,7 @@ class TaskOutput:
 
         return self._resolved_value
 
+
 class TaskInputs:
 
     def __init__(self, task_key, task_inputs):
@@ -477,7 +472,7 @@ class TaskInputs:
     def as_json(self):
         return [
             o.as_json()
-            for o in  self._task_inputs.values()
+            for o in self._task_inputs.values()
         ]
 
     def hash_values(self):
@@ -516,6 +511,7 @@ class TaskInputs:
         for i in self._task_inputs.values():
             if not i.is_upstream_output() and i.is_file():
                 yield i.name, i.file_name
+
 
 class TaskOutputs:
 
@@ -565,7 +561,6 @@ class TaskOutputs:
 
         if has_output_var:
             yield f".drypipe/{self.task_key}/output_vars"
-
 
     def iterate_file_task_outputs(self, task_output_dir):
         for o in self._task_outputs.values():

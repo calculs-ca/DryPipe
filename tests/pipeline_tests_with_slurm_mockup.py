@@ -10,9 +10,11 @@ import dry_pipe
 from base_pipeline_test import BasePipelineTest, TestWithDirectorySandbox
 from dry_pipe import TaskConf
 from dry_pipe.core_lib import StateFileTracker
-from dry_pipe.task_process import SlurmArrayParentTask, TaskProcess
+from dry_pipe.task_process import TaskProcess
+from dry_pipe.slurm_array_task import SlurmArrayParentTask
 from mockups import TaskMockup
 from test_state_machine import StateMachineTester
+from tests.exportable_funcs import test_func
 
 
 def throttle(share_dir, threshold, task_key):
@@ -69,17 +71,6 @@ def format_sbatch_array(array_indexes):
     return r2
 
 
-@dry_pipe.DryPipe.python_call()
-def test_func(r, i, f):
-
-    with open(f) as _f:
-        f_int = int(_f.read().strip())
-
-        return {
-            "var_result": r + i + f_int
-        }
-
-
 class PipelineWithSlurmArray(BasePipelineTest):
 
     def task_conf(self):
@@ -95,10 +86,15 @@ class PipelineWithSlurmArray(BasePipelineTest):
         ).calls("""
             #!/usr/bin/env bash            
             export r=10        
-            echo 25 > $f    
+            echo 25 > $f            
         """)()
 
         yield t0
+
+        exportable_funcs_file = os.path.join(
+            os.path.dirname(os.path.realpath(__file__)),
+            "exportable_funcs.py"
+        )
 
         for i in [1, 2]:
             for c in ["a", "b"]:
@@ -109,7 +105,8 @@ class PipelineWithSlurmArray(BasePipelineTest):
                 ).inputs(
                     r=t0.outputs.r,
                     i=i,
-                    f=t0.outputs.f
+                    f=t0.outputs.f,
+                    code_dep=dsl.file(exportable_funcs_file)
                 ).outputs(
                     slurm_result=int,
                     slurm_result_in_file=dsl.file('slurm_result.txt'),
@@ -119,10 +116,14 @@ class PipelineWithSlurmArray(BasePipelineTest):
                     echo "$r $i"  
                     value_f=$(<$f)          
                     export slurm_result=$(( $r + $i + $value_f))
+                    echo "__task_output_dir=$__task_output_dir"
+                    echo "slurm_result_in_file=$slurm_result_in_file"                    
                     echo "$slurm_result"
                     mkdir -p $__task_output_dir
                     echo "$slurm_result" > $slurm_result_in_file
-                """).calls(test_func)()
+                """).calls(
+                    test_func
+                )()
 
         for match in dsl.query_all_or_nothing("t_*", state="ready"):
             yield dsl.task(
