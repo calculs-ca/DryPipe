@@ -10,6 +10,7 @@ from typing import List, Iterator, Tuple
 
 from dry_pipe import PortablePopen, TaskConf
 from dry_pipe.state_file_tracker import StateFileTracker
+from dry_pipe.task_lib import upload_array, download_array
 from dry_pipe.task_process import TaskProcess
 
 
@@ -450,7 +451,7 @@ class SlurmArrayParentTask:
 
         return False
 
-    def upload_array(self):
+    def _upload_array(self):
 
         task_key = self.task_process.task_key
 
@@ -460,178 +461,37 @@ class SlurmArrayParentTask:
                 f"requires ssh_remote_dest in TaskConf OR --ssh-remote-dest argument to be set"
             )
 
-        def dump_unique_files_in_file(files, dep_file):
-            uniq_files = set()
-            with open(dep_file, "w") as tf:
-                for dep_file in files:
-                    if dep_file not in uniq_files:
-                        tf.write(dep_file)
-                        tf.write("\n")
-                        uniq_files.add(dep_file)
+        rps = self.task_process.task_conf.remote_pipeline_specs(self.tracker.pipeline_instance_dir)
 
-        internal_dep_file_txt = os.path.join(self.control_dir(), "deps.txt")
-        external_dep_file_txt = os.path.join(self.control_dir(), "external-deps.txt")
-        external_file_deps = []
+        upload_array.func(
+            __task_key=self.task_process.task_key,
+            __task_control_dir=self.task_process.control_dir,
+            __user_at_host=rps.user_at_host,
+            __remote_base_dire=rps.remote_base_dir,
+            __ssh_key_file=rps.ssh_key_file,
+            __task_logger=self.task_process.task_logger,
+            __children_task_keys=self.children_task_keys(),
+            __pipeline_work_dir=self.task_process.pipeline_work_dir,
+            __pipeline_instance_dir=self.task_process.pipeline_instance_dir,
+            __remote_pipeline_work_dir=rps.remote_instance_work_dir
+        )
 
-        def gen_inner_pipeline_file_deps():
-
-            def gen_internal_file_deps():
-                def _gen_0():
-                    for child_task_key in self.children_task_keys():
-
-                        p = TaskProcess(
-                            os.path.join(self.tracker.pipeline_work_dir, child_task_key),
-                            ensure_all_upstream_deps_complete=True
-                        )
-
-                        for _, file in p.inputs.rsync_file_list_produced_upstream():
-                            yield file
-
-                        for file in p.inputs.rsync_output_var_file_list_produced_upstream():
-                            yield file
-
-                        for _, file in p.inputs.rsync_external_file_list():
-                            external_file_deps.append(file)
-
-                        yield f".drypipe/{child_task_key}/state.ready"
-                        yield f".drypipe/{child_task_key}/task-conf.json"
-
-                        for step in p.task_conf.step_invocations:
-                            if step["call"] == "bash":
-                                _, script = step["script"].rsplit("/", 1)
-                                yield f".drypipe/{child_task_key}/{script}"
-
-                    yield ".drypipe/cli"
-
-                    for py_file in glob.glob(os.path.join(os.path.dirname(__file__), "*.py")):
-                        yield f".drypipe/dry_pipe/{os.path.basename(py_file)}"
-
-                    yield f".drypipe/{task_key}/task-conf.json"
-                    yield f".drypipe/{task_key}/task-keys.tsv"
-                    yield f".drypipe/{task_key}/state.ready"
-
-                pipeline_instance_name = os.path.basename(self.pipeline_instance_dir)
-                for f in _gen_0():
-                    yield f"{pipeline_instance_name}/{f}"
-
-            self.task_process.task_logger.info("will generate file list for upload")
-
-            dump_unique_files_in_file(gen_internal_file_deps(), internal_dep_file_txt)
-
-            self.task_process.task_logger.info("done")
-
-        def gen_external_file_deps():
-            if len(external_file_deps) == 0:
-                self.task_process.task_logger.info("no external file deps")
-            else:
-                self.task_process.task_logger.info("will generate external file deps")
-
-            dump_unique_files_in_file(external_file_deps, external_dep_file_txt)
-
-        # gen all deps files before rsync
-        gen_inner_pipeline_file_deps()
-
-        gen_external_file_deps()
-
-        user_at_host, remote_base_dire, ssh_key_file = self.task_process.task_conf.parse_ssh_remote_dest()
-
-        ssh_remote_dest = f"{user_at_host}:{remote_base_dire}"
-
-        pid = os.path.abspath(os.path.dirname(self.task_process.pipeline_instance_dir))
-
-        pid_base_name = os.path.basename(self.task_process.pipeline_instance_dir)
-
-        remote_pid = os.path.join(remote_base_dire, pid_base_name)
-
-        def do_rsync(src, dst, deps_file):
-            rsync_cmd = f"rsync --mkpath -a --dirs --files-from={deps_file} {src}/ {dst}/"
-            self.task_process.task_logger.info("%s", rsync_cmd)
-            self.task_process.invoke_rsync(rsync_cmd)
-
-        overrides_basename = "task-conf-overrides.json"
-
-        def gen_task_conf_remote_overrides():
-            tmp_overrides_file = os.path.join(self.control_dir(), overrides_basename)
-            with open(tmp_overrides_file, "w") as tmp_overrides:
-                tmp_overrides.write(json.dumps(
-                    {
-                        "external_files_root": f"{remote_pid}/external-file-deps"
-                    },
-                    indent=2
-                ))
-
-            shutil.copy(
-                tmp_overrides_file,
-                os.path.join(self.task_process.control_dir, f"task-conf-overrides-{user_at_host}.json")
-            )
-
-            dst = f"{user_at_host}:{remote_pid}/.drypipe/{self.task_process.task_key}/"
-
-            self.task_process.invoke_rsync(f"rsync --mkpath {tmp_overrides_file} {dst}")
-
-            os.remove(tmp_overrides_file)
-
-        gen_task_conf_remote_overrides()
-
-        do_rsync(pid, ssh_remote_dest, internal_dep_file_txt)
-
-        do_rsync("", f"{ssh_remote_dest}/{pid_base_name}/external-file-deps", external_dep_file_txt)
-
-    def download_array(self):
-        def gen_result_files():
-            for child_task_key in self.children_task_keys():
-                p = TaskProcess(
-                    os.path.join(self.tracker.pipeline_work_dir, child_task_key),
-                    ensure_all_upstream_deps_complete=False
-                )
-                for file in p.outputs.rsync_file_list():
-                    yield file
-
-        result_file_txt = os.path.join(self.control_dir(), "result-files.txt")
-        uniq_files = set()
-        with open(result_file_txt, "w") as tf:
-            for result_file in gen_result_files():
-                if result_file not in uniq_files:
-                    tf.write(result_file)
-                    tf.write("\n")
-                    uniq_files.add(result_file)
+    def _download_array(self):
 
         rps = self.task_process.task_conf.remote_pipeline_specs(self.tracker.pipeline_instance_dir)
 
-        pid = self.task_process.pipeline_instance_dir
-
-        pipeline_base_name = os.path.basename(pid)
-
-        ssh_remote_dest = \
-            f"{rps.user_at_host}:{rps.remote_base_dir}/{pipeline_base_name}/"
-
-        rsync_cmd = f"rsync -a --dirs --files-from={result_file_txt} {ssh_remote_dest} {pid}/"
-
-        self.task_process.task_logger.debug("%s", rsync_cmd)
-        self.task_process.invoke_rsync(rsync_cmd)
-
-        remote_exec_result = self.task_process.exec_remote(rps.user_at_host, [
-            rps.remote_cli,
-            "list-array-states",
-            f"--task-key={self.task_process.task_key}"
-        ])
-
-        for task_key_task_state in remote_exec_result.split("\n"):
-
-            task_key_task_state = task_key_task_state.strip()
-
-            if task_key_task_state == "":
-                continue
-
-            task_key, task_state = task_key_task_state.split("/")
-
-            task_control_dir = os.path.join(self.task_process.pipeline_work_dir, task_key)
-
-            state_file_path = StateFileTracker.find_state_file_if_exists(task_control_dir)
-
-            if state_file_path is not None:
-                actual_state = os.path.join(task_control_dir, task_state)
-                os.rename(state_file_path.path, actual_state)
+        download_array.func(
+            __task_key=self.task_process.task_key,
+            __task_control_dir=self.task_process.control_dir,
+            __user_at_host=rps.user_at_host,
+            __remote_base_dir=rps.remote_base_dir,
+            __ssh_key_file=rps.ssh_key_file,
+            __task_logger=self.task_process.task_logger,
+            __children_task_keys=self.children_task_keys(),
+            __pipeline_work_dir=self.task_process.pipeline_work_dir,
+            __pipeline_instance_dir=self.task_process.pipeline_instance_dir,
+            __remote_pipeline_work_dir=rps.remote_instance_work_dir
+        )
 
     @staticmethod
     def create_array_parent(pipeline_instance_dir, new_task_key, matcher, slurm_account, split_into):

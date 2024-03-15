@@ -3,6 +3,11 @@ import os
 import subprocess
 
 
+class RetryableRsyncException(Exception):
+    def __init__(self, message):
+        super().__init__(message)
+
+
 class PortablePopen:
 
     def __init__(self, process_args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=None, shell=False, stdin=None):
@@ -128,3 +133,67 @@ def func_from_mod_func(mod_func):
 
 
 
+
+def invoke_rsync(command):
+    def _rsync_error_codes(code):
+        """
+        Error codes as documented here: https://download.samba.org/pub/rsync/rsync.1
+        :param code rsync error code:
+        :return (is_retryable, message):
+        """
+        if code == 1:
+            return False, 'Syntax or usage error'
+        elif code == 2:
+            return False, 'Protocol incompatibility'
+        elif code == 3:
+            return True, 'Errors selecting input/output'
+        elif code == 4:
+            return False, 'Requested action not supported'
+        elif code == 5:
+            return True, 'Error starting client-serve'
+        elif code == 6:
+            return True, 'Daemon unable to append to log-file'
+        elif code == 10:
+            return True, 'Error in socket I/O'
+        elif code == 11:
+            return True, 'Error in file I/O'
+        elif code == 12:
+            return True, 'Error in rsync protocol data stream'
+        elif code == 13:
+            return True, 'Errors with program diagnostics'
+        elif code == 14:
+            return True, 'Error in IPC code'
+        elif code == 20:
+            return True, 'Received SIGUSR1 or SIGINT'
+        elif code == 21:
+            return True, 'Some error returned by waitpid()'
+        elif code == 22:
+            return True, 'Error allocating core memory'
+        elif code == 23:
+            return True, 'Partial transfer due to error'
+        elif code == 24:
+            return True, 'Partial transfer due to vanished source file'
+        elif code == 25:
+            return True, 'The --max-delete limit stopped deletions'
+        elif code == 30:
+            return True, 'Timeout in data send/received'
+        elif code == 35:
+            return True, 'Timeout waiting for daemon'
+        else:
+            return False, f'unknown error: {code}'
+
+    with PortablePopen(command, shell=True) as p:
+        p.popen.wait()
+        if p.popen.returncode != 0:
+            is_retryable, rsync_message = _rsync_error_codes(p.popen.returncode)
+            msg = f"rsync failed: {rsync_message}, \n'{command}' \n{p.safe_stderr_as_string()}"
+            if not is_retryable:
+                raise Exception(msg)
+            else:
+                raise RetryableRsyncException(msg)
+
+
+def exec_remote(user_at_host, cmd):
+    with PortablePopen(["ssh", user_at_host, " ".join(cmd)]) as p:
+        p.wait_and_raise_if_non_zero()
+        return p.stdout_as_string()

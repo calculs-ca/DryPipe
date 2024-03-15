@@ -262,7 +262,7 @@ class Cli:
 
             array_parent_task = SlurmArrayParentTask(task_process)
 
-            array_parent_task.upload_array()
+            array_parent_task._upload_array()
 
         elif self.parsed_args.command == 'download-array':
 
@@ -275,7 +275,7 @@ class Cli:
 
             array_parent_task = SlurmArrayParentTask(task_process)
 
-            array_parent_task.download_array()
+            array_parent_task._download_array()
 
         elif self.parsed_args.command == 'create-array-parent':
 
