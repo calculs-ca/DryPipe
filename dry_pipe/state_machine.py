@@ -4,11 +4,8 @@ import typing
 from pathlib import Path
 
 from dry_pipe import TaskBuilder, TaskConf
-from dry_pipe.core_lib import StateFileTracker
+from dry_pipe.state_file_tracker import StateFileTracker
 from dry_pipe.task_process import TaskProcess
-
-
-# TODO: rename to TaskState
 
 
 class AllRunnableTasksCompletedOrInError(Exception):

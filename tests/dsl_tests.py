@@ -2,7 +2,7 @@ import unittest
 
 
 from dry_pipe import TaskBuilder, TaskConf
-from dry_pipe.core_lib import StateFileTracker
+from dry_pipe.state_file_tracker import StateFileTracker
 from dry_pipe.state_machine import InvalidTaskDefinition
 from tests.test_state_machine import StateMachineTester
 from tests.test_utils import TestSandboxDir

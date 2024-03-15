@@ -3,7 +3,7 @@ import os
 from pathlib import Path
 
 from dry_pipe import TaskConf
-from dry_pipe.core_lib import StateFile
+from dry_pipe.state_file import StateFile
 
 
 class TaskMockup:

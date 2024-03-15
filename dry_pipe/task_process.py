@@ -20,10 +20,7 @@ from dry_pipe.core_lib import UpstreamTasksNotCompleted, PortablePopen, func_fro
 
 from dry_pipe.task import TaskOutput, TaskInputs, TaskOutputs, TaskInput
 
-#APPTAINER_COMMAND="apptainer"
-APPTAINER_COMMAND="singularity"
-
-APPTAINER_BIND="APPTAINER_BIND"
+APPTAINER_COMMAND = "singularity"
 
 
 module_logger = logging.getLogger(__name__)

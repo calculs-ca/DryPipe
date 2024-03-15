@@ -5,7 +5,7 @@ from pathlib import Path
 
 from dry_pipe.pipeline_runner import Monitor
 from dry_pipe.state_machine import StateMachine, AllRunnableTasksCompletedOrInError, InvalidQueryInTaskGenerator
-from dry_pipe.core_lib import StateFileTracker
+from dry_pipe.state_file_tracker import StateFileTracker
 from mockups import TaskMockup, StateFileTrackerMockup
 from test_utils import TestSandboxDir
 

@@ -3,7 +3,7 @@ import time
 
 from dry_pipe.pipeline_runner import PipelineRunner
 from dry_pipe.state_machine import StateMachine
-from dry_pipe.core_lib import StateFileTracker
+from dry_pipe.state_file_tracker import StateFileTracker
 
 logger = logging.getLogger(__name__)
 

@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import List, Iterator, Tuple
 
 from dry_pipe import PortablePopen, TaskConf
-from dry_pipe.core_lib import StateFileTracker
+from dry_pipe.state_file_tracker import StateFileTracker
 from dry_pipe.task_process import TaskProcess
 
 

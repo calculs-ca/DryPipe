@@ -9,7 +9,7 @@ from typing import Tuple, List
 import dry_pipe
 from base_pipeline_test import BasePipelineTest, TestWithDirectorySandbox
 from dry_pipe import TaskConf
-from dry_pipe.core_lib import StateFileTracker
+from dry_pipe.state_file_tracker import StateFileTracker
 from dry_pipe.task_process import TaskProcess
 from dry_pipe.slurm_array_task import SlurmArrayParentTask
 from mockups import TaskMockup

@@ -12,15 +12,12 @@ from dry_pipe.slurm_array_task import SlurmArrayParentTask
 
 logger = logging.getLogger(__name__)
 
-#logging.getLogger().handlers.clear()
-#logging.getLogger().propagate = False
-
 def call(mod_func):
 
     python_task = func_from_mod_func(mod_func)
     control_dir = os.environ["__control_dir"]
-    task_runner = TaskProcess(control_dir, is_python_call=True)
-    task_runner.call_python(mod_func, python_task)
+    task_process = TaskProcess(control_dir, is_python_call=True)
+    task_process.call_python(mod_func, python_task)
 
 def setup_cli_logging(logging_level):
 
