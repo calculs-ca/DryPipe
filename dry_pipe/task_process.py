@@ -58,8 +58,9 @@ class TaskProcess:
         self.pipeline_instance_name = os.path.basename(self.pipeline_instance_dir)
         self.pipeline_output_dir = os.path.join(self.pipeline_instance_dir, "output")
         self.task_output_dir = os.path.join(self.pipeline_output_dir, self.task_key)
+        self.is_python_call = is_python_call
 
-        if not is_python_call:
+        if not self.is_python_call:
             # override causes problems for python_call
             self._override_control_dir_if_child_task()
 
@@ -227,6 +228,41 @@ class TaskProcess:
         if self.task_conf.sbatch_options is not None and len(self.task_conf.sbatch_options) > 0:
             yield " ".join(self.task_conf.sbatch_options)
 
+    def _children_task_keys(self):
+        with open(os.path.join(self.control_dir,  "task-keys.tsv")) as f:
+            for line in f:
+                yield line.strip()
+
+    def _get_drypipe_arg(self, name, mod_func):
+
+        if self.task_conf.ssh_remote_dest is not None:
+            rps = self.task_conf.remote_pipeline_specs(self.pipeline_instance_dir)
+        else:
+            rps = None
+
+        def _rps():
+            if rps is None:
+                raise Exception(
+                    f"Task({self.task_key}) python_call, has argument {mod_func} has argument {name} " +
+                    " that requires task_conf.ssh_remote_dest to be not None"
+                )
+            return rps
+
+        if name == "__user_at_host":
+            return _rps().user_at_host
+        elif name == "__remote_base_dir":
+            return _rps().remote_base_dir
+        elif name == "__ssh_key_file":
+            return _rps().ssh_key_file
+        elif name == "__task_logger":
+            return self.task_conf.task_logger
+        elif name == "__children_task_keys":
+            return self._children_task_keys()
+        elif name == "__remote_pipeline_work_dir":
+            return _rps().remote_instance_work_dir
+        else:
+            return None
+
     def call_python(self, mod_func, python_task):
 
         pythonpath_in_env = os.environ.get("PYTHONPATH")
@@ -256,6 +292,7 @@ class TaskProcess:
 
         all_function_input_candidates = {
             ** os.environ,
+            ** self.env,
             ** inputs_by_name,
             ** file_outputs_by_name,
             ** self._local_copy_adjusted_file_env_vars(),
@@ -263,6 +300,12 @@ class TaskProcess:
         }
 
         def get_arg(k):
+
+            v = self._get_drypipe_arg(k, mod_func)
+
+            if v is not None:
+                return v
+
             v = all_function_input_candidates.get(k)
             if v is None and k != "test":
                 tk = self.task_key
@@ -305,8 +348,9 @@ class TaskProcess:
             out_vars = python_task.func(* args, ** kwargs)
         except Exception as ex:
             self.task_logger.exception(ex)
-            logging.shutdown()
-            exit(1)
+            if self.is_python_call:
+                logging.shutdown()
+                exit(1)
 
         if out_vars is not None and not isinstance(out_vars, dict):
             raise Exception(
@@ -335,12 +379,14 @@ class TaskProcess:
 
                 self.write_out_vars(next_out_vars)
 
-        except Exception as ex:
+        except Exception:
             traceback.print_exc()
-            logging.shutdown()
-            exit(1)
+            if self.is_python_call:
+                logging.shutdown()
+                exit(1)
 
-        logging.shutdown()
+        if self.is_python_call:
+            logging.shutdown()
 
     def _unserialize_and_resolve_inputs_outputs(self, ensure_all_upstream_deps_complete):
 
@@ -483,6 +529,7 @@ class TaskProcess:
 
         yield "__pipeline_instance_dir", self.pipeline_instance_dir
         yield "__pipeline_instance_name", self.pipeline_instance_name
+        yield "__pipeline_work_dir", self.pipeline_work_dir
         yield "__control_dir", self.control_dir
         yield "__task_key", self.task_key
         yield "__task_output_dir", self.task_output_dir
@@ -1086,6 +1133,7 @@ class TaskProcess:
 
             raise Exception(f"Error: no task_key for SLURM_ARRAY_TASK_ID={slurm_array_task_id}")
 
+    """    
     def launch_remote_task(self):
 
         user_at_host, remote_base_dir, ssh_key_file = self.task_conf.parse_ssh_remote_dest()
@@ -1104,6 +1152,7 @@ class TaskProcess:
             __pipeline_instance_name=self.pipeline_instance_name,
             __remote_pipeline_work_dir=remote_pipeline_work_dir
         )
+    """
 
     def _launch_and_tail(self, launch_func):
         def func():
@@ -1132,8 +1181,17 @@ class TaskProcess:
         def task_func_wrapper():
             try:
                 self.task_logger.debug("task func started")
+
                 if self.task_conf.ssh_remote_dest is not None:
-                    self.launch_remote_task()
+                    #self.launch_remote_task()
+                    self.run_python_calls_in_process = True
+
+                    self.task_conf.step_invocations = [{
+                      "call": "python",
+                      "module_function": "dry_pipe.task_lib:execute_remote_task"
+                    }]
+
+                    self._run_steps()
                 else:
                     is_slurm_parent = self.task_conf.is_slurm_parent
                     if is_slurm_parent is not None and is_slurm_parent:

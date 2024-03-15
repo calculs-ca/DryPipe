@@ -13,7 +13,7 @@ def upload_array(
     __task_key,
     __task_control_dir,
     __user_at_host,
-    __remote_base_dire,
+    __remote_base_dir,
     __ssh_key_file,
     __task_logger,
     __children_task_keys,
@@ -96,13 +96,13 @@ def upload_array(
 
     gen_external_file_deps()
 
-    ssh_remote_dest = f"{__user_at_host}:{__remote_base_dire}"
+    ssh_remote_dest = f"{__user_at_host}:{__remote_base_dir}"
 
     pid = os.path.abspath(os.path.dirname(__pipeline_instance_dir))
 
     pid_base_name = os.path.basename(__pipeline_instance_dir)
 
-    remote_pid = os.path.join(__remote_base_dire, pid_base_name)
+    remote_pid = os.path.join(__remote_base_dir, pid_base_name)
 
     def do_rsync(src, dst, deps_file):
         rsync_cmd = f"rsync --mkpath -a --dirs --files-from={deps_file} {src}/ {dst}/"

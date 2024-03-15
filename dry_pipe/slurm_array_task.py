@@ -1,9 +1,6 @@
 import glob
-import json
 import logging
 import os
-import shutil
-import tempfile
 import time
 from pathlib import Path
 from typing import List, Iterator, Tuple
@@ -467,7 +464,7 @@ class SlurmArrayParentTask:
             __task_key=self.task_process.task_key,
             __task_control_dir=self.task_process.control_dir,
             __user_at_host=rps.user_at_host,
-            __remote_base_dire=rps.remote_base_dir,
+            __remote_base_dir=rps.remote_base_dir,
             __ssh_key_file=rps.ssh_key_file,
             __task_logger=self.task_process.task_logger,
             __children_task_keys=self.children_task_keys(),
