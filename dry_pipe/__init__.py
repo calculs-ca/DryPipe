@@ -454,6 +454,7 @@ class TaskConf:
         self.label = label
         self.work_on_local_file_copies = work_on_local_file_copies
         self.is_slurm_parent = False
+        self.is_on_remote_site = False
         #self.hash_code = None
         self.inputs = []
         self.outputs = []

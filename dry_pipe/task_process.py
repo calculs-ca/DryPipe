@@ -39,7 +39,8 @@ class TaskProcess:
             wait_for_completion=False,
             tail=False,
             tail_all=False,
-            is_python_call=False
+            is_python_call=False,
+            from_remote=False
     ):
 
         self.wait_for_completion = wait_for_completion
@@ -59,6 +60,8 @@ class TaskProcess:
         self.pipeline_output_dir = os.path.join(self.pipeline_instance_dir, "output")
         self.task_output_dir = os.path.join(self.pipeline_output_dir, self.task_key)
         self.is_python_call = is_python_call
+        self.no_dynamic_steps = from_remote
+        self.slurm_array_task_id = os.environ.get("SLURM_ARRAY_TASK_ID")
 
         if not self.is_python_call:
             # override causes problems for python_call
@@ -79,6 +82,10 @@ class TaskProcess:
 
         try:
 
+            self.task_logger.debug("SLURM_ARRAY_TASK_ID: '%s'", self.slurm_array_task_id)
+
+            self.task_conf = TaskConf.from_json_file(self.control_dir)
+
             self._override_task_confs_if_applicable()
 
             module_logger.debug(
@@ -90,7 +97,6 @@ class TaskProcess:
             if self.pipeline_instance_dir == "":
                 raise Exception(f"pipeline_instance_dir can't be empty string")
 
-            self.task_conf = TaskConf.from_json_file(self.control_dir)
             task_inputs, task_outputs = self._unserialize_and_resolve_inputs_outputs(ensure_all_upstream_deps_complete)
 
             self.inputs = TaskInputs(self.task_key, task_inputs)
@@ -98,7 +104,7 @@ class TaskProcess:
 
             self.task_logger.debug(f"will iterate env")
 
-            for k, v in self.iterate_task_env(False):
+            for k, v in self.iterate_task_env():
                 v = str(v)
                 self.task_logger.debug("env var %s = %s", k, v)
                 self.env[k] = v
@@ -179,14 +185,25 @@ class TaskProcess:
 
     def _override_task_conf_from_json(self, overrides_file):
         if not os.path.exists(overrides_file):
+            self.task_logger.debug("no overrides in %s", overrides_file)
             return
         else:
+            self.task_logger.debug("will apply overrides from %s", overrides_file)
             with open(overrides_file) as f:
                 o = json.load(f)
                 external_files_root = o.get("external_files_root")
                 if external_files_root is not None:
                     self.task_conf.external_files_root = external_files_root
-                    self.task_logger.debug("task_conf.external_files_root overriden %s", external_files_root)
+                    self.task_logger.debug(
+                        "task_conf.external_files_root overriden %s", self.task_conf.external_files_root
+                    )
+                is_on_remote_site = o.get("is_on_remote_site")
+                if is_on_remote_site is not None and is_on_remote_site:
+                    self.task_conf.is_on_remote_site = True
+                    self.task_logger.debug(
+                        "task_conf.is_on_remote_site overriden %s", self.task_conf.is_on_remote_site
+                    )
+
 
     def run(self, array_limit=None, by_pipeline_runner=False):
 
@@ -255,15 +272,17 @@ class TaskProcess:
         elif name == "__ssh_key_file":
             return _rps().ssh_key_file
         elif name == "__task_logger":
-            return self.task_conf.task_logger
+            return self.task_logger
         elif name == "__children_task_keys":
             return self._children_task_keys()
         elif name == "__remote_pipeline_work_dir":
             return _rps().remote_instance_work_dir
+        elif name == "__task_process":
+            return self
         else:
             return None
 
-    def call_python(self, mod_func, python_task):
+    def call_python(self, mod_func, python_call):
 
         pythonpath_in_env = os.environ.get("PYTHONPATH")
 
@@ -318,7 +337,7 @@ class TaskProcess:
 
         args_tuples = [
             (k, get_arg(k))
-            for k, v in python_task.signature.parameters.items()
+            for k, v in python_call.signature.parameters.items()
             if not k == "kwargs"
         ]
 
@@ -326,7 +345,7 @@ class TaskProcess:
         args_names = [k for k, _ in args_tuples]
         self.task_logger.debug("args list: %s", args_names)
 
-        if "kwargs" not in python_task.signature.parameters:
+        if "kwargs" not in python_call.signature.parameters:
             kwargs = {}
         else:
             kwargs = {
@@ -345,16 +364,17 @@ class TaskProcess:
             out.write("=================================================\n")
 
         try:
-            out_vars = python_task.func(* args, ** kwargs)
+            out_vars = python_call.func(* args, ** kwargs)
         except Exception as ex:
             self.task_logger.exception(ex)
             if self.is_python_call:
                 logging.shutdown()
                 exit(1)
+            out_vars = None
 
         if out_vars is not None and not isinstance(out_vars, dict):
             raise Exception(
-                f"function {python_task.mod_func()} called by task {self.task_key} {type(out_vars)}" +
+                f"function {python_call.mod_func()} called by task {self.task_key} {type(out_vars)}" +
                 f"@DryPipe.python_call() can only return a python dict, or None"
             )
 
@@ -508,7 +528,7 @@ class TaskProcess:
                     var_name, value = line.split("=")
                     yield var_name.strip(), value.strip()
 
-    def iterate_task_env(self, ensure_all_upstream_deps_complete):
+    def iterate_task_env(self):
         pipeline_conf = Path(self.pipeline_work_dir, "conf.json")
         if os.path.exists(pipeline_conf):
             with open(pipeline_conf) as pc:
@@ -531,6 +551,7 @@ class TaskProcess:
         yield "__pipeline_instance_name", self.pipeline_instance_name
         yield "__pipeline_work_dir", self.pipeline_work_dir
         yield "__control_dir", self.control_dir
+        yield "__task_control_dir", self.control_dir
         yield "__task_key", self.task_key
         yield "__task_output_dir", self.task_output_dir
 
@@ -542,10 +563,12 @@ class TaskProcess:
         # stderr defaults to stdout, by default
         yield "__err_log", os.path.join(self.control_dir, "out.log")
 
-        if self.task_conf.ssh_remote_dest is not None:
-            yield "__is_remote", "True"
-        else:
-            yield "__is_remote", "False"
+        #if self.task_conf.ssh_remote_dest is not None:
+        #    yield "__is_remote", "True"
+        #else:
+        #    yield "__is_remote", "False"
+
+        yield "__is_on_remote_site", self.task_conf.is_on_remote_site
 
         container = self.task_conf.container
         if container is not None and container != "":
@@ -690,7 +713,7 @@ class TaskProcess:
             for k, v in env.items():
                 self.env[k] = v
 
-    def read_task_state(self, control_dir=None, state_file=None):
+    def read_task_state(self, control_dir=None, state_file=None, non_existant_ok=False):
 
         if control_dir is None:
             control_dir = self.env["__control_dir"]
@@ -700,7 +723,12 @@ class TaskProcess:
             state_file = list(glob.glob(glob_exp))
 
             if len(state_file) == 0:
-                raise Exception(f"no state file in {control_dir}, {glob_exp}")
+                if non_existant_ok:
+                    state_file = Path(control_dir, "state.ready")
+                    state_file.touch()
+                    return 0, control_dir, state_file, "ready"
+                else:
+                    raise Exception(f"no state file in {control_dir}, {glob_exp}")
             if len(state_file) > 1:
                 raise Exception(f"more than one state file found in {control_dir}, {glob_exp}")
 
@@ -997,10 +1025,25 @@ class TaskProcess:
             f"rsync -a --dirs {self._local_outputs_root()}/ {self.pipeline_output_dir}/{self.task_key}"
         )
 
+    def _resolve_steps(self):
+        if self.task_conf.ssh_remote_dest is not None and not self.task_conf.is_on_remote_site:
+            if self.is_slurm_array_parent():
+                yield {"call": "python", "module_function": "dry_pipe.task_lib:upload_array"}
+                yield {"call": "python", "module_function": "dry_pipe.task_lib:execute_remote_task"}
+                yield {"call": "python", "module_function": "dry_pipe.task_lib:download_array"}
+
+            else:
+                yield {"call": "python", "module_function": "dry_pipe.task_lib:execute_remote_task"}
+        elif self.is_slurm_array_parent():
+            yield {"call": "python", "module_function": "dry_pipe.task_lib:run_array"}
+        else:
+            yield from self.task_conf.step_invocations
+
     def _run_steps(self):
 
-        step_number, control_dir, state_file, state_name = self.read_task_state()
-        step_invocations = self.task_conf.step_invocations
+        step_number, control_dir, state_file, state_name = self.read_task_state(non_existant_ok=True)
+
+        step_invocations = list(self._resolve_steps())
 
         if self._is_work_on_local_copy():
             self._create_local_scratch_and_rsync_inputs()
@@ -1013,15 +1056,14 @@ class TaskProcess:
             call = step_invocation["call"]
 
             if call == "python":
-                if not self.run_python_calls_in_process:
-                    self.run_python(step_invocation["module_function"], step_invocation.get("container"))
+                module_function = step_invocation["module_function"]
+                if self.run_python_calls_in_process or module_function.startswith("dry_pipe.task_lib:"):
+                    python_call = func_from_mod_func(module_function)
+                    self.call_python(module_function, python_call)
                 else:
-                    module_function = step_invocation["module_function"]
-                    python_task = func_from_mod_func(module_function)
-                    self.call_python(module_function, python_task)
+                    self.run_python(module_function, step_invocation.get("container"))
             elif call == "bash":
-                self.run_script(os.path.expandvars(step_invocation["script"]),
-                           step_invocation.get("container"))
+                self.run_script(os.path.expandvars(step_invocation["script"]), step_invocation.get("container"))
             else:
                 raise Exception(f"unknown step invocation type: {call}")
 
@@ -1032,11 +1074,12 @@ class TaskProcess:
 
         self.transition_to_completed(state_file)
 
+    """
     def run_array(self, limit):
 
         from dry_pipe.slurm_array_task import SlurmArrayParentTask
 
-        step_number, _, state_file, _ = self.read_task_state()
+        step_number, _, state_file, _ = self.read_task_state(non_existant_ok=True)
         try:
             sapt = SlurmArrayParentTask(self)
 
@@ -1048,6 +1091,7 @@ class TaskProcess:
             self.task_logger.exception(ex)
             self._transition_state_file(state_file, "failed", step_number)
             raise ex
+    """
 
     def sbatch_cmd_lines(self):
 
@@ -1086,7 +1130,7 @@ class TaskProcess:
             print(l)
 
     def is_array_child_task(self):
-        return os.environ.get("SLURM_ARRAY_TASK_ID") is not None
+        return self.slurm_array_task_id is not None
 
     def _control_dir_from_env(self):
         return os.environ.get("DRYPIPE_TASK_CONTROL_DIR")
@@ -1099,12 +1143,9 @@ class TaskProcess:
         return self._control_dir_from_env()
 
     def _override_control_dir_if_child_task(self):
+        if self.is_array_child_task():
 
-        if not self.is_array_child_task():
-            return None
-        else:
-
-            slurm_array_task_id = os.environ.get("SLURM_ARRAY_TASK_ID")
+            self.no_dynamic_steps = True
 
             array_index_2_task_key = os.environ.get("DRYPIPE_TASK_KEY_FILE_BASENAME")
 
@@ -1118,7 +1159,7 @@ class TaskProcess:
                     for line in f:
                         yield line.strip()
 
-            slurm_array_task_id = int(slurm_array_task_id)
+            slurm_array_task_id = int(self.slurm_array_task_id)
             c = 0
             _drypipe_dir = os.path.dirname(control_dir_from_env)
 
@@ -1132,27 +1173,6 @@ class TaskProcess:
                     c += 1
 
             raise Exception(f"Error: no task_key for SLURM_ARRAY_TASK_ID={slurm_array_task_id}")
-
-    """    
-    def launch_remote_task(self):
-
-        user_at_host, remote_base_dir, ssh_key_file = self.task_conf.parse_ssh_remote_dest()
-
-        remote_pipeline_work_dir = os.path.join(
-            remote_base_dir,
-            self.pipeline_instance_base_dir(),
-            ".drypipe"
-        )
-
-        execute_remote_task.func(
-            __task_key=self.task_key,
-            __user_at_host=user_at_host,
-            __remote_base_dir=remote_base_dir,
-            __ssh_key_file=ssh_key_file,
-            __pipeline_instance_name=self.pipeline_instance_name,
-            __remote_pipeline_work_dir=remote_pipeline_work_dir
-        )
-    """
 
     def _launch_and_tail(self, launch_func):
         def func():
@@ -1174,6 +1194,10 @@ class TaskProcess:
         t.start()
         launch_func()
 
+    def is_slurm_array_parent(self):
+        is_slurm_parent = self.task_conf.is_slurm_parent
+        return is_slurm_parent is not None and is_slurm_parent
+
     def launch_task(self, array_limit=None):
 
         exit_process_when_done = self.as_subprocess
@@ -1181,24 +1205,7 @@ class TaskProcess:
         def task_func_wrapper():
             try:
                 self.task_logger.debug("task func started")
-
-                if self.task_conf.ssh_remote_dest is not None:
-                    #self.launch_remote_task()
-                    self.run_python_calls_in_process = True
-
-                    self.task_conf.step_invocations = [{
-                      "call": "python",
-                      "module_function": "dry_pipe.task_lib:execute_remote_task"
-                    }]
-
-                    self._run_steps()
-                else:
-                    is_slurm_parent = self.task_conf.is_slurm_parent
-                    if is_slurm_parent is not None and is_slurm_parent:
-                        self.run_array(array_limit)
-                    else:
-                        self._run_steps()
-
+                self._run_steps()
                 self.task_logger.info("task completed")
             except Exception as ex:
                 if not exit_process_when_done:

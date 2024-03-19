@@ -231,7 +231,8 @@ class Cli:
                 test_mode=test_mode,
                 as_subprocess=not test_mode,
                 tail=self._tail(),
-                tail_all=self._tail_all()
+                tail_all=self._tail_all(),
+                from_remote=self.parsed_args.from_remote
             )
 
             if self.parsed_args.ssh_remote_dest is not None:
@@ -458,6 +459,7 @@ class Cli:
         self.add_ssh_remote_dest_arg(parser)
         parser.add_argument("--tail", dest="tail", action="store_true")
         parser.add_argument("--tail-all", dest="tail_all", action="store_true")
+        parser.add_argument("--from-remote", dest="from_remote", action="store_true")
 
 
     def add_sbatch_args(self, parser):

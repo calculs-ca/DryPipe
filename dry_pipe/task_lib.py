@@ -9,6 +9,24 @@ from dry_pipe.state_file_tracker import StateFileTracker
 
 
 @DryPipe.python_call()
+def run_array(__task_process):
+    from dry_pipe.slurm_array_task import SlurmArrayParentTask
+
+    step_number, _, state_file, _ = __task_process.read_task_state(non_existant_ok=True)
+    try:
+        sapt = SlurmArrayParentTask(__task_process)
+
+        all_children_completed = sapt.run_array(False, False, None)
+
+        if all_children_completed:
+            __task_process.transition_to_completed(state_file)
+    except Exception as ex:
+        __task_process.task_logger.exception(ex)
+        __task_process._transition_state_file(state_file, "failed", step_number)
+        raise ex
+
+
+@DryPipe.python_call()
 def upload_array(
     __task_key,
     __task_control_dir,
@@ -71,7 +89,7 @@ def upload_array(
 
                 yield f".drypipe/{__task_key}/task-conf.json"
                 yield f".drypipe/{__task_key}/task-keys.tsv"
-                yield f".drypipe/{__task_key}/state.ready"
+                #yield f".drypipe/{__task_key}/state.ready"
 
             pipeline_instance_name = os.path.basename(__pipeline_instance_dir)
             for f in _gen_0():
@@ -116,6 +134,7 @@ def upload_array(
         with open(tmp_overrides_file, "w") as tmp_overrides:
             tmp_overrides.write(json.dumps(
                 {
+                    "is_on_remote_site": True,
                     "external_files_root": f"{remote_pid}/external-file-deps"
                 },
                 indent=2
@@ -226,5 +245,5 @@ def execute_remote_task(
     remote_task_control_dir = os.path.join(__remote_pipeline_work_dir, __task_key)
 
     exec_remote(__user_at_host, [
-        remote_cli, "task", remote_task_control_dir
+        remote_cli, "task", remote_task_control_dir, "--from-remote"
     ])
