@@ -12,18 +12,7 @@ from dry_pipe.state_file_tracker import StateFileTracker
 def run_array(__task_process):
     from dry_pipe.slurm_array_task import SlurmArrayParentTask
 
-    step_number, _, state_file, _ = __task_process.read_task_state(non_existant_ok=True)
-    try:
-        sapt = SlurmArrayParentTask(__task_process)
-
-        all_children_completed = sapt.run_array(False, False, None)
-
-        if all_children_completed:
-            __task_process.transition_to_completed(state_file)
-    except Exception as ex:
-        __task_process.task_logger.exception(ex)
-        __task_process._transition_state_file(state_file, "failed", step_number)
-        raise ex
+    SlurmArrayParentTask(__task_process).run_array(False, False, None)
 
 
 @DryPipe.python_call()
