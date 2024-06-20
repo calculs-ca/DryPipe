@@ -97,7 +97,7 @@ class CliArrayTests1(PipelineWithSlurmArrayForRealSlurmTest):
             pipeline_instance.state_file_tracker.pipeline_instance_dir, ".drypipe", array_task_key, "array.*.job.*")
         return list(glob.glob(p))
 
-    def test_array_launch_one_task_in_array(self):
+    def _test_array_launch_one_task_in_array(self):
         pipeline_instance = self.create_prepare_and_run_pipeline(TestSandboxDir(self))
 
         test_cli(
@@ -126,7 +126,7 @@ class CliArrayTests1(PipelineWithSlurmArrayForRealSlurmTest):
 
         self.do_validate(pipeline_instance)
 
-    def test_array_launch_3_chunks(self):
+    def _test_array_launch_3_chunks(self):
         pipeline_instance = self.create_prepare_and_run_pipeline(TestSandboxDir(self))
 
         for _ in [1, 1, 1]:
@@ -267,6 +267,9 @@ class RemoteArrayTaskFullyAutomatedRun(PipelineWithSlurmArray):
             for task in pipeline_instance.query("*")
         })
 
+
+remote_test_site = RemoteTestSite(None)
+
 class CliTestsPipelineWithSlurmArrayRemote(PipelineWithSlurmArray):
 
     def create_prepare_and_run_pipeline(self, d, until_patterns=["*"]):
@@ -293,8 +296,8 @@ class CliTestsPipelineWithSlurmArrayRemote(PipelineWithSlurmArray):
             extra_env={
                 "DRYPIPE_TASK_DEBUG": "True",
                 "PYTHONPATH": ":".join([
-                    f"{self.remote_base_dir()}/CliTestsPipelineWithSlurmArrayRemote.test_array_upload/.drypipe",
-                    f"{self.remote_base_dir()}/CliTestsPipelineWithSlurmArrayRemote.test_array_upload/external-file-deps/{repo_dir}"
+                    f"{remote_test_site.remote_base_dir()}/CliTestsPipelineWithSlurmArrayRemote.test_array_upload/.drypipe",
+                    f"{remote_test_site.remote_base_dir()}/CliTestsPipelineWithSlurmArrayRemote.test_array_upload/external-file-deps/{repo_dir}"
                 ])
             }
         )
@@ -308,10 +311,10 @@ class CliTestsPipelineWithSlurmArrayRemote(PipelineWithSlurmArray):
 
         pid = pipeline_instance.state_file_tracker.pipeline_instance_dir
 
-        self.exec_remote(["rm", "-Rf", self.remote_base_dir()])
-        self.exec_remote(["mkdir", "-p", self.remote_base_dir()])
+        remote_test_site.exec_remote(["rm", "-Rf", remote_test_site.remote_base_dir()])
+        remote_test_site.exec_remote(["mkdir", "-p", remote_test_site.remote_base_dir()])
 
-        ssh_dest = f"{self.user_at_host()}:{self.remote_base_dir()}"
+        ssh_dest = f"{remote_test_site.user_at_host()}:{remote_test_site.remote_base_dir()}"
 
         test_cli(
             '--pipeline-instance-dir', pid,

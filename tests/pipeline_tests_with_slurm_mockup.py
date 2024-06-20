@@ -74,7 +74,10 @@ def format_sbatch_array(array_indexes):
 class PipelineWithSlurmArray(BasePipelineTest):
 
     def task_conf(self):
-        return TaskConf(executer_type="slurm", slurm_account="dummy", extra_env={"DRYPIPE_TASK_DEBUG": "True"})
+        return TaskConf(
+            executer_type="slurm", slurm_account="dummy",
+            extra_env={"DRYPIPE_TASK_DEBUG": "True", "PYTHONPATH": os.environ.get("PYTHONPATH")}
+        )
 
     def dag_gen(self, dsl):
 

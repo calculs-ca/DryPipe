@@ -26,6 +26,11 @@ APPTAINER_COMMAND = "singularity"
 
 module_logger = logging.getLogger(__name__)
 
+
+class TaskFailedException (Exception):
+    pass
+
+
 class TaskProcess:
 
     def __init__(
@@ -643,7 +648,10 @@ class TaskProcess:
                             step_number, control_dir, state_file, state_name = self.read_task_state()
                             self._transition_state_file(state_file, "failed", step_number)
         if has_failed:
-            self._exit_process()
+            if self.as_subprocess:
+                self._exit_process()
+            else:
+                raise TaskFailedException()
 
     def _terminate_descendants_and_exit(self, p1, p2):
 
@@ -1048,32 +1056,35 @@ class TaskProcess:
         if self._is_work_on_local_copy():
             self._create_local_scratch_and_rsync_inputs()
 
-        for i in range(step_number, len(step_invocations)):
+        try:
 
-            step_invocation = step_invocations[i]
-            state_file, step_number = self.transition_to_step_started(state_file, step_number)
+            for i in range(step_number, len(step_invocations)):
 
-            call = step_invocation["call"]
+                step_invocation = step_invocations[i]
+                state_file, step_number = self.transition_to_step_started(state_file, step_number)
 
-            if call == "python":
-                module_function = step_invocation["module_function"]
-                if self.run_python_calls_in_process or module_function.startswith("dry_pipe.task_lib:"):
-                    python_call = func_from_mod_func(module_function)
-                    self.call_python(module_function, python_call)
+                call = step_invocation["call"]
+
+                if call == "python":
+                    module_function = step_invocation["module_function"]
+                    if self.run_python_calls_in_process or module_function.startswith("dry_pipe.task_lib:"):
+                        python_call = func_from_mod_func(module_function)
+                        self.call_python(module_function, python_call)
+                    else:
+                        self.run_python(module_function, step_invocation.get("container"))
+                elif call == "bash":
+                    self.run_script(os.path.expandvars(step_invocation["script"]), step_invocation.get("container"))
                 else:
-                    self.run_python(module_function, step_invocation.get("container"))
-            elif call == "bash":
-                self.run_script(os.path.expandvars(step_invocation["script"]), step_invocation.get("container"))
-            else:
-                raise Exception(f"unknown step invocation type: {call}")
+                    raise Exception(f"unknown step invocation type: {call}")
 
-            state_file, step_number = self.transition_to_step_completed(state_file, step_number)
+                state_file, step_number = self.transition_to_step_completed(state_file, step_number)
 
-        if self._is_work_on_local_copy():
-            self._rsync_outputs_from_scratch()
+            if self._is_work_on_local_copy():
+                self._rsync_outputs_from_scratch()
 
-        self.transition_to_completed(state_file)
-
+            self.transition_to_completed(state_file)
+        except TaskFailedException as tfe:
+            pass
     """
     def run_array(self, limit):
 

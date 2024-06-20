@@ -6,7 +6,7 @@ from tests.pipeline_tests_with_single_tasks import PipelineWithSinglePythonTask,
     PipelineWith3StepsCrash3
 from tests.pipeline_tests_with_slurm_mockup import PipelineWithSlurmArray
 
-python_path_for_tests = str(Path(__file__).resolve().parent)
+python_path_for_tests = str(Path(__file__).resolve().parent.parent)
 
 task_conf_with_local_slurm = TaskConf(
     executer_type="slurm",

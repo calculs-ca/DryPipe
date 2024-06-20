@@ -56,6 +56,10 @@ class PipelineWithSinglePythonTask(BasePipelineTest):
 
 
     def validate(self, tasks_by_keys):
+
+        if not "multiply_x_by_y" in tasks_by_keys:
+            raise Exception("multiply_x_by_y did not complete")
+
         multiply_x_by_y_task = tasks_by_keys["multiply_x_by_y"]
 
         if not multiply_x_by_y_task.is_completed():
