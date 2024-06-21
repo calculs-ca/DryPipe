@@ -267,6 +267,10 @@ class PipelineWith3StepsCrash3(PipelineWith3StepsCrash1):
 
 @DryPipe.python_call()
 def step2_in_python(out_file):
+
+    if os.environ.get("CRASH_STEP_2") == "TRUE":
+        raise Exception(f"prescribed crash at CRASH_STEP_2 !")
+
     with open(out_file, "a") as f:
         f.write("s2\n")
 
@@ -341,6 +345,23 @@ class PipelineWith4MixedStepsCrash(PipelineWith4MixedStepsNoCrash):
         self.assertEqual(self.output_as_string(tasks_by_keys), "s1\ns2\n")
 
 
+class PipelineWith4MixedStepsPythonCrash(PipelineWith4MixedStepsNoCrash):
+    def task_conf(self):
+        return TaskConf(
+            executer_type="process",
+            extra_env={
+                "CRASH_STEP_2": "TRUE"
+            }
+        )
+
+    def is_fail_test(self):
+        return True
+
+    def validate(self, tasks_by_keys):
+        three_phase_task = tasks_by_keys["three_phase_task"]
+        self.assertTrue(three_phase_task.is_failed())
+
+
 # Same pipelines with container
 
 task_conf_with_test_container = TaskConf(
@@ -391,7 +412,8 @@ def all_basic_tests():
         PipelineWithSinglePythonTask,
         PipelineWithSingleBashTask,
         PipelineWithVarAndFileOutput,
-        PipelineWithVarSharingBetweenSteps
+        PipelineWithVarSharingBetweenSteps,
+        PipelineWith4MixedStepsPythonCrash
     ]
 
 def all_tests_in_containers():
