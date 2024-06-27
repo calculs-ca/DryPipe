@@ -142,11 +142,11 @@ class Cli:
         task_key = self.parsed_args.task_key
         return os.path.join(pipeline_instance_dir, ".drypipe", task_key)
 
-    def _complete_control_dir(self, maybe_partial_contro_dir):
-        if os.path.exists(maybe_partial_contro_dir):
-            return os.path.abspath(maybe_partial_contro_dir)
+    def _complete_control_dir(self, maybe_partial_control_dir):
+        if os.path.exists(maybe_partial_control_dir):
+            return os.path.abspath(maybe_partial_control_dir)
 
-        cd = os.path.join(os.getcwd(), maybe_partial_contro_dir)
+        cd = os.path.join(os.getcwd(), maybe_partial_control_dir)
 
         if os.path.exists(cd):
             return cd
@@ -468,6 +468,8 @@ class Cli:
     def add_call_args(self, parser):
         parser.add_argument('module_function', type=str)
 
+def run_cli():
+    handle_script_lib_main()
 
 def handle_script_lib_main():
     try:
