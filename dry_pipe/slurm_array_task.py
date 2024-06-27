@@ -434,6 +434,7 @@ class SlurmArrayParentTask:
         total_children_tasks = 0
         ended_tasks = 0
         completed_tasks = 0
+        failed_tasks = []
         for task_key in self.children_task_keys():
             total_children_tasks += 1
             state_file = self.tracker.load_state_file(task_key)
@@ -441,6 +442,15 @@ class SlurmArrayParentTask:
                 ended_tasks += 1
             if state_file.is_completed():
                 completed_tasks += 1
+
+            if state_file.is_failed():
+                failed_tasks.append(state_file.task_key)
+
+        # We could fail earlier, at the first failure inside self.compare_and_reconcile_squeue_with_state_files()
+        # but letting "compare_and_reconcile" until the last job is alive, improves monitoring, at the cost of a single
+        # task running and polling the file system
+        if len(failed_tasks) > 0:
+            raise Exception(f"at least one failed task: {','.join(failed_tasks)}")
 
         if completed_tasks == total_children_tasks:
             self.task_process.task_logger.info("array %s completed", self.task_process.task_key)

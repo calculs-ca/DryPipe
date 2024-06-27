@@ -11,6 +11,7 @@ from dsl_tests import TaskChangeTrackingTests
 from pipeline_tests_with_slurm_mockup import all_low_level_tests_with_mockup_slurm
 from test_state_machine import StateMachineTests, StateFileTrackerTest, MockupStateFileTrackerTest
 from tests.pipeline_tests_with_local_slurm import all_with_local_slurm
+from tests import pipeline_tests_with_slurm_arrays
 
 
 def ad_hoc():
@@ -38,6 +39,7 @@ def array_tests():
         CliTestsPipelineWithSlurmArray,
         CliTestsPipelineWithSlurmArrayRemote,
         CliTestScenario2,
+        pipeline_tests_with_slurm_arrays.all_tests
     ]
 
 

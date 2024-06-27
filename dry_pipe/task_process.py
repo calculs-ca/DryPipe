@@ -64,11 +64,10 @@ class TaskProcess:
         self.pipeline_instance_name = os.path.basename(self.pipeline_instance_dir)
         self.pipeline_output_dir = os.path.join(self.pipeline_instance_dir, "output")
         self.task_output_dir = os.path.join(self.pipeline_output_dir, self.task_key)
-        self.is_python_call = is_python_call
         self.no_dynamic_steps = from_remote
         self.slurm_array_task_id = os.environ.get("SLURM_ARRAY_TASK_ID")
 
-        if not self.is_python_call:
+        if not is_python_call:
             # override causes problems for python_call
             self._override_control_dir_if_child_task()
 
@@ -372,10 +371,7 @@ class TaskProcess:
             out_vars = python_call.func(* args, ** kwargs)
         except Exception as ex:
             self.task_logger.exception(ex)
-            if self.is_python_call:
-                logging.shutdown()
-                exit(1)
-            out_vars = None
+            raise TaskFailedException()
 
         if out_vars is not None and not isinstance(out_vars, dict):
             raise Exception(
@@ -404,14 +400,9 @@ class TaskProcess:
 
                 self.write_out_vars(next_out_vars)
 
-        except Exception:
+        except Exception as ex:
             traceback.print_exc()
-            if self.is_python_call:
-                logging.shutdown()
-                exit(1)
-
-        if self.is_python_call:
-            logging.shutdown()
+            raise ex
 
     def _unserialize_and_resolve_inputs_outputs(self, ensure_all_upstream_deps_complete):
 
@@ -1084,7 +1075,9 @@ class TaskProcess:
 
             self.transition_to_completed(state_file)
         except TaskFailedException as tfe:
-            pass
+            print(f"...{tfe}")
+            self._transition_state_file(state_file, "failed", step_number)
+
     """
     def run_array(self, limit):
 

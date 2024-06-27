@@ -364,7 +364,7 @@ class CliTestsPipelineWithSlurmArray(PipelineWithSlurmArray):
     def test_run_pipeline(self):
         pass
 
-    def test_custom_array_parents(self):
+    def test_cli_generated_array_parents(self):
         pipeline_instance = self.create_prepare_and_run_pipeline(TestSandboxDir(self))
 
         def create_parent_task(parent_task_key, match):
