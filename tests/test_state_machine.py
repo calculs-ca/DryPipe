@@ -3,7 +3,7 @@ import shutil
 import unittest
 from pathlib import Path
 
-from dry_pipe.pipeline_runner import Monitor
+from dry_pipe.pipeline_instance import Monitor
 from dry_pipe.state_machine import StateMachine, AllRunnableTasksCompletedOrInError, InvalidQueryInTaskGenerator
 from dry_pipe.state_file_tracker import StateFileTracker
 from mockups import TaskMockup, StateFileTrackerMockup

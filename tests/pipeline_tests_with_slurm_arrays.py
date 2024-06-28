@@ -136,16 +136,16 @@ class PipelineWithSlurmArray(BasePipelineTest):
                 children_tasks=match.tasks
             )()
 
-        for _ in dsl.query_all_or_nothing("array_parent"):
-            for _ in dsl.query_all_or_nothing("t_a_*"):
-                yield dsl.task(
-                    key=f"a-digest"
-                )()
 
-            for _ in dsl.query_all_or_nothing("t_b_*"):
-                yield dsl.task(
-                    key=f"b-digest"
-                )()
+        for _ in dsl.query_all_or_nothing("t_a_*"):
+            yield dsl.task(
+                key=f"a-digest"
+            )()
+
+        for _ in dsl.query_all_or_nothing("t_b_*"):
+            yield dsl.task(
+                key=f"b-digest"
+            )()
 
     def validate(self, tasks_by_keys):
 

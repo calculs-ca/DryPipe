@@ -6,7 +6,7 @@ import textwrap
 from pathlib import Path
 
 from dry_pipe.core_lib import func_from_mod_func, is_inside_slurm_job
-from dry_pipe.pipeline_runner import Monitor
+from dry_pipe.pipeline_instance import Monitor
 from dry_pipe.task_process import TaskProcess
 from dry_pipe.slurm_array_task import SlurmArrayParentTask
 
