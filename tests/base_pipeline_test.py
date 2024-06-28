@@ -41,6 +41,8 @@ class BasePipelineTest(TestWithDirectorySandbox):
         tp.run(wait_for_completion=True)
         self.assertEqual(os.environ, env_copy)
 
+    def create_monitor(self):
+        return None
 
     def init_pipeline_instance(self, pipeline_instance):
         pass
@@ -62,7 +64,8 @@ class BasePipelineTest(TestWithDirectorySandbox):
 
         pipeline_instance.run_sync(
             until_patterns=until_patterns,
-            run_tasks_in_process=self.launches_tasks_in_process()
+            run_tasks_in_process=self.launches_tasks_in_process(),
+            monitor=self.create_monitor()
         )
 
         tasks_by_keys = {

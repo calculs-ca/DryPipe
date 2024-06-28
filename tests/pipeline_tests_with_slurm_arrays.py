@@ -3,6 +3,8 @@ import os
 import dry_pipe
 from base_pipeline_test import BasePipelineTest
 from dry_pipe import TaskConf
+from dry_pipe.pipeline_instance import Monitor
+from dry_pipe.state_machine import AllRunnableTasksCompletedOrInError
 from tests.exportable_funcs import test_func
 
 
@@ -78,6 +80,15 @@ class PipelineWithSlurmArray(BasePipelineTest):
             executer_type="slurm", slurm_account="dummy",
             extra_env={"DRYPIPE_TASK_DEBUG": "True", "PYTHONPATH": os.environ.get("PYTHONPATH")}
         )
+
+    def create_monitor(self):
+
+        class M(Monitor):
+            def on_task_fail(self, state_file):
+                if state_file.task_key == "array_parent":
+                    raise AllRunnableTasksCompletedOrInError()
+
+        return M()
 
     def dag_gen(self, dsl):
 

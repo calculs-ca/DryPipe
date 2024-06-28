@@ -217,7 +217,7 @@ class StateMachine:
         if new_generated_tasks == 0 and len(self._pending_queries) == 0:
             self._generator_exhausted = True
 
-    def iterate_tasks_to_launch(self):
+    def iterate_tasks_to_launch(self, monitor=None):
 
         if self._no_runnable_tasks_left:
             raise AllRunnableTasksCompletedOrInError()
@@ -265,6 +265,8 @@ class StateMachine:
                     elif true_state_file.is_failed():
                         self._keys_of_failed_tasks.add(true_state_file.task_key)
                         newly_failed_task_keys.append(true_state_file.task_key)
+                        if monitor is not None:
+                            monitor.on_task_fail(true_state_file)
 
             self._keys_of_tasks_waiting_for_external_events.difference_update(newly_completed_task_keys)
             self._keys_of_tasks_waiting_for_external_events.difference_update(newly_failed_task_keys)

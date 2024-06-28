@@ -51,7 +51,7 @@ class PipelineInstance:
                 max_sleep_idx = len(sleep_schedule) - 1
                 while True:
                     c = 0
-                    for state_file in state_machine.iterate_tasks_to_launch():
+                    for state_file in state_machine.iterate_tasks_to_launch(monitor=monitor):
                         control_dir = state_file.control_dir()
                         as_subprocess = not run_tasks_in_process
                         wait_for_completion = run_tasks_sync
@@ -106,6 +106,8 @@ class Monitor:
         else:
             self.task_grouper = task_grouper
 
+    def on_task_fail(self, state_file):
+        pass
 
     def default_grouper(self, task_key):
         if "." in task_key:

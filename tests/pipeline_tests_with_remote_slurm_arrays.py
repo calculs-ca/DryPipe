@@ -75,7 +75,7 @@ class RemoteArrayTaskFullyAutomatedRun(PipelineWithSlurmArray):
         rts.reset()
 
         pipeline_instance = self.create_pipeline_instance(d.sandbox_dir)
-        pipeline_instance.run_sync(run_tasks_in_process=True)
+        pipeline_instance.run_sync(run_tasks_in_process=True, monitor=self.create_monitor())
 
         self.validate({
             task.key: task
