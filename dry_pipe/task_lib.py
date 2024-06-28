@@ -116,7 +116,7 @@ def upload_array(
         __task_logger.info("%s", rsync_cmd)
         invoke_rsync(rsync_cmd)
 
-    overrides_basename = "task-conf-overrides.json"
+    overrides_basename = "tmp-task-conf-overrides.json"
 
     def gen_task_conf_remote_overrides():
         tmp_overrides_file = os.path.join(__task_control_dir, overrides_basename)
@@ -129,16 +129,16 @@ def upload_array(
                 indent=2
             ))
 
-        shutil.copy(
-            tmp_overrides_file,
-            os.path.join(__task_control_dir, f"task-conf-overrides-{__user_at_host}.json")
-        )
-
-        dst = f"{__user_at_host}:{remote_pid}/.drypipe/{__task_key}/"
-
-        invoke_rsync(f"rsync --mkpath {tmp_overrides_file} {dst}")
-
-        os.remove(tmp_overrides_file)
+        try:
+            shutil.copy(
+                tmp_overrides_file,
+                os.path.join(__task_control_dir, f"task-conf-overrides-{__user_at_host}.json")
+            )
+            dst = f"{__user_at_host}:{remote_pid}/.drypipe/{__task_key}/"
+            invoke_rsync(f"rsync --mkpath {tmp_overrides_file} {dst}")
+        finally:
+            if os.path.exists(tmp_overrides_file):
+                os.remove(tmp_overrides_file)
 
     gen_task_conf_remote_overrides()
 

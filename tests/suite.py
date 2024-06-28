@@ -5,13 +5,16 @@ from unittest import TextTestRunner, TestSuite, defaultTestLoader
 import pipeline_tests_with_single_tasks
 import pipeline_tests_with_multiple_tasks
 import task_launch_tests
-from cli_tests import CliArrayTests1, CliTestsPipelineWithSlurmArray, CliTestScenario2, \
-    CliTestsPipelineWithSlurmArrayRemote
+from cli_tests import CliArrayTests1, CliTestsPipelineWithSlurmArray, CliTestScenario2
 from dsl_tests import TaskChangeTrackingTests
 from pipeline_tests_with_slurm_mockup import all_low_level_tests_with_mockup_slurm
 from test_state_machine import StateMachineTests, StateFileTrackerTest, MockupStateFileTrackerTest
 from tests.pipeline_tests_with_local_slurm import all_with_local_slurm
 from tests import pipeline_tests_with_slurm_arrays
+from tests.pipeline_tests_with_remote_slurm_arrays import CliTestsPipelineWithSlurmArrayRemote
+
+
+#from tests.pipeline_tests_with_remote_slurm_arrays import CliTestsPipelineWithSlurmArrayRemote
 
 
 def ad_hoc():
@@ -37,9 +40,13 @@ def array_tests():
     return [
         CliArrayTests1,
         CliTestsPipelineWithSlurmArray,
-        CliTestsPipelineWithSlurmArrayRemote,
         CliTestScenario2,
         pipeline_tests_with_slurm_arrays.all_tests
+    ]
+
+def array_remote_tests():
+    return [
+        CliTestsPipelineWithSlurmArrayRemote
     ]
 
 
@@ -56,9 +63,11 @@ def quick_sanity_tests():
         all_low_level_tests_with_mockup_slurm()
     ]
 
+def all_local_tests():
+    return quick_sanity_tests() + array_tests() + low_level_tests()
 
 def exhaustive_test_suite():
-    return quick_sanity_tests() + array_tests() + low_level_tests()
+    return quick_sanity_tests() + array_tests() + array_remote_tests() + low_level_tests()
 
 
 if __name__ == '__main__':
@@ -76,6 +85,7 @@ if __name__ == '__main__':
         "task_launch_tests": task_launch_tests.all_launch_tests,
         "ad_hoc": ad_hoc,
         "array_tests": array_tests,
+        "all_local_tests": all_local_tests,
         "exhaustive_test_suite": exhaustive_test_suite
     }
 

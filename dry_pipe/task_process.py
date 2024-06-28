@@ -1075,7 +1075,6 @@ class TaskProcess:
 
             self.transition_to_completed(state_file)
         except TaskFailedException as tfe:
-            print(f"...{tfe}")
             self._transition_state_file(state_file, "failed", step_number)
 
     """
