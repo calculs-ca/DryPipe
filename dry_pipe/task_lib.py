@@ -2,6 +2,7 @@ import glob
 import json
 import os
 import shutil
+from tempfile import TemporaryDirectory
 
 from dry_pipe import DryPipe
 from dry_pipe.core_lib import invoke_rsync, exec_remote
@@ -116,29 +117,31 @@ def upload_array(
         __task_logger.info("%s", rsync_cmd)
         invoke_rsync(rsync_cmd)
 
-    overrides_basename = "tmp-task-conf-overrides.json"
-
+    overrides_basename = "task-conf-overrides.json"
     def gen_task_conf_remote_overrides():
-        tmp_overrides_file = os.path.join(__task_control_dir, overrides_basename)
-        with open(tmp_overrides_file, "w") as tmp_overrides:
-            tmp_overrides.write(json.dumps(
-                {
-                    "is_on_remote_site": True,
-                    "external_files_root": f"{remote_pid}/external-file-deps"
-                },
-                indent=2
-            ))
 
-        try:
-            shutil.copy(
-                tmp_overrides_file,
-                os.path.join(__task_control_dir, f"task-conf-overrides-{__user_at_host}.json")
-            )
-            dst = f"{__user_at_host}:{remote_pid}/.drypipe/{__task_key}/"
-            invoke_rsync(f"rsync --mkpath {tmp_overrides_file} {dst}")
-        finally:
-            if os.path.exists(tmp_overrides_file):
-                os.remove(tmp_overrides_file)
+        with TemporaryDirectory(dir=__task_control_dir) as tmp_dir:
+            overrides_file = os.path.join(tmp_dir, overrides_basename)
+            with open(overrides_file, "w") as tmp_overrides:
+                tmp_overrides.write(json.dumps(
+                    {
+                        "is_on_remote_site": True,
+                        "external_files_root": f"{remote_pid}/external-file-deps"
+                    },
+                    indent=2
+                ))
+
+            try:
+                # make a copy, just for transparency (self documenting)
+                shutil.copy(
+                    overrides_file,
+                    os.path.join(__task_control_dir, f"task-conf-overrides-{__user_at_host}.json")
+                )
+                dst = f"{__user_at_host}:{remote_pid}/.drypipe/{__task_key}/"
+                invoke_rsync(f"rsync --mkpath {overrides_file} {dst}")
+            finally:
+                if os.path.exists(overrides_file):
+                    os.remove(overrides_file)
 
     gen_task_conf_remote_overrides()
 
