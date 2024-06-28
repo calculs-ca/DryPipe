@@ -2,6 +2,7 @@
 from dry_pipe.core_lib import UpstreamTasksNotCompleted
 import pipeline_tests_with_single_tasks
 import pipeline_tests_with_multiple_tasks
+from dry_pipe.task_process import TaskProcess
 
 
 class BashTaskLauncherTest(pipeline_tests_with_single_tasks.PipelineWithSingleBashTask):
@@ -36,8 +37,6 @@ class EnsureFailOfLaunchWhenUnsatisfiedUpstreamDependencyTest(pipeline_tests_wit
 
     def test_run_pipeline(self):
 
-        #pi = self.run_pipeline(queue_only_pattern="*")
-
         pipeline_instance = self.create_pipeline_instance()
 
         pipeline_instance.run_sync(
@@ -50,9 +49,15 @@ class EnsureFailOfLaunchWhenUnsatisfiedUpstreamDependencyTest(pipeline_tests_wit
             include_incomplete_tasks=True
         )
 
+        def f():
+            tp = TaskProcess(
+                consume_and_produce_a_var.state_file.control_dir(), as_subprocess=False, wait_for_completion=True
+            )
+            tp.run()
+
         self.assertRaises(
             UpstreamTasksNotCompleted,
-            lambda: self.launch_task_in_current_process(consume_and_produce_a_var.state_file)
+            f
         )
 
     def is_fail_test(self):

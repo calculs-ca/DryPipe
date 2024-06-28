@@ -33,14 +33,6 @@ class BasePipelineTest(TestWithDirectorySandbox):
         with open(file) as f:
             self.assertEqual(f.read().strip(), expected_content)
 
-    def launch_task_in_current_process(self, state_file):
-
-        self.assertFalse(state_file.is_completed())
-        env_copy = os.environ.copy()
-        tp = TaskProcess(state_file.control_dir(), as_subprocess=False)
-        tp.run(wait_for_completion=True)
-        self.assertEqual(os.environ, env_copy)
-
     def create_monitor(self):
         return None
 
