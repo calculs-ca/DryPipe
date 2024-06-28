@@ -623,9 +623,22 @@ class TaskProcess:
 
         self.task_logger.info("run_python: %s", ' '.join(cmd))
 
+        sub_process_env = {** os.environ, ** env}
+
+        if "PYTHONPATH" not in sub_process_env:
+            sub_process_pythonpath = []
+        else:
+            sub_process_pythonpath = sub_process_env["PYTHONPATH"].split(":")
+
+        sub_process_pythonpath.insert(0, self.pipeline_work_dir)
+
+        sub_process_env["PYTHONPATH"] = ":".join(sub_process_pythonpath)
+
+        self.task_logger.info("PYTHONPATH: %s", sub_process_env["PYTHONPATH"])
+
         with open(env['__out_log'], 'a') as out:
             with open(env['__err_log'], 'a') as err:
-                with PortablePopen(cmd, stdout=out, stderr=err, env={** os.environ, ** env}) as p:
+                with PortablePopen(cmd, stdout=out, stderr=err, env=sub_process_env) as p:
                     try:
                         p.wait()
                         if p.popen.returncode != 0:

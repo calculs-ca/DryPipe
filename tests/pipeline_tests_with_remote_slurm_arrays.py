@@ -59,8 +59,6 @@ class RemoteArrayTaskFullyAutomatedRun(PipelineWithSlurmArray):
             extra_env={
                 "DRYPIPE_TASK_DEBUG": "True",
                 "PYTHONPATH": ":".join([
-                    f"{rts.remote_base_dir()}/RemoteArrayTaskFullyAutomatedRun.test_run_pipeline/.drypipe", # <- put in TaskConf overrides
-                    # OR prepend dynamically on remote sites
                     f"{rts.remote_base_dir()}/RemoteArrayTaskFullyAutomatedRun.test_run_pipeline/external-file-deps{repo_dir}"
                 ])
             }
