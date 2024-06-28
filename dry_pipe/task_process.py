@@ -1218,6 +1218,9 @@ class TaskProcess:
 
         exit_process_when_done = self.as_subprocess
 
+        if not os.path.exists(self.task_output_dir):
+            Path(self.task_output_dir).mkdir(parents=True, exist_ok=True)
+
         def task_func_wrapper():
             try:
                 self.task_logger.debug("task func started")
