@@ -125,12 +125,6 @@ class Task:
         pathlib.Path(control_dir).mkdir(
             parents=True, exist_ok=True, mode=FileCreationDefaultModes.pipeline_instance_directories)
 
-        pathlib.Path(output_dir).mkdir(
-            parents=True, exist_ok=True, mode=FileCreationDefaultModes.pipeline_instance_directories)
-
-        pathlib.Path(os.path.join(output_dir, "scratch")).mkdir(
-            parents=True, exist_ok=True, mode=FileCreationDefaultModes.pipeline_instance_directories)
-
         step_invocations = [
             self.task_steps[step_number].get_invocation(control_dir, self, step_number)
             for step_number in range(0, len(self.task_steps))
@@ -141,13 +135,6 @@ class Task:
         self.task_conf.outputs = self.outputs.as_json()
         self.task_conf.step_invocations = step_invocations
         self.task_conf.save_as_json(control_dir, digest=hash_code)
-
-        #shell_script_file = os.path.join(control_dir, "task")
-        #with open(shell_script_file, "w") as f:
-        #    f.write(task_script_header())
-        #    f.write('core_lib.handle_main()\n')
-        #    f.write('logging.shutdown()\n')
-        #os.chmod(shell_script_file, FileCreationDefaultModes.pipeline_instance_scripts)
 
         if self.is_slurm_parent:
             with open(os.path.join(control_dir, "task-keys.tsv"), "w") as tc:

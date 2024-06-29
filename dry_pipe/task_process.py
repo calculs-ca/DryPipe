@@ -16,7 +16,8 @@ from tempfile import NamedTemporaryFile
 from threading import Thread
 
 from dry_pipe import TaskConf
-from dry_pipe.core_lib import UpstreamTasksNotCompleted, PortablePopen, func_from_mod_func, invoke_rsync, exec_remote
+from dry_pipe.core_lib import UpstreamTasksNotCompleted, PortablePopen, func_from_mod_func, invoke_rsync, exec_remote, \
+    FileCreationDefaultModes
 
 from dry_pipe.task import TaskOutput, TaskInputs, TaskOutputs, TaskInput
 from dry_pipe.task_lib import execute_remote_task
@@ -1219,7 +1220,16 @@ class TaskProcess:
         exit_process_when_done = self.as_subprocess
 
         if not os.path.exists(self.task_output_dir):
-            Path(self.task_output_dir).mkdir(parents=True, exist_ok=True)
+            Path(self.task_output_dir).mkdir(
+                parents=True, exist_ok=True,
+                mode=FileCreationDefaultModes.pipeline_instance_directories
+            )
+
+            if self._is_work_on_local_copy():
+                Path(self.task_output_dir, "scratch").mkdir(
+                    parents=True, exist_ok=True,
+                    mode=FileCreationDefaultModes.pipeline_instance_directories
+                )
 
         def task_func_wrapper():
             try:
