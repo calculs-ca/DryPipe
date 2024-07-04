@@ -40,6 +40,41 @@ class PipelineWithSingleBashTask(BasePipelineTest):
         self.assertEqual(15, int(multiply_x_by_y_task.outputs.result))
 
 
+
+class TestExtraEnvResolution(BasePipelineTest):
+
+    def dag_gen(self, dsl):
+        yield dsl.task(
+            key="t1",
+            task_conf=TaskConf(
+                executer_type="process",
+                extra_env={
+                    "aaa": "z123",
+                    "bbb": "$aaa",
+                    "ccc": "$__pipeline_instance_dir/$bbb"
+                }
+            )
+        ).inputs(
+            x=3
+        ).outputs(
+            result=str
+        ).calls(
+            """
+            #!/usr/bin/bash        
+            export result=$ccc
+            """
+        )()
+
+    def validate(self, tasks_by_keys):
+
+        expected_result = os.path.join(self.pipeline_instance_dir, "z123")
+
+        self.assertEqual(
+            str(tasks_by_keys["t1"].outputs.result),
+            expected_result
+        )
+
+
 class PipelineWithSinglePythonTask(BasePipelineTest):
 
     def dag_gen(self, dsl):
@@ -404,6 +439,7 @@ class PipelineWith3StepsCrash3InContainer(PipelineWith3StepsCrash3):
 
 def all_basic_tests():
     return [
+        TestExtraEnvResolution,
         PipelineWith3StepsNoCrash,
         PipelineWith3StepsCrash1,
         PipelineWith3StepsCrash2,

@@ -17,7 +17,7 @@ from threading import Thread
 
 from dry_pipe import TaskConf
 from dry_pipe.core_lib import UpstreamTasksNotCompleted, PortablePopen, func_from_mod_func, invoke_rsync, exec_remote, \
-    FileCreationDefaultModes
+    FileCreationDefaultModes, expandvars_from_dict
 
 from dry_pipe.task import TaskOutput, TaskInputs, TaskOutputs, TaskInput
 from dry_pipe.task_lib import execute_remote_task
@@ -526,66 +526,77 @@ class TaskProcess:
                     yield var_name.strip(), value.strip()
 
     def iterate_task_env(self):
-        pipeline_conf = Path(self.pipeline_work_dir, "conf.json")
-        if os.path.exists(pipeline_conf):
-            with open(pipeline_conf) as pc:
-                pipeline_conf_json = json.loads(pc.read())
 
-                def en_vars_in_pipeline(*var_names):
-                    for name in var_names:
-                        value = pipeline_conf_json.get(name)
-                        if value is not None:
-                            value = os.path.expandvars(value)
-                            yield name, value
+        def _iter_env():
+            pipeline_conf = Path(self.pipeline_work_dir, "conf.json")
+            if os.path.exists(pipeline_conf):
+                with open(pipeline_conf) as pc:
+                    pipeline_conf_json = json.loads(pc.read())
+
+                    def en_vars_in_pipeline(*var_names):
+                        for name in var_names:
+                            value = pipeline_conf_json.get(name)
+                            if value is not None:
+                                value = os.path.expandvars(value)
+                                yield name, value
 
 
-                yield from en_vars_in_pipeline(
-                    "__containers_dir",
-                    "__pipeline_code_dir"
-                )
+                    yield from en_vars_in_pipeline(
+                        "__containers_dir",
+                        "__pipeline_code_dir"
+                    )
 
-        yield "__pipeline_instance_dir", self.pipeline_instance_dir
-        yield "__pipeline_instance_name", self.pipeline_instance_name
-        yield "__pipeline_work_dir", self.pipeline_work_dir
-        yield "__control_dir", self.control_dir
-        yield "__task_control_dir", self.control_dir
-        yield "__task_key", self.task_key
-        yield "__task_output_dir", self.task_output_dir
+            yield "__pipeline_instance_dir", self.pipeline_instance_dir
+            yield "__pipeline_instance_name", self.pipeline_instance_name
+            yield "__pipeline_work_dir", self.pipeline_work_dir
+            yield "__control_dir", self.control_dir
+            yield "__task_control_dir", self.control_dir
+            yield "__task_key", self.task_key
+            yield "__task_output_dir", self.task_output_dir
 
-        yield "__scratch_dir", self.resolve_scratch_dir()
+            yield "__scratch_dir", self.resolve_scratch_dir()
 
-        yield "__output_var_file", os.path.join(self.control_dir, "output_vars")
-        yield "__out_log", os.path.join(self.control_dir, "out.log")
+            yield "__output_var_file", os.path.join(self.control_dir, "output_vars")
+            yield "__out_log", os.path.join(self.control_dir, "out.log")
 
-        # stderr defaults to stdout, by default
-        yield "__err_log", os.path.join(self.control_dir, "out.log")
+            # stderr defaults to stdout, by default
+            yield "__err_log", os.path.join(self.control_dir, "out.log")
 
-        #if self.task_conf.ssh_remote_dest is not None:
-        #    yield "__is_remote", "True"
-        #else:
-        #    yield "__is_remote", "False"
+            #if self.task_conf.ssh_remote_dest is not None:
+            #    yield "__is_remote", "True"
+            #else:
+            #    yield "__is_remote", "False"
 
-        yield "__is_on_remote_site", self.task_conf.is_on_remote_site
+            yield "__is_on_remote_site", self.task_conf.is_on_remote_site
 
-        container = self.task_conf.container
-        if container is not None and container != "":
-            yield "__is_singularity", "True"
-        else:
-            yield "__is_singularity", "False"
+            container = self.task_conf.container
+            if container is not None and container != "":
+                yield "__is_singularity", "True"
+            else:
+                yield "__is_singularity", "False"
+
+            self.task_logger.debug("resolved input vars")
+            for k, v in self.inputs._task_inputs.items():
+                yield k, v.resolved_value
+
+            self.task_logger.debug("file output vars")
+            for _, k, f in self.outputs.iterate_file_task_outputs(self.task_output_dir):
+                yield k, f
+
+        env_in_dict = dict(_iter_env())
 
         extra_env = self.task_conf.extra_env
         if extra_env is not None:
             self.task_logger.debug("extra_env vars from task-conf.json")
-            for k, v in extra_env.items():
-                yield k, os.path.expandvars(v)
+            for k, v0 in extra_env.items():
+                v1 = os.path.expandvars(v0)
+                # os.path.expandvars will leave missing vars unchanged, expandvars_from_dict will do it:
+                v2 = expandvars_from_dict(v1, env_in_dict)
+                env_in_dict[k] = v2
 
-        self.task_logger.debug("resolved input vars")
-        for k, v in self.inputs._task_inputs.items():
-            yield k, v.resolved_value
+        for k, v in env_in_dict.items():
+            yield k, v
 
-        self.task_logger.debug("file output vars")
-        for _, k, f in self.outputs.iterate_file_task_outputs(self.task_output_dir):
-            yield k, f
 
     def resolve_scratch_dir(self):
         scratch_dir = os.environ.get('SLURM_TMPDIR')

@@ -1,6 +1,7 @@
 import importlib
 import os
 import subprocess
+import re
 
 
 class RetryableRsyncException(Exception):
@@ -197,3 +198,20 @@ def exec_remote(user_at_host, cmd):
     with PortablePopen(["ssh", user_at_host, " ".join(cmd)]) as p:
         p.wait_and_raise_if_non_zero()
         return p.stdout_as_string()
+
+
+def expandvars_from_dict(data, environ=os.environ):
+    out = ""
+    regex = r'''
+             ( (?:.*?(?<!\\))                   # Match non-variable ending in non-slash
+               (?:\\\\)* )                      # Match 0 or even number of backslash
+             (?:$|\$ (?: (\w+)|\{(\w+)\} ) )    # Match variable or END
+        '''
+
+    for m in re.finditer(regex, data, re.VERBOSE|re.DOTALL):
+        this = re.sub(r'\\(.)', lambda x: x.group(1), m.group(1))
+        v = m.group(2) if m.group(2) else m.group(3)
+        if v and v in environ:
+            this += environ[v]
+        out += this
+    return out
