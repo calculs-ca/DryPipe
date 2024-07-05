@@ -421,10 +421,8 @@ class TaskConf:
             raise Exception(f"invalid executer_type: {executer_type}")
 
         if executer_type == "slurm":
-            if slurm_account is None:
-                raise Exception("slurm_account must be specified when executer_type is slurm")
             if slurm_account == "":
-                raise Exception("slurm_account can't be ''")
+                raise Exception("slurm_account can't be '', use None to omit slurm --account argument")
 
         if executer_type == "process" and slurm_account is not None:
             raise Exception(f"can't specify slurm_account when executer_type is not 'slurm'")
