@@ -284,6 +284,8 @@ class TaskProcess:
             return _rps().remote_instance_work_dir
         elif name == "__task_process":
             return self
+        elif name == "__task_conf":
+            return self.task_conf
         else:
             return None
 
@@ -811,7 +813,13 @@ class TaskProcess:
         return next_state_file, next_step_number
 
 
-    def transition_to_step_started(self, state_file, step_number):
+    def transition_to_step_started(self, state_file, step_number, previous_state_name=None):
+
+        if previous_state_name == "failed":
+            with open(self.env['__out_log'], 'a') as out:
+                out.write(f"\n================ step {step_number} restarted after failure =====================\n\n")
+                exit(1)
+
         return self._transition_state_file(state_file, "step-started", step_number)
 
 
@@ -1077,7 +1085,9 @@ class TaskProcess:
             for i in range(step_number, len(step_invocations)):
 
                 step_invocation = step_invocations[i]
-                state_file, step_number = self.transition_to_step_started(state_file, step_number)
+                state_file, step_number = self.transition_to_step_started(
+                    state_file, step_number, previous_state_name=state_name
+                )
 
                 call = step_invocation["call"]
 

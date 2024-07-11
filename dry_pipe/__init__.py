@@ -406,7 +406,8 @@ class TaskConf:
             fields_from_json=None,
             extra_env=None,
             label=None,
-            work_on_local_file_copies=None
+            work_on_local_file_copies=None,
+            run_as_group=None
     ):
 
         self.external_files_root = None
@@ -456,6 +457,7 @@ class TaskConf:
         #self.hash_code = None
         self.inputs = []
         self.outputs = []
+        self.run_as_group = run_as_group
 
         if extra_env is not None:
             if not isinstance(extra_env, dict):
@@ -519,6 +521,8 @@ class TaskConf:
             yield self.slurm_account
         if self.python_bin is not None:
             yield self.python_bin
+        if self.run_as_group is not None:
+            yield self.run_as_group
 
     def save_as_json(self, control_dir, digest):
         def as_json():

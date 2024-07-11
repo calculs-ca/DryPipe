@@ -61,7 +61,8 @@ class RemoteArrayTaskFullyAutomatedRun(PipelineWithSlurmArray):
                 "PYTHONPATH": ":".join([
                     f"{rts.remote_base_dir()}/RemoteArrayTaskFullyAutomatedRun.test_run_pipeline/external-file-deps{repo_dir}"
                 ])
-            }
+            },
+            run_as_group="def-xroucou"
         )
         tc.python_bin = None
         return tc
