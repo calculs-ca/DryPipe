@@ -613,8 +613,9 @@ class TaskProcess:
         python_bin = self.task_conf.python_bin
         if python_bin is None:
             python_bin = sys.executable
-            #pp = env.get("PYTHONPATH")
-            #env["PYTHONPATH"] = self.pipeline_work_dir
+            self.task_logger.debug(f"no python_bin defined in task-conf.json, will use %s", python_bin)
+        else:
+            self.task_logger.debug(f"will use python_bin from task-conf.json: %s", python_bin)
 
         switches = "-u"
         cmd = [
@@ -818,7 +819,6 @@ class TaskProcess:
         if previous_state_name == "failed":
             with open(self.env['__out_log'], 'a') as out:
                 out.write(f"\n================ step {step_number} restarted after failure =====================\n\n")
-                exit(1)
 
         return self._transition_state_file(state_file, "step-started", step_number)
 
