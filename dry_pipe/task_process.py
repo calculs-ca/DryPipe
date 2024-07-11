@@ -284,6 +284,8 @@ class TaskProcess:
             return _rps().remote_instance_work_dir
         elif name == "__task_process":
             return self
+        elif name == "__task_conf":
+            return self.task_conf
         else:
             return None
 

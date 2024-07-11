@@ -27,7 +27,8 @@ def upload_array(
     __children_task_keys,
     __pipeline_work_dir,
     __pipeline_instance_dir,
-    __remote_pipeline_work_dir
+    __remote_pipeline_work_dir,
+    __task_conf
 ):
     from dry_pipe.task_process import TaskProcess
 
@@ -112,8 +113,14 @@ def upload_array(
 
     remote_pid = os.path.join(__remote_base_dir, pid_base_name)
 
+    if __task_conf.run_as_group is None:
+        rsync_chown_arg = ""
+    else:
+        user = __user_at_host.split("@")[0].strip()
+        rsync_chown_arg = f"--chown={user}:{__task_conf.run_as_group}"
+
     def do_rsync(src, dst, deps_file):
-        rsync_cmd = f"rsync --mkpath -a --dirs --files-from={deps_file} {src}/ {dst}/"
+        rsync_cmd = f"rsync {rsync_chown_arg} --mkpath -a --dirs --files-from={deps_file} {src}/ {dst}/"
         __task_logger.info("%s", rsync_cmd)
         invoke_rsync(rsync_cmd)
 
@@ -138,7 +145,7 @@ def upload_array(
                     os.path.join(__task_control_dir, f"task-conf-overrides-{__user_at_host}.json")
                 )
                 dst = f"{__user_at_host}:{remote_pid}/.drypipe/{__task_key}/"
-                invoke_rsync(f"rsync --mkpath {overrides_file} {dst}")
+                invoke_rsync(f"rsync {rsync_chown_arg} --mkpath {overrides_file} {dst}")
             finally:
                 if os.path.exists(overrides_file):
                     os.remove(overrides_file)
@@ -230,12 +237,26 @@ def execute_remote_task(
     __remote_base_dir,
     __ssh_key_file,
     __pipeline_instance_name,
-    __remote_pipeline_work_dir
+    __remote_pipeline_work_dir,
+    __task_conf,
+    __task_logger
 ):
 
     remote_cli = os.path.join(__remote_pipeline_work_dir, "cli")
     remote_task_control_dir = os.path.join(__remote_pipeline_work_dir, __task_key)
 
-    exec_remote(__user_at_host, [
+    cmd = [
         remote_cli, "task", remote_task_control_dir, "--from-remote"
-    ])
+    ]
+
+    if __task_conf.run_as_group is not None:
+        __task_logger.info("remote execution at %s, as group %s ", __user_at_host,  __task_conf.run_as_group)
+        cmd = " ".join(cmd)
+        cmd = [
+            "newgrp", __task_conf.run_as_group, "<<<", f"'{cmd}'"
+        ]
+    else:
+        __task_logger.info("remote execution at %s")
+
+
+    exec_remote(__user_at_host, cmd)
