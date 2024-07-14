@@ -172,36 +172,7 @@ def download_array(
 ):
     from dry_pipe.task_process import TaskProcess
 
-    def gen_result_files():
-        for child_task_key in __children_task_keys:
-            p = TaskProcess(
-                os.path.join(__pipeline_work_dir, child_task_key),
-                ensure_all_upstream_deps_complete=False
-            )
-            for file in p.outputs.rsync_file_list():
-                yield file
-
-    result_file_txt = os.path.join(__task_control_dir, "result-files.txt")
-    uniq_files = set()
-    with open(result_file_txt, "w") as tf:
-        for result_file in gen_result_files():
-            if result_file not in uniq_files:
-                tf.write(result_file)
-                tf.write("\n")
-                uniq_files.add(result_file)
-
-    pid = __pipeline_instance_dir
-
-    pipeline_base_name = os.path.basename(pid)
-
-    ssh_remote_dest = \
-        f"{__user_at_host}:{__remote_base_dir}/{pipeline_base_name}/"
-
-    rsync_cmd = f"rsync -a --dirs --files-from={result_file_txt} {ssh_remote_dest} {pid}/"
-
-    __task_logger.debug("%s", rsync_cmd)
-    invoke_rsync(rsync_cmd)
-
+    #fetch states, and generate rsync list
     remote_cli = os.path.join(__remote_pipeline_work_dir, "cli")
 
     remote_exec_result = exec_remote(__user_at_host, [
@@ -228,6 +199,47 @@ def download_array(
         if child_state_file_path is not None:
             actual_state = os.path.join(child_task_control_dir, child_task_state)
             os.rename(child_state_file_path.path, actual_state)
+
+    file_set_list = f".drypipe/{__task_key}/file-sets-rsync-list.txt"
+
+    def gen_result_files():
+
+        for child_task_key in __children_task_keys:
+            p = TaskProcess(
+                os.path.join(__pipeline_work_dir, child_task_key),
+                ensure_all_upstream_deps_complete=False
+            )
+            for file in p.outputs.rsync_file_list():
+                yield file
+
+        yield file_set_list
+
+    result_file_txt = os.path.join(__task_control_dir, "result-files.txt")
+    uniq_files = set()
+    with open(result_file_txt, "w") as tf:
+        for result_file in gen_result_files():
+            if result_file not in uniq_files:
+                tf.write(result_file)
+                tf.write("\n")
+                uniq_files.add(result_file)
+
+    pid = __pipeline_instance_dir
+
+    pipeline_base_name = os.path.basename(pid)
+
+    ssh_remote_dest = \
+        f"{__user_at_host}:{__remote_base_dir}/{pipeline_base_name}/"
+
+    rsync_cmd = f"rsync -a --dirs --partial --files-from={result_file_txt} {ssh_remote_dest} {pid}/"
+    __task_logger.debug("rsync file list: %s", rsync_cmd)
+    invoke_rsync(rsync_cmd)
+
+    file_set_list = os.path.join(__pipeline_instance_dir, file_set_list)
+
+    if os.path.exists(file_set_list):
+        rsync_cmd = f"rsync -a --dirs --partial --files-from={file_set_list} {ssh_remote_dest} {pid}/"
+        __task_logger.debug("rsync file set list: %s", rsync_cmd)
+        invoke_rsync(rsync_cmd)
 
 
 @DryPipe.python_call()

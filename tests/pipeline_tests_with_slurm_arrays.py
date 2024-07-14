@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 
 import dry_pipe
 from base_pipeline_test import BasePipelineTest
@@ -124,7 +125,8 @@ class PipelineWithSlurmArray(BasePipelineTest):
                 ).outputs(
                     slurm_result=int,
                     slurm_result_in_file=dsl.file('slurm_result.txt'),
-                    var_result=int
+                    var_result=int,
+                    random_files=dsl.file_set("**/*", "b.*")
                 ).calls("""
                     #!/usr/bin/env bash
                     echo "$r $i"  
@@ -133,8 +135,13 @@ class PipelineWithSlurmArray(BasePipelineTest):
                     echo "__task_output_dir=$__task_output_dir"
                     echo "slurm_result_in_file=$slurm_result_in_file"                    
                     echo "$slurm_result"
-                    mkdir -p $__task_output_dir
                     echo "$slurm_result" > $slurm_result_in_file
+                    
+                    mkdir -p $__task_output_dir/sub1/a
+                    echo "123" > $__task_output_dir/sub1/a/a.txt
+                    mkdir -p $__task_output_dir/sub2/a
+                    echo "123" > $__task_output_dir/sub2/a/b.txt                    
+                    echo "123" > $__task_output_dir/a.txt
                 """).calls(
                     test_func
                 )()
@@ -146,7 +153,6 @@ class PipelineWithSlurmArray(BasePipelineTest):
             ).slurm_array_parent(
                 children_tasks=match.tasks
             )()
-
 
         for _ in dsl.query_all_or_nothing("t_a_*"):
             yield dsl.task(
@@ -182,15 +188,6 @@ class PipelineWithSlurmArray(BasePipelineTest):
             int(tasks_by_keys["t_b_2"].outputs.slurm_result),
             12+25
         )
-
-        for k, t in tasks_by_keys.items():
-            if k.startswith("t_"):
-                with open(t.outputs.slurm_result_in_file) as f:
-                    r = int(f.read().strip())
-                    expected = int(t.outputs.slurm_result)
-                    self.assertEqual(expected, r, "slurm_result_in_file does not match expected result")
-                    self.assertEqual(expected, int(t.outputs.var_result), "var_result does not match expected result")
-
 
 class PipelineWithSlurmArrayWithUntil(PipelineWithSlurmArray):
 

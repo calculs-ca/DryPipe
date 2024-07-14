@@ -1,5 +1,7 @@
 
 import os.path
+from pathlib import Path
+
 from dry_pipe import TaskConf, PortablePopen
 from tests.cli_tests import test_cli
 from tests.pipeline_tests_with_slurm_arrays import PipelineWithSlurmArray
@@ -8,8 +10,8 @@ from tests.test_utils import TestSandboxDir
 
 class RemoteTestSite:
 
-    def __init__(self, test_sandbox_dir):
-        self.test_sandbox_dir = test_sandbox_dir
+    #def __init__(self):
+    #    #self.test_sandbox_dir = test_sandbox_dir
 
     def exec_remote(self, cmd):
         with PortablePopen(["ssh", self.user_at_host(), " ".join(cmd)]) as p:
@@ -21,18 +23,19 @@ class RemoteTestSite:
     def user_at_host(self):
         return "maxl@mp2.ccs.usherbrooke.ca"
 
-    def remote_pipeline_dir(self):
-        return os.path.join(self.remote_base_dir(), os.path.basename(self.test_sandbox_dir.test_name))
+    #def remote_pipeline_dir(self):
+    #    return os.path.join(self.remote_base_dir(), os.path.basename(self.test_sandbox_dir.test_name))
 
-    def reset(self):
-        self.exec_remote(["rm", "-Rf", self.remote_pipeline_dir()])
-        self.exec_remote(["mkdir", "-p", self.remote_pipeline_dir()])
+    def reset(self, pipeline_instance_dir):
+        d = os.path.join(self.remote_base_dir(), os.path.basename(pipeline_instance_dir))
+        self.exec_remote(["rm", "-Rf", d])
+        self.exec_remote(["mkdir", "-p", d])
 
     def ssh_remote_dst(self):
         return f"{self.user_at_host()}:{self.remote_base_dir()}"
 
 
-remote_test_site = RemoteTestSite(None)
+remote_test_site = RemoteTestSite()
 
 
 class RemoteArrayTaskFullyAutomatedRun(PipelineWithSlurmArray):
@@ -40,17 +43,11 @@ class RemoteArrayTaskFullyAutomatedRun(PipelineWithSlurmArray):
     def launches_tasks_in_process(self):
         return False
 
-    def do_validate(self, pipeline_instance):
-        self.validate({
-            task.key: task
-            for task in pipeline_instance.query("*")
-        })
-
     def task_conf(self):
 
         repo_dir = os.path.abspath(os.path.dirname(os.path.dirname(__file__)))
 
-        rts = RemoteTestSite(TestSandboxDir(self))
+        rts = RemoteTestSite()
 
         tc = TaskConf(
             executer_type="slurm",
@@ -59,7 +56,7 @@ class RemoteArrayTaskFullyAutomatedRun(PipelineWithSlurmArray):
             extra_env={
                 "DRYPIPE_TASK_DEBUG": "True",
                 "PYTHONPATH": ":".join([
-                    f"{rts.remote_base_dir()}/RemoteArrayTaskFullyAutomatedRun.test_run_pipeline/external-file-deps{repo_dir}"
+                    f"$__pipeline_instance_dir/external-file-deps{repo_dir}"
                 ])
             },
             run_as_group="def-xroucou"
@@ -68,18 +65,40 @@ class RemoteArrayTaskFullyAutomatedRun(PipelineWithSlurmArray):
         return tc
 
     def test_run_pipeline(self):
-        d = TestSandboxDir(self)
 
-        rts = RemoteTestSite(d)
-        rts.reset()
+        rts = RemoteTestSite()
+        rts.reset(self.pipeline_instance_dir)
 
-        pipeline_instance = self.create_pipeline_instance(d.sandbox_dir)
+        pipeline_instance = self.create_pipeline_instance(self.pipeline_instance_dir)
         pipeline_instance.run_sync(run_tasks_in_process=True, monitor=self.create_monitor())
 
-        self.validate({
+        tasks_by_keys = {
             task.key: task
             for task in pipeline_instance.query("*")
-        })
+        }
+
+        self.validate(tasks_by_keys)
+
+        for k, t in tasks_by_keys.items():
+            if k.startswith("t_"):
+                with open(t.outputs.slurm_result_in_file) as f:
+                    r = int(f.read().strip())
+                    expected = int(t.outputs.slurm_result)
+                    self.assertEqual(expected, r, "slurm_result_in_file does not match expected result")
+                    self.assertEqual(expected, int(t.outputs.var_result), "var_result does not match expected result")
+
+                self.assertEqual(
+                    {
+                        f"output/{k}/slurm_result.txt",
+                        f"output/{k}/a.txt",
+                        f"output/{k}/sub1/a/a.txt"
+                    },
+                    {
+                        str(Path(f).relative_to(self.pipeline_instance_dir))
+                        for f in t.outputs.random_files
+                    }
+                )
+
 
 class CliTestsPipelineWithSlurmArrayRemote(PipelineWithSlurmArray):
 

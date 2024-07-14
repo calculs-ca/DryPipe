@@ -480,7 +480,8 @@ class SlurmArrayParentTask:
             __children_task_keys=self.children_task_keys(),
             __pipeline_work_dir=self.task_process.pipeline_work_dir,
             __pipeline_instance_dir=self.task_process.pipeline_instance_dir,
-            __remote_pipeline_work_dir=rps.remote_instance_work_dir
+            __remote_pipeline_work_dir=rps.remote_instance_work_dir,
+            __task_conf=self.task_process.task_conf
         )
 
     def _download_array(self):

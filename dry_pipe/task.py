@@ -1,10 +1,11 @@
+import fnmatch
 import glob
 import os
 import pathlib
 from hashlib import blake2b
+from tempfile import NamedTemporaryFile
 
-
-from dry_pipe.core_lib import FileCreationDefaultModes
+from dry_pipe.core_lib import FileCreationDefaultModes, PortablePopen, invoke_rsync
 
 
 class Task:
@@ -342,19 +343,34 @@ class TaskInput:
         return str(self.resolved_value)
 
 
+class FileSet:
+    def __init__(self, pattern, exclude_pattern):
+        self.pattern = pattern
+        self.exclude_pattern = exclude_pattern
+
+
 class TaskOutput:
 
     @staticmethod
     def from_json(json_dict):
         j = json_dict
-        return TaskOutput(j["name"], j["type"], j.get("produced_file_name"))
+        produced_file_name = j.get("produced_file_name")
+        file_set = j.get("file_set")
+        if file_set is not None:
+            file_set = FileSet(file_set["pattern"], file_set.get("exclude_pattern"))
+        return TaskOutput(
+            j["name"],
+            j["type"],
+            produced_file_name=produced_file_name,
+            file_set=file_set
+        )
 
     def as_string(self):
         p = "" if self.produced_file_name is None else f",{self.produced_file_name}"
         return f"TaskOutput({self.name},{self.type}{p})"
 
-    def __init__(self, name, type, produced_file_name=None, task_key=None):
-        if type not in ['file', 'str', 'int', 'float']:
+    def __init__(self, name, type, produced_file_name=None, task_key=None, file_set=None):
+        if type not in ['file', 'str', 'int', 'float', 'file_set']:
             raise Exception(f"invalid type {type}")
 
         if type != 'file' and produced_file_name is not None:
@@ -365,6 +381,8 @@ class TaskOutput:
         self.produced_file_name = produced_file_name
         self._resolved_value = None
         self.task_key = task_key
+        self.file_set = file_set
+        self.task_output_dir = None
 
     def hash_values(self):
         yield self.name
@@ -388,6 +406,12 @@ class TaskOutput:
 
         if self.produced_file_name is not None:
             r["produced_file_name"] = self.produced_file_name
+
+        if self.file_set is not None:
+            r["file_set"] = {
+                "pattern": self.file_set.pattern,
+                "exclude_pattern": self.file_set.exclude_pattern
+            }
 
         return r
 
@@ -415,6 +439,23 @@ class TaskOutput:
         elif self.type == 'float':
             if not isinstance(v, float):
                 return expected_x_got_v('float', v)
+    def __iter__(self):
+
+        if self.task_output_dir is None:
+            raise Exception(f"{self.name} was not resolved, task must complete before using an output variable")
+
+        if self.file_set is None:
+            raise Exception(
+                f"task {self.task_key} output {self.name} of type {self.type} is not iterable. " +
+                "Only dsl.file_set(...) are iterable"
+            )
+
+        for f in pathlib.Path(self.task_output_dir).glob(self.file_set.pattern):
+            if f.is_dir() or f.match(self.file_set.exclude_pattern):
+                continue
+            else:
+                yield f
+
 
     def __int__(self):
 
@@ -548,6 +589,18 @@ class TaskOutputs:
 
         if has_output_var:
             yield f".drypipe/{self.task_key}/output_vars"
+
+    def has_file_sets(self):
+        for o in self._task_outputs.values():
+            if o.file_set is not None:
+                return True
+
+    def rsync_filter_list(self, task_output_dir):
+        pipeline_out = pathlib.Path(task_output_dir).parent
+        for o in self._task_outputs.values():
+            if o.file_set is not None:
+                for f in o:
+                    yield f"output/{pathlib.Path(f).relative_to(pipeline_out)}"
 
     def iterate_file_task_outputs(self, task_output_dir):
         for o in self._task_outputs.values():

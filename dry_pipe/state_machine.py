@@ -3,7 +3,7 @@ import os.path
 import typing
 from pathlib import Path
 
-from dry_pipe import TaskBuilder, TaskConf
+from dry_pipe import TaskBuilder, TaskConf, FileSet
 from dry_pipe.state_file_tracker import StateFileTracker
 from dry_pipe.task_process import TaskProcess
 
@@ -89,6 +89,15 @@ class StateMachine:
 
     def file(self, p):
         return Path(p)
+
+    def file_set(self, pattern, exlude_pattern):
+        """
+
+        :param pattern: https://docs.python.org/3.6/library/pathlib.html#pathlib.Path.glob
+        :param exlude_pattern Glob.mach(),
+        :return:
+        """
+        return FileSet(pattern, exlude_pattern)
 
     def pipeline_instance_dir(self):
         return self.state_file_tracker.pipeline_instance_dir

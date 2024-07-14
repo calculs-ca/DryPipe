@@ -9,7 +9,7 @@ from pathlib import Path
 
 from dry_pipe.core_lib import PortablePopen
 
-from dry_pipe.task import Task, TaskStep, TaskInput, TaskOutput
+from dry_pipe.task import Task, TaskStep, TaskInput, TaskOutput, FileSet
 
 
 class DryPipe:
@@ -245,8 +245,8 @@ class TaskBuilder:
                     yield k, TaskOutput(k, 'float', task_key=self.key)
                 elif isinstance(v, Path):
                     yield k, TaskOutput(k, 'file', task_key=self.key, produced_file_name=v.name)
-                #elif isinstance(v, FileSet):
-                #    yield k, v
+                elif isinstance(v, FileSet):
+                    yield k, TaskOutput(k, 'file_set', task_key=self.key, file_set=v)
                 else:
                     raise Exception(
                         f"invalid arg in Task({self.key}).inputs({k})\n"+

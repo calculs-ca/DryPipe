@@ -295,6 +295,8 @@ class Cli:
                 os.path.join(self.parsed_args.pipeline_instance_dir, ".drypipe", self.parsed_args.task_key)
             )
 
+            task_process.generate_rsync_list_for_file_sets()
+
             array_parent_task = SlurmArrayParentTask(task_process)
 
             for task_key, state in array_parent_task.list_array_states():
@@ -332,6 +334,8 @@ class Cli:
         )
 
         restart_array = self.subparsers.add_parser('restart-failed-array-tasks')
+        gen_array_rsync_list = self.subparsers.add_parser('array-rsync-list')
+        self._add_task_key_parser_arg(gen_array_rsync_list)
 
         #self._add_task_key_parser_arg(restart_array)
         self.add_array_args(restart_array)

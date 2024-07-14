@@ -19,7 +19,7 @@ from dry_pipe import TaskConf
 from dry_pipe.core_lib import UpstreamTasksNotCompleted, PortablePopen, func_from_mod_func, invoke_rsync, exec_remote, \
     FileCreationDefaultModes, expandvars_from_dict
 
-from dry_pipe.task import TaskOutput, TaskInputs, TaskOutputs, TaskInput
+from dry_pipe.task import TaskOutput, TaskInputs, TaskOutputs, TaskInput, FileSet
 from dry_pipe.task_lib import execute_remote_task
 
 APPTAINER_COMMAND = "singularity"
@@ -474,14 +474,19 @@ class TaskProcess:
             unparsed_out_vars = dict(self.iterate_out_vars_from(var_file))
             for o in to:
                 o = TaskOutput.from_json(o)
-                if o.type != 'file':
+                o.task_key = self.task_key
+
+                if o.type == 'file_set':
+                    o.task_output_dir = self.task_output_dir
+                elif o.type == 'file':
+                    o.set_resolved_value(os.path.join(self.task_output_dir, o.produced_file_name))
+                else:
                     v = unparsed_out_vars.get(o.name)
                     if v is not None:
                         o.set_resolved_value(v)
-                    task_outputs[o.name] = o
-                else:
-                    o.set_resolved_value(os.path.join(self.pipeline_output_dir, self.task_key, o.produced_file_name))
-                    task_outputs[o.name] = o
+
+                task_outputs[o.name] = o
+
 
         return task_inputs, task_outputs
 
@@ -1331,6 +1336,29 @@ class TaskProcess:
     def pipeline_instance_base_dir(self):
         return os.path.basename(self.pipeline_instance_dir)
 
+    def file_sets_rsync_list_file(self):
+        return os.path.join(self.control_dir, "file-sets-rsync-list.txt")
+
+    def generate_rsync_list_for_file_sets(self):
+
+        from dry_pipe.slurm_array_task import SlurmArrayParentTask
+        array_parent_task = SlurmArrayParentTask(self)
+        c = 0
+        with open(self.file_sets_rsync_list_file(), "w") as rsync_list_file:
+
+            for child_task_key in array_parent_task.children_task_keys():
+                child_process = TaskProcess(
+                    os.path.join(self.pipeline_work_dir, child_task_key),
+                    ensure_all_upstream_deps_complete=False
+                )
+
+                for f in child_process.outputs.rsync_filter_list(child_process.task_output_dir):
+                    rsync_list_file.write(f)
+                    rsync_list_file.write(f"\n")
+                    c += 1
+
+        if c == 0:
+            os.remove(self.file_sets_rsync_list_file())
 
 def tail_file(file, delay=1.0):
     line_terminators = ("\r\n", "\n", "\r")

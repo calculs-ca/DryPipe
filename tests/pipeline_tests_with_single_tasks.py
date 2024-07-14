@@ -437,9 +437,53 @@ class PipelineWith3StepsCrash3InContainer(PipelineWith3StepsCrash3):
         )
 
 
+class TestFileSet(BasePipelineTest):
+
+    def dag_gen(self, dsl):
+        yield dsl.task(
+            key="t",
+            task_conf=self.task_conf()
+        ).inputs(
+            x=3,
+            y=5
+        ).outputs(
+            random_files=dsl.file_set("**/*", "*.no")
+        ).calls(
+            """
+            #!/usr/bin/bash
+            
+            mkdir -p $__task_output_dir/a1/b        
+            mkdir -p $__task_output_dir/a2/c/x/y/z            
+            
+            echo "z" > $__task_output_dir/a1/a.yes
+            touch $__task_output_dir/a2/c/x/y/z/pop
+            
+            echo "z" > $__task_output_dir/z.no                    
+            echo "z" > $__task_output_dir/a2/b.txt
+
+            mkdir -p $__task_output_dir/../z
+            echo "z" > $__task_output_dir/../z/x.txt            
+            """
+        )()
+
+    def validate(self, tasks_by_keys):
+        self.assertEqual(
+            {
+                "t/a2/b.txt",
+                "t/a1/a.yes",
+                "t/a2/c/x/y/z/pop"
+            },
+            {
+                str(Path(f).relative_to(Path(self.pipeline_instance_dir, "output")))
+                for f in tasks_by_keys["t"].outputs.random_files
+            }
+        )
+
+
 def all_basic_tests():
     return [
         TestExtraEnvResolution,
+        TestFileSet,
         PipelineWith3StepsNoCrash,
         PipelineWith3StepsCrash1,
         PipelineWith3StepsCrash2,
@@ -460,6 +504,7 @@ def all_tests_in_containers():
         PipelineWithVarAndFileOutputInContainer,
         PipelineWithVarSharingBetweenStepsInContainer
     ]
+
 
 def all_tests():
     return all_basic_tests() + all_tests_in_containers()
