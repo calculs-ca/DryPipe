@@ -1357,8 +1357,6 @@ class TaskProcess:
                     rsync_list_file.write(f"\n")
                     c += 1
 
-        if c == 0:
-            os.remove(self.file_sets_rsync_list_file())
 
 def tail_file(file, delay=1.0):
     line_terminators = ("\r\n", "\n", "\r")
