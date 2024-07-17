@@ -451,10 +451,12 @@ class TaskOutput:
             )
 
         for f in pathlib.Path(self.task_output_dir).glob(self.file_set.pattern):
-            if f.is_dir() or f.match(self.file_set.exclude_pattern):
+            if f.is_dir():
                 continue
-            else:
-                yield f
+            if self.file_set.exclude_pattern is not None and f.match(self.file_set.exclude_pattern):
+                continue
+
+            yield f
 
 
     def __int__(self):
