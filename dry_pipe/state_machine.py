@@ -90,14 +90,14 @@ class StateMachine:
     def file(self, p):
         return Path(p)
 
-    def file_set(self, pattern, exlude_pattern):
+    def file_set(self, pattern, exclude_pattern=None):
         """
-
-        :param pattern: https://docs.python.org/3.6/library/pathlib.html#pathlib.Path.glob
-        :param exlude_pattern Glob.mach(),
+        :param pattern: a glob expression, evaluated with $__task_output_dir as base directory,
+               see: https://docs.python.org/3.6/library/pathlib.html#pathlib.Path.glob
+        :param exclude_pattern a Glob.mach() expression, or a comma separated list of Glob.mach() expressions
         :return:
         """
-        return FileSet(pattern, exlude_pattern)
+        return FileSet(pattern, exclude_pattern)
 
     def pipeline_instance_dir(self):
         return self.state_file_tracker.pipeline_instance_dir
@@ -226,7 +226,7 @@ class StateMachine:
         if new_generated_tasks == 0 and len(self._pending_queries) == 0:
             self._generator_exhausted = True
 
-    def iterate_tasks_to_launch(self, monitor=None):
+    def iterate_tasks_to_launch(self, monitor=None, restart_failed=False, reset_failed=False):
 
         if self._no_runnable_tasks_left:
             raise AllRunnableTasksCompletedOrInError()
@@ -246,7 +246,7 @@ class StateMachine:
                             #self.state_file_tracker.fetch_true_state_and_update_memory_if_changed(k)
                 yield state_file
             else:
-                self.state_file_tracker.register_pre_launch(state_file)
+                self.state_file_tracker.register_pre_launch(state_file, reset_failed)
                 yield state_file
 
         if self._task_generator is not None:
@@ -261,6 +261,11 @@ class StateMachine:
                 f"{type(StateMachine)} must be constructed with either a dag_generator, or " +
                 "load_from_instance_dir() must be invoked before calling this method"
             )
+
+        if restart_failed or reset_failed:
+            for sf in self.state_file_tracker.all_state_files():
+                if sf.is_failed():
+                    yield from register_pre_launch(sf)
 
         def populate_task_keys_of_dep_graph_changing_status_changes():
             newly_completed_task_keys = []

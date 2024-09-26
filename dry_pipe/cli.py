@@ -213,7 +213,9 @@ class Cli:
 
             pipeline_instance.run(
                 until_patterns=self.parsed_args.until,
-                monitor=monitor
+                monitor=monitor,
+                restart_failed=self.parsed_args.restart_failed,
+                reset_failed=self.parsed_args.reset_failed
             )
         elif self.parsed_args.command == 'prepare':
             pipeline_instance = pipeline_instance_from_args()
@@ -364,6 +366,8 @@ class Cli:
 
         self._add_task_key_parser_arg(run_parser)
 
+        self._add_restart_failed_args(run_parser)
+
     def add_upload_download_array_args(self, upload_array_parser):
 
         self.upload_array_parser = upload_array_parser
@@ -410,19 +414,23 @@ class Cli:
             help='task key',
         )
 
-        run_parser.add_argument(
+        self._add_restart_failed_args(run_parser)
+
+        self.__wait_arg(run_parser)
+
+    def _add_restart_failed_args(self, parser):
+        parser.add_argument(
             '--restart-failed',
             action='store_true', default=False,
             help='re submit failed tasks in array, restart from last failed step, keep previous output'
         )
 
-        run_parser.add_argument(
+        parser.add_argument(
             '--reset-failed',
             action='store_true', default=False,
             help='delete and re submit failed tasks in array'
         )
 
-        self.__wait_arg(run_parser)
 
     def add_create_array_parent_args(self, parser):
         parser.add_argument('new_task_key', type=str)

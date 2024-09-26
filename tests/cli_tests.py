@@ -23,14 +23,14 @@ def test_cli(*args):
 def pipeline_with_slurm_array_1():
     t = PipelineWithSlurmArrayForRealSlurmTest()
     return DryPipe.create_pipeline(
-        lambda dsl: t.dag_gen(dsl),
+        lambda dsl: t.combined_pipeline_dag(dsl),
         pipeline_code_dir=t.pipeline_code_dir
     )
 
 def pipeline_with_slurm_array_2():
     t = PipelineWithSlurmArray()
     return DryPipe.create_pipeline(
-        lambda dsl: t.dag_gen(dsl),
+        lambda dsl: t.combined_pipeline_dag(dsl),
         pipeline_code_dir=t.pipeline_code_dir
     )
 

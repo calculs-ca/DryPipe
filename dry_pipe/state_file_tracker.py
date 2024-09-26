@@ -66,9 +66,9 @@ class StateFileTracker:
         state_file.transition_to_crashed()
         os.rename(previous_path, state_file.path)
 
-    def register_pre_launch(self, state_file, restart_failed=False):
+    def register_pre_launch(self, state_file, reset_failed=False):
         previous_path = state_file.path
-        state_file.transition_to_pre_launch(restart_failed)
+        state_file.transition_to_pre_launch(reset_failed)
         os.rename(previous_path, state_file.path)
 
     def completed_task_keys(self):

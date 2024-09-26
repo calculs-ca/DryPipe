@@ -25,10 +25,16 @@ class PipelineInstance:
     def run_sync(self, until_patterns=None, run_tasks_in_process=True, monitor=None):
         self._run(until_patterns, run_tasks_in_process, True, monitor, [0, 0, 0, 1])
 
-    def run(self, until_patterns=None, monitor=None):
-        self._run(until_patterns, False, False, monitor, [0, 1, 5, 10])
+    def run(self, until_patterns=None, monitor=None, restart_failed=False, reset_failed=False):
+        self._run(
+            until_patterns, False, False,
+            monitor, [0, 1, 5, 10], restart_failed, reset_failed
+        )
 
-    def _run(self, until_patterns, run_tasks_in_process, run_tasks_sync, monitor, sleep_schedule):
+    def _run(
+        self, until_patterns, run_tasks_in_process, run_tasks_sync, monitor, sleep_schedule,
+        restart_failed, reset_failed
+    ):
 
         if until_patterns is not None and not isinstance(until_patterns, list):
             raise Exception(f"invalid type for until_patterns: {type(until_patterns).__name__}, must be List[str]")
@@ -45,13 +51,15 @@ class PipelineInstance:
                     state_machine.state_file_tracker.all_state_files()
                 )
 
-        def iterate_work_rounds():
+        def iterate_work_rounds(restart_failed, reset_failed):
             try:
                 sleep_idx = 0
                 max_sleep_idx = len(sleep_schedule) - 1
                 while True:
                     c = 0
-                    for state_file in state_machine.iterate_tasks_to_launch(monitor=monitor):
+                    for state_file in state_machine.iterate_tasks_to_launch(
+                            monitor=monitor, restart_failed=restart_failed, reset_failed=reset_failed
+                    ):
                         control_dir = state_file.control_dir()
                         as_subprocess = not run_tasks_in_process
                         wait_for_completion = run_tasks_sync
@@ -65,19 +73,26 @@ class PipelineInstance:
                         if sleep_idx < max_sleep_idx:
                             sleep_idx += 1
                         yield None, sleep_schedule[sleep_idx]
+
+                    restart_failed = False
+                    reset_failed = False
+
             except AllRunnableTasksCompletedOrInError:
                 logger.info(f"no more tasks to launch")
                 yield None, None
 
-        for func, suggested_sleep in iterate_work_rounds():
+        for func, suggested_sleep in iterate_work_rounds(restart_failed, reset_failed):
             if func is not None:
                 func()
+                mon()
             elif suggested_sleep is not None:
                 time.sleep(suggested_sleep)
+                mon()
             else:
                 mon()
-                break
-            mon()
+
+            restart_failed = False
+            reset_failed = False
 
 
     def query(self, glob_pattern, include_incomplete_tasks=False):
@@ -97,6 +112,8 @@ class PipelineInstance:
         else:
             raise Exception(f"expected a task with key {task_key}, found none")
 
+    def restart_failed(self):
+        self.state_file_tracker
 
 class Monitor:
     def __init__(self, task_grouper=None):

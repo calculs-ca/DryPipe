@@ -230,13 +230,13 @@ def download_array(
     ssh_remote_dest = \
         f"{__user_at_host}:{__remote_base_dir}/{pipeline_base_name}/"
 
-    rsync_cmd = f"rsync -a --dirs --partial --files-from={result_file_txt} {ssh_remote_dest} {pid}/"
+    rsync_cmd = f"rsync -a --dirs --partial --ignore-missing-args --files-from={result_file_txt} {ssh_remote_dest} {pid}/"
     __task_logger.debug("rsync file list: %s", rsync_cmd)
     invoke_rsync(rsync_cmd)
 
     file_set_list = os.path.join(__pipeline_instance_dir, file_set_list)
 
-    if os.path.exists(file_set_list):
+    if os.path.exists(file_set_list) and os.stat(file_set_list).st_size > 0:
         rsync_cmd = f"rsync -a --dirs --partial --files-from={file_set_list} {ssh_remote_dest} {pid}/"
         __task_logger.debug("rsync file set list: %s", rsync_cmd)
         invoke_rsync(rsync_cmd)

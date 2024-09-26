@@ -82,7 +82,7 @@ class SlurmArrayHandingStateMachineTest(TestWithDirectorySandbox):
 
         t = PipelineWithSlurmArray()
 
-        tester = StateMachineTester(self, lambda dsl: t.dag_gen(dsl), StateFileTracker(self.pipeline_instance_dir))
+        tester = StateMachineTester(self, lambda dsl: t.combined_pipeline_dag(dsl), StateFileTracker(self.pipeline_instance_dir))
 
         tester.iterate_once_and_mutate_set_of_next_state_files_ready()
 

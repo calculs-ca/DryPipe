@@ -31,8 +31,11 @@ class StateFile:
             self.outputs = None
             self.inputs = None
 
-    def transition_to_pre_launch(self, restart_failed):
+    def transition_to_pre_launch(self, reset_failed=False):
         _, _, s = self.key_state_step()
+
+        if reset_failed:
+            s = 0
 
         self.path = os.path.join(self.tracker.pipeline_work_dir, self.task_key, f"state._step-started.{s}")
 
