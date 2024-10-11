@@ -77,7 +77,7 @@ class MinimalistPipelinesTests(unittest.TestCase):
         d_dep2 = TestSandboxDir(self, "EXT_test_pipeline_with_file_and_var_output")
         d_dep2.delete_and_recreate_sandbox()
         d_dep2.pipeline_instance_from_generator(
-            pipeline_with_file_and_var_output.dag_gen,
+            pipeline_with_file_and_var_output.combined_pipeline_dag,
             completed=True
         )
 
