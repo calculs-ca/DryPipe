@@ -1,0 +1,16 @@
+: .rsync-filter
++ a1/
+- /**
+: .rsync-filter
++ a1/
+- /**
+: a1/.rsync-filter
++ a1/
+- /**
+!
+: a1/.rsync-filter
++ a1/
+- /**
+: a1/.rsync-filter
++ a1/
+- /**
