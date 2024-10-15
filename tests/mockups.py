@@ -58,7 +58,7 @@ class StateFileTrackerMockup:
     def lookup_state_file_from_memory(self, task_key):
         return self.state_files_in_memory[task_key]
 
-    def register_pre_launch(self, state_file):
+    def register_pre_launch(self, state_file, reset_failed=False):
         state_file.transition_to_pre_launch(False)
         self.task_keys_to_task_states_on_mockup_disk[state_file.task_key] = os.path.basename(state_file.path)
 

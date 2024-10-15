@@ -33,7 +33,7 @@ class PipelineInstance:
 
     def _run(
         self, until_patterns, run_tasks_in_process, run_tasks_sync, monitor, sleep_schedule,
-        restart_failed, reset_failed
+        restart_failed=False, reset_failed=False
     ):
 
         if until_patterns is not None and not isinstance(until_patterns, list):
