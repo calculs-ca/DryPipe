@@ -3,8 +3,8 @@ import shutil
 import unittest
 from pathlib import Path
 
-from pipeline import Pipeline
-from service import PipelineRunner
+from dry_pipe.pipeline import Pipeline
+from dry_pipe.service import PipelineRunner
 from tests.pipeline_tests_with_multiple_tasks import PipelineWithVariablePassing
 from tests.pipeline_tests_with_single_tasks import PipelineWithSingleBashTask, PipelineWithSinglePythonTask
 

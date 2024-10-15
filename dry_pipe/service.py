@@ -2,8 +2,8 @@ import os.path
 import time
 from pathlib import Path
 
-from state_machine import StateMachine, AllRunnableTasksCompletedOrInError
-from task_process import TaskProcess
+from dry_pipe.state_machine import StateMachine, AllRunnableTasksCompletedOrInError
+from dry_pipe.task_process import TaskProcess
 
 
 class RunningPipelineInstance:
