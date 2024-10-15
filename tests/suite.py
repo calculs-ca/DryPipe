@@ -12,6 +12,7 @@ from test_state_machine import StateMachineTests, StateFileTrackerTest, MockupSt
 from tests.pipeline_tests_with_local_slurm import all_with_local_slurm
 from tests import pipeline_tests_with_slurm_arrays
 from tests.pipeline_tests_with_remote_slurm_arrays import CliTestsPipelineWithSlurmArrayRemote
+from tests.service_runner_tests import ServiceRunnerTest1
 
 
 #from tests.pipeline_tests_with_remote_slurm_arrays import CliTestsPipelineWithSlurmArrayRemote
@@ -32,7 +33,8 @@ def low_level_tests():
         all_low_level_tests_with_mockup_slurm(),
         TaskChangeTrackingTests,
         CliArrayTests1,
-        all_with_local_slurm()
+        all_with_local_slurm(),
+        ServiceRunnerTest1
     ]
 
 
