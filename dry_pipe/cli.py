@@ -207,13 +207,10 @@ class Cli:
             pipeline_instance = pipeline_instance_from_args()
             pipeline_instance.prepare_instance_dir()
             if not test_mode:
-                monitor = CliMonitor()
-            else:
-                monitor = None
+                pipeline_instance.monitor = CliMonitor()
 
             pipeline_instance.run(
                 until_patterns=self.parsed_args.until,
-                monitor=monitor,
                 restart_failed=self.parsed_args.restart_failed,
                 reset_failed=self.parsed_args.reset_failed
             )

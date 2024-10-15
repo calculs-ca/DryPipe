@@ -53,11 +53,11 @@ class BasePipelineTest(TestWithDirectorySandbox):
     def run_pipeline(self, until_patterns=None):
 
         pipeline_instance = self.create_pipeline_instance()
+        pipeline_instance.monitor=self.create_monitor()
 
         pipeline_instance.run_sync(
             until_patterns=until_patterns,
-            run_tasks_in_process=self.launches_tasks_in_process(),
-            monitor=self.create_monitor()
+            run_tasks_in_process=self.launches_tasks_in_process()
         )
 
         tasks_by_keys = {

@@ -15,6 +15,7 @@ class PipelineInstance:
         self.state_file_tracker = StateFileTracker(pipeline_instance_dir)
         if not self.state_file_tracker.instance_exists():
             self.prepare_instance_dir()
+        self.monitor = None
 
     def prepare_instance_dir(self):
         self.state_file_tracker.prepare_instance_dir({
@@ -22,17 +23,17 @@ class PipelineInstance:
             "__containers_dir": self.pipeline.containers_dir
         })
 
-    def run_sync(self, until_patterns=None, run_tasks_in_process=True, monitor=None):
-        self._run(until_patterns, run_tasks_in_process, True, monitor, [0, 0, 0, 1])
+    def run_sync(self, until_patterns=None, run_tasks_in_process=True):
+        self._run(until_patterns, run_tasks_in_process, True, [0, 0, 0, 1])
 
-    def run(self, until_patterns=None, monitor=None, restart_failed=False, reset_failed=False):
+    def run(self, until_patterns=None, restart_failed=False, reset_failed=False):
         self._run(
             until_patterns, False, False,
-            monitor, [0, 1, 5, 10], restart_failed, reset_failed
+            [0, 1, 5, 10], restart_failed, reset_failed
         )
 
     def _run(
-        self, until_patterns, run_tasks_in_process, run_tasks_sync, monitor, sleep_schedule,
+        self, until_patterns, run_tasks_in_process, run_tasks_sync, sleep_schedule,
         restart_failed=False, reset_failed=False
     ):
 
@@ -45,12 +46,6 @@ class PipelineInstance:
             until_patterns=until_patterns
         )
 
-        def mon():
-            if monitor is not None:
-                monitor.dump(
-                    state_machine.state_file_tracker.all_state_files()
-                )
-
         def iterate_work_rounds(restart_failed, reset_failed):
             try:
                 sleep_idx = 0
@@ -58,7 +53,7 @@ class PipelineInstance:
                 while True:
                     c = 0
                     for state_file in state_machine.iterate_tasks_to_launch(
-                            monitor=monitor, restart_failed=restart_failed, reset_failed=reset_failed
+                        monitor=self.monitor, restart_failed=restart_failed, reset_failed=reset_failed
                     ):
                         control_dir = state_file.control_dir()
                         as_subprocess = not run_tasks_in_process
@@ -80,6 +75,12 @@ class PipelineInstance:
             except AllRunnableTasksCompletedOrInError:
                 logger.info(f"no more tasks to launch")
                 yield None, None
+
+        def mon():
+            if self.monitor is not None:
+                self.monitor.dump(
+                    state_machine.state_file_tracker.all_state_files()
+                )
 
         for func, suggested_sleep in iterate_work_rounds(restart_failed, reset_failed):
             if func is not None:
