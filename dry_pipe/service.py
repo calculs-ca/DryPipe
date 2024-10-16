@@ -17,6 +17,18 @@ class RunningPipelineInstance:
             self.pipeline_instance.pipeline.task_generator
         )
 
+
+    def task_state_by_key(self, task_key):
+        for k, state_file in self.state_machine.state_file_tracker.state_files_in_memory.items():
+            if k == task_key:
+                return state_file
+
+    def instance_dir(self):
+        return self.pipeline_instance.state_file_tracker.pipeline_instance_dir
+
+    def state(self):
+        return Path(self.pipeline_state_file).name.split(".")[1]
+
     def _change_state(self, new_state):
         next_state = Path(self.pipeline_instance.state_file_tracker.pipeline_work_dir, new_state)
         os.rename(
@@ -41,7 +53,7 @@ class PipelineRunner:
         self.instances_dir_to_pipelines = instances_dir_to_pipelines
         self.run_sync = run_sync
         self.run_tasks_in_process = run_tasks_in_process
-        self.pipeline_instances = []
+        self.pipeline_instances = {}
         self.sleep_schedule = sleep_schedule
 
 
@@ -57,17 +69,18 @@ class PipelineRunner:
                 for state_file_path in Path(instances_dir).glob("*/.drypipe/state.*"):
 
                     state_file_path = Path(state_file_path).absolute()
-                    pipeline_state_file = os.path.basename(state_file_path)
 
-                    if pipeline_state_file.endswith(".ready"):
-                        rpi = RunningPipelineInstance(pipeline,state_file_path)
-                        self.pipeline_instances.append(rpi)
+                    pid = str(state_file_path.parent.parent.absolute())
+
+                    if pid not in self.pipeline_instances:
+
+                        rpi = RunningPipelineInstance(pipeline, state_file_path)
+                        self.pipeline_instances[pid] = rpi
                         rpi.set_running()
                         rpi.pipeline_instance.prepare_instance_dir()
-
                         work_done += 1
 
-            for running_pipeline_instance in self.pipeline_instances:
+            for _, running_pipeline_instance in self.pipeline_instances.items():
 
                 if running_pipeline_instance.is_running():
                     try:

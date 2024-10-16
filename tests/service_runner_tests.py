@@ -52,14 +52,20 @@ class TestPipeline:
 
 class ServiceRunnerTest1(TestWithDirectorySandbox2):
 
-    def test(self):
 
+    def create_runner_conf(self):
         def prepare(parent_dir, instance_name):
             instance_dir = Path(self.dir, parent_dir, instance_name)
-            instance_dir.mkdir(parents=True)
+            instance_dir.mkdir(parents=True, exist_ok=True)
             wd = instance_dir.joinpath(".drypipe")
-            wd.mkdir(parents=True)
-            wd.joinpath("state.ready").touch()
+            wd.mkdir(parents=True, exist_ok=True)
+
+            sf = list(wd.glob("state.*"))
+
+            if len(sf) == 0:
+                state_file = wd.joinpath("state.ready")
+                state_file.touch()
+
             return instance_dir
 
         prepare("a", "a1")
@@ -78,14 +84,17 @@ class ServiceRunnerTest1(TestWithDirectorySandbox2):
         b = TestPipeline(C())
         c = TestPipeline(PipelineWithVariablePassing())
 
-        d = {
+        return {
             str(Path(self.dir, "a")): a,
             str(Path(self.dir, "b")): b,
             str(Path(self.dir, "c")): c
         }
 
+
+    def test(self):
+
         pipeline_runner = PipelineRunner(
-            d,
+            self.create_runner_conf(),
             run_sync=True,
             run_tasks_in_process=True,
             sleep_schedule=[0, 0, 0,0,0,None]
