@@ -57,13 +57,13 @@ class ServiceRunnerTest1(TestWithDirectorySandbox2):
         def prepare(parent_dir, instance_name):
             instance_dir = Path(self.dir, parent_dir, instance_name)
             instance_dir.mkdir(parents=True, exist_ok=True)
-            wd = instance_dir.joinpath(".drypipe")
-            wd.mkdir(parents=True, exist_ok=True)
+            pipeline_work_dir = instance_dir.joinpath(".drypipe")
+            pipeline_work_dir.mkdir(parents=True, exist_ok=True)
 
-            sf = list(wd.glob("state.*"))
+            sf = list(pipeline_work_dir.glob("state.*"))
 
             if len(sf) == 0:
-                state_file = wd.joinpath("state.ready")
+                state_file = pipeline_work_dir.joinpath("state.ready")
                 state_file.touch()
 
             return instance_dir

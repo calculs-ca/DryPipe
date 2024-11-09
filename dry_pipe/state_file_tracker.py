@@ -164,6 +164,19 @@ class StateFileTracker:
 
                 yield task_key, task_control_dir, state_file_dir_entry
 
+    def load_all_task_states_from_disk(self):
+        for task_key, task_control_dir, state_file_dir_entry in self._iterate_all_tasks_from_disk(None):
+            yield task_key, os.path.basename(state_file_dir_entry)[6:]
+
+    def load_task_from_state_file(self, task_key):
+        state_file_path =  self._find_state_file_path_in_task_control_dir(task_key)
+
+        return iter(self._load_task_from_state_file(
+            task_key,
+            os.path.join(self.pipeline_work_dir, task_key),
+            state_file_path, True
+        )).__next__()
+
     def _load_task_from_state_file(self, task_key, task_control_dir, state_file_path, include_non_completed):
         if state_file_path.endswith("state.completed") or include_non_completed:
             from dry_pipe.task_process import TaskProcess

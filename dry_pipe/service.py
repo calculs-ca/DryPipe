@@ -6,7 +6,7 @@ from dry_pipe.state_machine import StateMachine, AllRunnableTasksCompletedOrInEr
 from dry_pipe.task_process import TaskProcess
 
 
-class RunningPipelineInstance:
+class PipelineInstanceAccessor:
 
     def __init__(self, pipeline, pipeline_state_file):
         self.pipeline = pipeline
@@ -19,9 +19,7 @@ class RunningPipelineInstance:
 
 
     def task_state_by_key(self, task_key):
-        for k, state_file in self.state_machine.state_file_tracker.state_files_in_memory.items():
-            if k == task_key:
-                return state_file
+        return self.state_machine.state_file_tracker.load_task_from_state_file(task_key)
 
     def instance_dir(self):
         return self.pipeline_instance.state_file_tracker.pipeline_instance_dir
@@ -56,6 +54,17 @@ class PipelineRunner:
         self.pipeline_instances = {}
         self.sleep_schedule = sleep_schedule
 
+    def iterate_pipelines_state_pids(self):
+        for instances_dir, pipeline in self.instances_dir_to_pipelines.items():
+            for state_file_path in Path(instances_dir).glob("*/.drypipe/state.*"):
+                state_file_path = Path(state_file_path).absolute()
+
+                bn = os.path.basename(state_file_path)
+                state = bn[6:]
+                pid = str(state_file_path.parent.parent.absolute())
+
+                yield pipeline, state, pid, state_file_path
+
 
     def iterate_work(self):
         sleep_idx = 0
@@ -64,21 +73,18 @@ class PipelineRunner:
 
             work_done = 0
 
-            for instances_dir, pipeline in self.instances_dir_to_pipelines.items():
+            for pipeline, state, pid, state_file_path in self.iterate_pipelines_state_pids():
 
-                for state_file_path in Path(instances_dir).glob("*/.drypipe/state.*"):
+                if state not in ["ready", "running"]: # "stopped", "not-ready"
+                    continue
 
-                    state_file_path = Path(state_file_path).absolute()
+                if pid not in self.pipeline_instances:
 
-                    pid = str(state_file_path.parent.parent.absolute())
-
-                    if pid not in self.pipeline_instances:
-
-                        rpi = RunningPipelineInstance(pipeline, state_file_path)
-                        self.pipeline_instances[pid] = rpi
-                        rpi.set_running()
-                        rpi.pipeline_instance.prepare_instance_dir()
-                        work_done += 1
+                    rpi = PipelineInstanceAccessor(pipeline, state_file_path)
+                    self.pipeline_instances[pid] = rpi
+                    rpi.set_running()
+                    rpi.pipeline_instance.prepare_instance_dir()
+                    work_done += 1
 
             for _, running_pipeline_instance in self.pipeline_instances.items():
 

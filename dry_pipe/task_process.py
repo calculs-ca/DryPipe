@@ -520,6 +520,9 @@ class TaskProcess:
             def control_dir(self):
                 return state_file.control_dir()
 
+            def glob_output(self, pattern):
+                return Path(state_file.output_dir()).glob(pattern)
+
         return ResolvedTask(self)
 
 
@@ -901,6 +904,23 @@ class TaskProcess:
 
         return resolved_path
 
+    def _resolve_script(self, script, env):
+
+        expanded_script_path = expandvars_from_dict(script, env)
+
+        if os.path.exists(expanded_script_path):
+            self.task_logger.debug("script: %s resolves to: %s", script, expanded_script_path)
+            return expanded_script_path
+
+        p = os.path.join(
+            env["__control_dir"],
+            os.path.basename(script)
+        )
+
+        self.task_logger.debug("script: %s resolves to: %s", script, p)
+
+        return p
+
     def run_script(self, script, container=None):
 
         def _root_dir(d):
@@ -919,10 +939,7 @@ class TaskProcess:
             ** self._local_copy_adjusted_file_env_vars()
         }
 
-        script = os.path.join(
-            env["__control_dir"],
-            os.path.basename(script)
-        )
+        script = self._resolve_script(script, env)
 
         has_var_outputs = self.outputs.has_var_outputs()
 
