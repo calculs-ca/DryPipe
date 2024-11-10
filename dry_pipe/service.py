@@ -1,3 +1,4 @@
+import json
 import os.path
 import time
 from pathlib import Path
@@ -44,6 +45,21 @@ class PipelineInstanceAccessor:
     def is_running(self):
         return str(self.pipeline_state_file).endswith(".running")
 
+    def load_conf_as_json(self):
+        return self.pipeline_instance.state_file_tracker.load_conf_as_json()
+
+    def args_as_json(self):
+        return self.pipeline_instance.state_file_tracker.load_args_as_json()
+
+    def update_args(self, key, value):
+        args = self.pipeline_instance.state_file_tracker.load_args_as_json()
+        if args is None:
+            args = {}
+
+        args[key] = value
+
+        self.pipeline_instance.state_file_tracker.save_args_as_json(args)
+
 
 class PipelineRunner:
 
@@ -53,6 +69,32 @@ class PipelineRunner:
         self.run_tasks_in_process = run_tasks_in_process
         self.pipeline_instances = {}
         self.sleep_schedule = sleep_schedule
+
+    def pipeline_instance_exists(self, instances_dir_basename, name):
+
+        for instances_dir, _ in self.instances_dir_to_pipelines.items():
+            if instances_dir.endswith(f"/{instances_dir_basename}"):
+                if Path(instances_dir, name).exists():
+                    return True
+
+        return False
+
+    def create_pipeline_instance(self, instances_dir_basename, name):
+
+        for instances_dir, _ in self.instances_dir_to_pipelines.items():
+            if instances_dir.endswith(f"/{instances_dir_basename}"):
+                p = Path(instances_dir, name)
+                if p.exists():
+                    raise Exception(f"pipeline already exists: {instances_dir}/{name}")
+                else:
+                    p.mkdir(exist_ok=False, parents=True)
+                    wd = Path(p, ".drypipe")
+                    wd.mkdir()
+                    Path(wd, "state.not-ready").touch()
+                    return {"pid": str(p)}
+
+        raise Exception(f"unknown instances dir basename {instances_dir_basename}")
+
 
     def iterate_pipelines_state_pids(self):
         for instances_dir, pipeline in self.instances_dir_to_pipelines.items():

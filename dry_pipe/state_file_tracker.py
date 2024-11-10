@@ -31,7 +31,7 @@ class StateFileTracker:
         Path(self.pipeline_instance_dir, "output").mkdir(
             exist_ok=True, mode=FileCreationDefaultModes.pipeline_instance_directories)
 
-        with open(Path(self.pipeline_work_dir, "conf.json"), "w") as conf_file:
+        with open(self.conf_file(), "w") as conf_file:
             conf_file.write(json.dumps(conf_dict, indent=4))
 
         src_dir_drypipe = os.path.dirname(__file__)
@@ -43,6 +43,29 @@ class StateFileTracker:
         for py_file in glob.glob(os.path.join(src_dir_drypipe, "*.py")):
             shutil.copy(py_file, dp_dir)
 
+    def conf_file(self):
+        return Path(self.pipeline_work_dir, "conf.json")
+
+    def args_file(self):
+        return Path(self.pipeline_work_dir, "args.json")
+
+    def load_conf_as_json(self):
+        if os.path.exists(self.conf_file()):
+            with open(self.conf_file()) as f:
+                return json.load(f)
+        else:
+            return None
+
+    def load_args_as_json(self):
+        if os.path.exists(self.args_file()):
+            with open(self.args_file()) as f:
+                return json.load(f)
+        else:
+            return None
+
+    def save_args_as_json(self, args):
+        with open(self.args_file(), "w") as f:
+            f.write(json.dumps(args, indent=4))
 
     def set_completed_on_disk(self, task_key):
         os.rename(
