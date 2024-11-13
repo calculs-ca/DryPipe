@@ -22,7 +22,7 @@ from dry_pipe.core_lib import UpstreamTasksNotCompleted, PortablePopen, func_fro
 from dry_pipe.task import TaskOutput, TaskInputs, TaskOutputs, TaskInput, FileSet
 from dry_pipe.task_lib import execute_remote_task
 
-APPTAINER_COMMAND = "singularity"
+APPTAINER_COMMAND = "apptainer"
 
 
 module_logger = logging.getLogger(__name__)
