@@ -7,7 +7,11 @@ from dry_pipe.pipeline import Pipeline
 
 
 @DryPipe.python_call()
-def multiply_by_x(x, y):
+def multiply_by_x(x, y, PYTHONPATH):
+
+    if not PYTHONPATH.endswith("/x/y"):
+        raise Exception(f"PYTHONPATH not right")
+
     return {
         "result": x * y
     }
@@ -78,9 +82,17 @@ class TestExtraEnvResolution(BasePipelineTest):
 class PipelineWithSinglePythonTask(BasePipelineTest):
 
     def dag_gen(self, dsl):
+        tc = self.task_conf()
+
+        if tc.extra_env is None:
+            tc.extra_env = {"PYTHONPATH": "/x/y"}
+        else:
+            pp = tc.extra_env["PYTHONPATH"]
+            tc.extra_env["PYTHONPATH"] = f"{pp}:/x/y"
+
         yield dsl.task(
             key="multiply_x_by_y",
-            task_conf=self.task_conf()
+            task_conf=tc
         ).inputs(
             x=3, y=4
         ).outputs(
@@ -478,6 +490,67 @@ class TestFileSet(BasePipelineTest):
                 for f in tasks_by_keys["t"].outputs.random_files
             }
         )
+
+
+
+@DryPipe.python_call()
+def test_python_path_env_var(__pipeline_instance_dir):
+    from a.b import c
+    res = c()
+    print(f"--->{res}")
+    return {
+        "r": res
+    }
+
+
+class TestPythonPathInExtraEnv(BasePipelineTest):
+
+    def init_pipeline_instance(self, pipeline_instance):
+
+        pid = pipeline_instance.state_file_tracker.pipeline_instance_dir
+
+        pp = Path(pid, "tmp")
+        pp.mkdir(exist_ok=False)
+        a_dir = Path(pp, "a")
+        a_dir.mkdir()
+        Path(a_dir, "__init__.py").touch()
+        with open(Path(a_dir, "b.py"), "w") as b:
+            b.write("\n")
+            b.write("def c():\n")
+            b.write("   return 4321\n")
+
+
+    def dag_gen(self, dsl):
+
+        pythonpath = Path(dsl.pipeline_instance_dir(), "tmp")
+        tc = self.task_conf()
+
+        tc.container = "singularity-test-container.sif"
+        tc.executer_type = "slurm"
+
+        tc.command_before_task = "export PYTHONPATH=/x/y"
+
+        if tc.extra_env is None:
+            tc.extra_env = {"PYTHONPATH": pythonpath}
+        else:
+            pp = tc.extra_env["PYTHONPATH"]
+            tc.extra_env["PYTHONPATH"] = f"{pp}:{pythonpath}"
+
+        yield dsl.task(
+            key="t1",
+            task_conf=tc
+        ).outputs(
+            r=int
+        ).calls(
+            test_python_path_env_var
+        )()
+
+
+    def validate(self, tasks_by_keys):
+        if "t1" not in tasks_by_keys:
+            raise Exception(f"task t1 did not succeed")
+        self.assertEqual(int(tasks_by_keys["t1"].outputs.r), 4321)
+
 
 
 def all_basic_tests():

@@ -1,4 +1,5 @@
 import json
+import logging
 import os.path
 import time
 from pathlib import Path
@@ -6,11 +7,13 @@ from pathlib import Path
 from dry_pipe.state_machine import StateMachine, AllRunnableTasksCompletedOrInError
 from dry_pipe.task_process import TaskProcess
 
+logger = logging.getLogger(__name__)
 
 class PipelineInstanceAccessor:
 
-    def __init__(self, pipeline, pipeline_state_file):
+    def __init__(self, pipeline, pipeline_state_file, validator):
         self.pipeline = pipeline
+        self.validator = validator
         self.pipeline_state_file = pipeline_state_file
         self.pipeline_instance = pipeline.create_pipeline_instance(Path(pipeline_state_file).parent.parent)
         self.state_machine = StateMachine(
@@ -35,6 +38,17 @@ class PipelineInstanceAccessor:
             next_state
         )
         self.pipeline_state_file = next_state
+
+    def start(self):
+
+        error_messages_by_error_code, _ = self.validator(self.instance_dir())
+
+        if bool(error_messages_by_error_code):
+            return {"status": "error", "error_messages_by_error_code": error_messages_by_error_code}
+
+        self._change_state("state.ready")
+
+        return {"status": "ok"}
 
     def set_running(self):
         self._change_state("state.running")
@@ -63,8 +77,14 @@ class PipelineInstanceAccessor:
 
 class PipelineRunner:
 
-    def __init__(self, instances_dir_to_pipelines, run_sync=False, run_tasks_in_process=False, sleep_schedule = [0, 0, 0, 1, 5]):
-        self.instances_dir_to_pipelines = instances_dir_to_pipelines
+    def __init__(self, config_generator, run_sync=False, run_tasks_in_process=False, sleep_schedule = [0, 0, 0, 1, 5]):
+
+
+        self.instances_dir_to_pipelines = {
+            instances_dir: (pipeline, validator)
+            for instances_dir, pipeline, validator in config_generator
+        }
+
         self.run_sync = run_sync
         self.run_tasks_in_process = run_tasks_in_process
         self.pipeline_instances = {}
@@ -97,7 +117,10 @@ class PipelineRunner:
 
 
     def iterate_pipelines_state_pids(self):
-        for instances_dir, pipeline in self.instances_dir_to_pipelines.items():
+        for instances_dir, pipeline_and_validator in self.instances_dir_to_pipelines.items():
+
+            pipeline, validator = pipeline_and_validator
+
             for state_file_path in Path(instances_dir).glob("*/.drypipe/state.*"):
                 state_file_path = Path(state_file_path).absolute()
 
@@ -105,7 +128,7 @@ class PipelineRunner:
                 state = bn[6:]
                 pid = str(state_file_path.parent.parent.absolute())
 
-                yield pipeline, state, pid, state_file_path
+                yield pipeline, state, pid, state_file_path, validator
 
 
     def iterate_work(self):
@@ -115,20 +138,20 @@ class PipelineRunner:
 
             work_done = 0
 
-            for pipeline, state, pid, state_file_path in self.iterate_pipelines_state_pids():
+            for pipeline, state, pid, state_file_path, validator in self.iterate_pipelines_state_pids():
 
                 if state not in ["ready", "running"]: # "stopped", "not-ready"
                     continue
 
                 if pid not in self.pipeline_instances:
 
-                    rpi = PipelineInstanceAccessor(pipeline, state_file_path)
+                    rpi = PipelineInstanceAccessor(pipeline, state_file_path, validator)
                     self.pipeline_instances[pid] = rpi
                     rpi.set_running()
                     rpi.pipeline_instance.prepare_instance_dir()
                     work_done += 1
 
-            for _, running_pipeline_instance in self.pipeline_instances.items():
+            for pid, running_pipeline_instance in self.pipeline_instances.items():
 
                 if running_pipeline_instance.is_running():
                     try:
@@ -139,11 +162,14 @@ class PipelineRunner:
                                 as_subprocess=not self.run_tasks_in_process,
                                 wait_for_completion=self.run_sync
                             )
+                            logger.info("will launch %", tp.task_key)
                             tp.run(by_pipeline_runner=True)
                             work_done += 1
                     except AllRunnableTasksCompletedOrInError:
                         running_pipeline_instance.set_stopped()
                         work_done += 1
+                    except Exception as ex:
+                        logger.error("Error in pipeline instance %s", pid, exc_info=ex)
 
             if work_done > 0:
                 sleep_idx = 0
@@ -162,5 +188,6 @@ class PipelineRunner:
             if suggested_sleep is None:
                 break
             elif suggested_sleep > 0:
+                logger.debug("will sleep %s", suggested_sleep)
                 time.sleep(suggested_sleep)
 

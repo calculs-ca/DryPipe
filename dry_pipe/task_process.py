@@ -116,10 +116,8 @@ class TaskProcess:
 
             self.task_logger.debug(f"done iterating env")
 
-            command_before_task = self.task_conf.command_before_task
-
-            if command_before_task is not None:
-                self.exec_cmd_before_launch(command_before_task)
+            if self.task_conf.command_before_task is not None:
+                self.exec_cmd_before_launch(self.task_conf.command_before_task)
 
             self.task_logger.debug(f"normal TaskProcess constructor end")
         except Exception as ex:
@@ -293,8 +291,11 @@ class TaskProcess:
 
         pythonpath_in_env = os.environ.get("PYTHONPATH")
 
+        print(f"---> {pythonpath_in_env}")
+
         if pythonpath_in_env is not None:
             for p in pythonpath_in_env.split(":"):
+                print(f"ls {p}")
                 if not os.path.exists(p):
                     msg = f"WARNING: path {p} in PYTHONPATH does not exist, if running in apptainer, ensure proper mount"
                     print(msg, file=sys.stderr)
@@ -730,6 +731,8 @@ class TaskProcess:
 
     def exec_cmd_before_launch(self, command_before_task):
 
+        pythonpath_b4 = self.env.get("PYTHONPATH")
+
         p = os.path.abspath(sys.executable)
 
         dump_with_python_script = f'{p} -c "import os, json; print(json.dumps(dict(os.environ)))"'
@@ -746,6 +749,12 @@ class TaskProcess:
             out = p.stdout_as_string()
             env = json.loads(out)
             for k, v in env.items():
+                if k == "PYTHONPATH":
+                    if v is None or v == "":
+                        break
+                    if pythonpath_b4 is not None and pythonpath_b4 != "":
+                        v = f"{v}:{pythonpath_b4}"
+
                 self.env[k] = v
 
     def read_task_state(self, control_dir=None, state_file=None, non_existant_ok=False):

@@ -47,7 +47,7 @@ class StateFileTracker:
         return Path(self.pipeline_work_dir, "conf.json")
 
     def args_file(self):
-        return Path(self.pipeline_work_dir, "args.json")
+        return Path(self.pipeline_instance_dir, "args.json")
 
     def load_conf_as_json(self):
         if os.path.exists(self.conf_file()):
