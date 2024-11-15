@@ -520,25 +520,20 @@ class TestPythonPathInExtraEnv(BasePipelineTest):
             b.write("   return 4321\n")
 
 
+    def task_conf(self):
+        return TaskConf(
+            executer_type="process",
+            command_before_task="export PYTHONPATH=/x/y",
+            extra_env={
+                "PYTHONPATH": os.path.join(self.pipeline_instance_dir, "tmp")
+            }
+        )
+
     def dag_gen(self, dsl):
-
-        pythonpath = Path(dsl.pipeline_instance_dir(), "tmp")
-        tc = self.task_conf()
-
-        tc.container = "singularity-test-container.sif"
-        tc.executer_type = "slurm"
-
-        tc.command_before_task = "export PYTHONPATH=/x/y"
-
-        if tc.extra_env is None:
-            tc.extra_env = {"PYTHONPATH": pythonpath}
-        else:
-            pp = tc.extra_env["PYTHONPATH"]
-            tc.extra_env["PYTHONPATH"] = f"{pp}:{pythonpath}"
 
         yield dsl.task(
             key="t1",
-            task_conf=tc
+            task_conf=self.task_conf()
         ).outputs(
             r=int
         ).calls(
@@ -553,6 +548,17 @@ class TestPythonPathInExtraEnv(BasePipelineTest):
 
 
 
+class TestPythonPathInExtraEnv2(TestPythonPathInExtraEnv):
+
+    def task_conf(self):
+        return TaskConf(
+            executer_type="process",
+            command_before_task="export PYTHONPATH=",
+            extra_env={
+                "PYTHONPATH": os.path.join(self.pipeline_instance_dir, "tmp")
+            }
+        )
+
 def all_basic_tests():
     return [
         TestExtraEnvResolution,
@@ -566,7 +572,9 @@ def all_basic_tests():
         PipelineWithSingleBashTask,
         PipelineWithVarAndFileOutput,
         PipelineWithVarSharingBetweenSteps,
-        PipelineWith4MixedStepsPythonCrash
+        PipelineWith4MixedStepsPythonCrash,
+        TestPythonPathInExtraEnv,
+        TestPythonPathInExtraEnv2
     ]
 
 def all_tests_in_containers():
