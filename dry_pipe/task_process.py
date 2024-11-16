@@ -367,9 +367,9 @@ class TaskProcess:
         self.task_logger.info(log_msg)
 
         with open(os.path.join(self.control_dir, "out.log"), mode="a") as out:
-            out.write(f"================ {func_log} ====================")
+            out.write(f"================ {func_log} ====================\n")
             out.write(log_msg)
-            out.write("=================================================\n")
+            out.write("\n=================================================\n")
 
         try:
             out_vars = python_call.func(* args, ** kwargs)

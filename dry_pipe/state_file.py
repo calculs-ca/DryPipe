@@ -71,6 +71,9 @@ class StateFile:
     def is_crashed(self):
         return fnmatch.fnmatch(self.path, "*/state.crashed.*")
 
+    def is_killed(self):
+        return fnmatch.fnmatch(self.path, "*/state.killed.*")
+
     def is_timed_out(self):
         return fnmatch.fnmatch(self.path, "*/state.timed-out.*")
 

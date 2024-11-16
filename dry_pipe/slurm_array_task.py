@@ -333,7 +333,7 @@ class SlurmArrayParentTask:
             elif state_file.is_ready():
                 yield state_file
                 i += 1
-            elif restart_failed and (state_file.is_failed() or state_file.is_timed_out()):
+            elif restart_failed and (state_file.is_failed() or state_file.is_timed_out() or state_file.is_killed()):
                 self.tracker.register_pre_launch(state_file, restart_failed)
                 yield state_file
                 i += 1
