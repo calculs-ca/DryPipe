@@ -732,6 +732,7 @@ class TaskProcess:
     def exec_cmd_before_launch(self, command_before_task):
 
         pythonpath_b4 = self.env.get("PYTHONPATH")
+        apptainer_bind_b4 = self.env.get("APPTAINER_BIND")
 
         p = os.path.abspath(sys.executable)
 
@@ -754,7 +755,11 @@ class TaskProcess:
                         break
                     if pythonpath_b4 is not None and pythonpath_b4 != "":
                         v = f"{v}:{pythonpath_b4}"
-
+                elif k == "APPTAINER_BIND":
+                    if v is None or v == "":
+                        break
+                    if apptainer_bind_b4 is not None and apptainer_bind_b4 != "":
+                        v = f"{v},{apptainer_bind_b4}"
                 self.env[k] = v
 
     def read_task_state(self, control_dir=None, state_file=None, non_existant_ok=False):
