@@ -750,6 +750,7 @@ class TaskProcess:
             out = p.stdout_as_string()
             env = json.loads(out)
             for k, v in env.items():
+                v0 = v
                 if k == "PYTHONPATH":
                     if v is None or v == "":
                         break
@@ -760,6 +761,10 @@ class TaskProcess:
                         break
                     if apptainer_bind_b4 is not None and apptainer_bind_b4 != "":
                         v = f"{v},{apptainer_bind_b4}"
+                v1 = v
+
+                self.task_logger.debug("env var %s override %s  -> %s: ", k, v0, v1)
+
                 self.env[k] = v
 
     def read_task_state(self, control_dir=None, state_file=None, non_existant_ok=False):
