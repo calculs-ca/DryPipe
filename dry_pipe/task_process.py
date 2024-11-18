@@ -291,8 +291,6 @@ class TaskProcess:
 
         pythonpath_in_env = os.environ.get("PYTHONPATH")
 
-        print(f"---> {pythonpath_in_env}")
-
         if pythonpath_in_env is not None:
             for p in pythonpath_in_env.split(":"):
                 print(f"ls {p}")
@@ -643,6 +641,8 @@ class TaskProcess:
                 self.resolve_container_path(container)
             ] + cmd
 
+            self._set_apptainer_bind_in_env(env)
+
         has_failed = False
 
         self.task_logger.info("run_python: %s", ' '.join(cmd))
@@ -932,17 +932,6 @@ class TaskProcess:
 
     def run_script(self, script, container=None):
 
-        def _root_dir(d):
-            p = Path(d)
-            return os.path.join(p.parts[0], p.parts[1])
-
-        def _fs_type(file):
-
-            stat_cmd = f"stat -f -L -c %T {file}"
-            with PortablePopen(stat_cmd.split()) as p:
-                p.wait_and_raise_if_non_zero()
-                return p.stdout_as_string().strip()
-
         env = {
             ** self.env,
             ** self._local_copy_adjusted_file_env_vars()
@@ -969,35 +958,7 @@ class TaskProcess:
                 self.resolve_container_path(container),
             ] + cmd
 
-            apptainer_bindings = []
-
-            root_dir_of_script = _root_dir(script)
-
-            if _fs_type(root_dir_of_script) in ["autofs", "nfs", "zfs"]:
-                apptainer_bindings.append(f"{root_dir_of_script}:{root_dir_of_script}")
-
-            slurm_tmpdir = os.environ.get("SLURM_TMPDIR")
-            if slurm_tmpdir is not None:
-                root_of_scratch_dir = _root_dir(slurm_tmpdir)
-                apptainer_bindings.append(f"{root_of_scratch_dir}:{root_of_scratch_dir}")
-
-            if len(apptainer_bindings) > 0:
-
-                prev_apptainer_bindings = env.get("APPTAINER_BIND")
-
-                if prev_apptainer_bindings is not None and prev_apptainer_bindings != "":
-                    bindings_prefix = f"{prev_apptainer_bindings},"
-                else:
-                    bindings_prefix = ""
-
-                env["APPTAINER_BIND"] = f"{bindings_prefix}{','.join(apptainer_bindings)}"
-
-            new_bind = env.get("APPTAINER_BIND")
-            if new_bind is not None:
-                self.task_logger.info("APPTAINER_BIND not set")
-            else:
-                self.task_logger.info("APPTAINER_BIND=%s", new_bind)
-
+        self._set_apptainer_bind_in_env(env)
 
         self.task_logger.info("run_script: %s", " ".join(cmd))
 
@@ -1382,6 +1343,49 @@ class TaskProcess:
                     rsync_list_file.write(f)
                     rsync_list_file.write(f"\n")
                     c += 1
+
+    def _set_apptainer_bind_in_env(self, env, script=None):
+
+        def _root_dir(d):
+            p = Path(d)
+            return os.path.join(p.parts[0], p.parts[1])
+
+        def _fs_type(file):
+
+            stat_cmd = f"stat -f -L -c %T {file}"
+            with PortablePopen(stat_cmd.split()) as p:
+                p.wait_and_raise_if_non_zero()
+                return p.stdout_as_string().strip()
+
+        apptainer_bindings = []
+
+        if script is not None:
+            root_dir_of_script = _root_dir(script)
+
+            if _fs_type(root_dir_of_script) in ["autofs", "nfs", "zfs"]:
+                apptainer_bindings.append(f"{root_dir_of_script}:{root_dir_of_script}")
+
+        slurm_tmpdir = os.environ.get("SLURM_TMPDIR")
+        if slurm_tmpdir is not None:
+            root_of_scratch_dir = _root_dir(slurm_tmpdir)
+            apptainer_bindings.append(f"{root_of_scratch_dir}:{root_of_scratch_dir}")
+
+        if len(apptainer_bindings) > 0:
+
+            prev_apptainer_bindings = env.get("APPTAINER_BIND")
+
+            if prev_apptainer_bindings is not None and prev_apptainer_bindings != "":
+                bindings_prefix = f"{prev_apptainer_bindings},"
+            else:
+                bindings_prefix = ""
+
+            env["APPTAINER_BIND"] = f"{bindings_prefix}{','.join(apptainer_bindings)}"
+
+        new_bind = env.get("APPTAINER_BIND")
+        if new_bind is not None:
+            self.task_logger.info("APPTAINER_BIND not set")
+        else:
+            self.task_logger.info("APPTAINER_BIND=%s", new_bind)
 
 
 def tail_file(file, delay=1.0):
