@@ -758,10 +758,7 @@ class TaskProcess:
                     if pythonpath_b4 is not None and pythonpath_b4 != "":
                         v = f"{v}:{pythonpath_b4}"
                 elif k == "APPTAINER_BIND":
-                    if v is None or v == "":
-                        break
-                    if apptainer_bind_b4 is not None and apptainer_bind_b4 != "":
-                        v = f"{v},{apptainer_bind_b4}"
+                    v = apptainer_bind_b4
                 v1 = v
 
                 self.task_logger.debug("env var %s override %s  -> %s: ", k, v0, v1)
