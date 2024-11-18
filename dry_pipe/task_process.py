@@ -659,6 +659,7 @@ class TaskProcess:
         sub_process_env["PYTHONPATH"] = ":".join(sub_process_pythonpath)
 
         self.task_logger.info("PYTHONPATH: %s", sub_process_env["PYTHONPATH"])
+        self.task_logger.info("APPTAINER_BIND: %s", sub_process_env.get("APPTAINER_BIND"))
 
         with open(env['__out_log'], 'a') as out:
             with open(env['__err_log'], 'a') as err:
