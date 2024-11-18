@@ -524,15 +524,17 @@ class TaskConf:
         if self.run_as_group is not None:
             yield self.run_as_group
 
+
+    def as_json(self):
+        return dict(
+            (key, value)
+            for key, value in self.__dict__.items() if not callable(value) and not key.startswith('__')
+        )
+
     def save_as_json(self, control_dir, digest):
-        def as_json():
-            return dict(
-                (key, value)
-                for key, value in self.__dict__.items() if not callable(value) and not key.startswith('__')
-            )
 
         with open(os.path.join(control_dir, "task-conf.json"), "w") as tc_file:
-            d = as_json()
+            d = self.as_json()
             d = {
                 "digest": digest,
                 **d

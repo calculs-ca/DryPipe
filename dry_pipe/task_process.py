@@ -93,6 +93,10 @@ class TaskProcess:
 
             self._override_task_confs_if_applicable()
 
+            if self.task_logger.isEnabledFor(logging.DEBUG):
+                task_conf_dump = json.dumps(self.task_conf.as_json(), indent=2)
+                self.task_logger.debug("task conf: %s", task_conf_dump)
+
             module_logger.debug(
                 f"TaskProcess(%s, as_subprocess=%s, wait_for_completion=%s)",
                 self.task_key, self.as_subprocess, self.wait_for_completion
