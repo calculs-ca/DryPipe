@@ -40,7 +40,7 @@ class PipelineInstanceAccessor:
 
     def start(self):
 
-        error_messages_by_error_code, _ = self.validator(self.instance_dir())
+        error_messages_by_error_code, _ = self.pipeline_type.validator(self.instance_dir())
 
         if bool(error_messages_by_error_code):
             return {"status": "error", "error_messages_by_error_code": error_messages_by_error_code}
