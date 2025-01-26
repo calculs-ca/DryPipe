@@ -92,3 +92,19 @@ class Pipeline:
     def create_pipeline_instance(self, pipeline_instance_dir):
         return PipelineInstance(self, pipeline_instance_dir)
 
+
+class PipelineType:
+
+    def __init__(self, name, pipeline, validator, spartan_schema, default_args):
+        self.name = name
+        self.pipeline = pipeline
+        self.validator = validator
+        self.spartan_schema = spartan_schema
+        self.default_args = default_args
+
+    def as_dict(self):
+        return {
+            "name": self.name,
+            "spartan_schema": self.spartan_schema,
+            "default_args" : self.default_args
+        }

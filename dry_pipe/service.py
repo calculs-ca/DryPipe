@@ -11,11 +11,10 @@ logger = logging.getLogger(__name__)
 
 class PipelineInstanceAccessor:
 
-    def __init__(self, pipeline, pipeline_state_file, validator):
-        self.pipeline = pipeline
-        self.validator = validator
+    def __init__(self, pipeline_type, pipeline_state_file):
+        self.pipeline_type= pipeline_type
         self.pipeline_state_file = pipeline_state_file
-        self.pipeline_instance = pipeline.create_pipeline_instance(Path(pipeline_state_file).parent.parent)
+        self.pipeline_instance = pipeline_type.pipeline.create_pipeline_instance(Path(pipeline_state_file).parent.parent)
         self.state_machine = StateMachine(
             self.pipeline_instance.state_file_tracker,
             self.pipeline_instance.pipeline.task_generator
@@ -65,14 +64,11 @@ class PipelineInstanceAccessor:
     def args_as_json(self):
         return self.pipeline_instance.state_file_tracker.load_args_as_json()
 
-    def update_args(self, key, value):
-        args = self.pipeline_instance.state_file_tracker.load_args_as_json()
-        if args is None:
-            args = {}
+    def update_args(self, json_args):
 
-        args[key] = value
+        self.pipeline_type.validator(json_args)
 
-        self.pipeline_instance.state_file_tracker.save_args_as_json(args)
+        self.pipeline_instance.state_file_tracker.save_args_as_json(json_args)
 
 
 class PipelineRunner:
@@ -80,9 +76,9 @@ class PipelineRunner:
     def __init__(self, config_generator, run_sync=False, run_tasks_in_process=False, sleep_schedule = [0, 0, 0, 1, 5]):
 
 
-        self.instances_dir_to_pipelines = {
-            instances_dir: (pipeline, validator)
-            for instances_dir, pipeline, validator in config_generator
+        self.instances_dir_to_pipeline_types = {
+            instances_dir: pipeline_type
+            for instances_dir, pipeline_type in config_generator
         }
 
         self.run_sync = run_sync
@@ -92,16 +88,15 @@ class PipelineRunner:
 
     def pipeline_instance_exists(self, instances_dir_basename, name):
 
-        for instances_dir, _ in self.instances_dir_to_pipelines.items():
+        for instances_dir, _ in self.instances_dir_to_pipeline_types.items():
             if instances_dir.endswith(f"/{instances_dir_basename}"):
                 if Path(instances_dir, name).exists():
                     return True
 
         return False
 
-    def create_pipeline_instance(self, instances_dir_basename, name):
-
-        for instances_dir, _ in self.instances_dir_to_pipelines.items():
+    def create_pipeline_instance(self, instances_dir_basename, name, args):
+        for instances_dir, _ in self.instances_dir_to_pipeline_types.items():
             if instances_dir.endswith(f"/{instances_dir_basename}"):
                 p = Path(instances_dir, name)
                 if p.exists():
@@ -111,15 +106,34 @@ class PipelineRunner:
                     wd = Path(p, ".drypipe")
                     wd.mkdir()
                     Path(wd, "state.not-ready").touch()
+                    with open(Path(p, "args.json"), "w") as f:
+                        json.dump(args, f, indent=4, sort_keys=True)
+
                     return {"pid": str(p)}
 
         raise Exception(f"unknown instances dir basename {instances_dir_basename}")
 
+    def get_pipeline_types(self):
+
+        def g():
+            for instances_dir, pipeline_type in self.instances_dir_to_pipeline_types.items():
+                yield {
+                    **pipeline_type.as_dict(),
+                    "instances_dir": instances_dir,
+                    "instances_dir_basename": Path(instances_dir).name,
+                }
+
+        return list(g())
+
+    def get_parent_instances_dir(self, path):
+        for instances_dir, pipeline_and_validator in self.instances_dir_to_pipeline_types.items():
+            if Path(path).is_relative_to(instances_dir):
+                return Path(instances_dir, Path(path).name)
+
+        return None
 
     def iterate_pipelines_state_pids(self):
-        for instances_dir, pipeline_and_validator in self.instances_dir_to_pipelines.items():
-
-            pipeline, validator = pipeline_and_validator
+        for instances_dir, pipeline_type in self.instances_dir_to_pipeline_types.items():
 
             for state_file_path in Path(instances_dir).glob("*/.drypipe/state.*"):
                 state_file_path = Path(state_file_path).absolute()
@@ -128,7 +142,7 @@ class PipelineRunner:
                 state = bn[6:]
                 pid = str(state_file_path.parent.parent.absolute())
 
-                yield pipeline, state, pid, state_file_path, validator
+                yield pipeline_type, state, pid, state_file_path
 
 
     def iterate_work(self):
@@ -138,14 +152,14 @@ class PipelineRunner:
 
             work_done = 0
 
-            for pipeline, state, pid, state_file_path, validator in self.iterate_pipelines_state_pids():
+            for pipeline_type, state, pid, state_file_path in self.iterate_pipelines_state_pids():
 
                 if state not in ["ready", "running"]: # "stopped", "not-ready"
                     continue
 
                 if pid not in self.pipeline_instances:
 
-                    rpi = PipelineInstanceAccessor(pipeline, state_file_path, validator)
+                    rpi = PipelineInstanceAccessor(pipeline_type, state_file_path)
                     self.pipeline_instances[pid] = rpi
                     rpi.set_running()
                     rpi.pipeline_instance.prepare_instance_dir()
