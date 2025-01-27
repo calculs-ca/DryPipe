@@ -1394,7 +1394,7 @@ class TaskProcess:
             env["APPTAINER_BIND"] = f"{bindings_prefix}{','.join(apptainer_bindings)}"
 
         new_bind = env.get("APPTAINER_BIND")
-        if new_bind is not None:
+        if new_bind is None:
             self.task_logger.info("APPTAINER_BIND not set")
         else:
             self.task_logger.info("APPTAINER_BIND=%s", new_bind)
