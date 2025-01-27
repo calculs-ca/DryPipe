@@ -930,7 +930,7 @@ class TaskProcess:
         expanded_script_path = expandvars_from_dict(script, env)
 
         if os.path.exists(expanded_script_path):
-            self.task_logger.debug("script: %s resolves to: %s", script, expanded_script_path)
+            self.task_logger.debug("expanded script: %s resolves to: %s", script, expanded_script_path)
             return expanded_script_path
 
         p = os.path.join(
