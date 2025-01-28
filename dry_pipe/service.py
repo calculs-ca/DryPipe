@@ -184,12 +184,12 @@ class PipelineRunner:
 
             for pid, running_pipeline_instance in self.pipeline_instances.items():
 
-                if running_pipeline_instance.is_running():
+                def check_completed():
+                    if running_pipeline_instance.check_if_completed():
+                        running_pipeline_instance.set_completed()
+                        return True
 
-                    def check_completed():
-                        if running_pipeline_instance.check_if_completed():
-                            running_pipeline_instance.set_completed()
-                            return True
+                if running_pipeline_instance.is_running():
 
                     try:
                         for state_file in running_pipeline_instance.state_machine.iterate_tasks_to_launch():
@@ -209,6 +209,10 @@ class PipelineRunner:
                         work_done += 1
                     except Exception as ex:
                         logger.error("Error in pipeline instance %s", pid, exc_info=ex)
+
+                else:
+                    if not running_pipeline_instance.is_completed():
+                        check_completed()
 
             if work_done > 0:
                 sleep_idx = 0
