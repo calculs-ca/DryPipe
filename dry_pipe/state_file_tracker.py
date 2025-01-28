@@ -33,6 +33,7 @@ class StateFileTracker:
 
         with open(self.conf_file(), "w") as conf_file:
             conf_file.write(json.dumps(conf_dict, indent=4))
+            conf_file.flush()
 
         src_dir_drypipe = os.path.dirname(__file__)
 
