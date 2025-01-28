@@ -544,7 +544,11 @@ class TaskProcess:
             pipeline_conf = Path(self.pipeline_work_dir, "conf.json")
             if os.path.exists(pipeline_conf):
                 with open(pipeline_conf) as pc:
-                    pipeline_conf_json = json.loads(pc.read())
+                    s = pc.read()
+                    try:
+                        pipeline_conf_json = json.loads(s)
+                    except json.decoder.JSONDecodeError:
+                        raise Exception(f"bad JSON in config file {pipeline_conf}: '{s}'")
 
                     def en_vars_in_pipeline(*var_names):
                         for name in var_names:
