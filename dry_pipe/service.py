@@ -55,8 +55,14 @@ class PipelineInstanceAccessor:
     def set_stopped(self):
         self._change_state("state.stopped")
 
+    def set_completed(self):
+        self._change_state("state.completed")
+
     def is_running(self):
         return str(self.pipeline_state_file).endswith(".running")
+
+    def is_completed(self):
+        return str(self.pipeline_state_file).endswith(".completed")
 
     def load_conf_as_json(self):
         return self.pipeline_instance.state_file_tracker.load_conf_as_json()
@@ -69,6 +75,17 @@ class PipelineInstanceAccessor:
         self.pipeline_type.validator(json_args)
 
         self.pipeline_instance.state_file_tracker.save_args_as_json(json_args)
+
+    def check_if_completed(self):
+        if self.pipeline_type.complete_func is None:
+            return None
+
+        for res, it in self.pipeline_type.complete_func(
+            self.pipeline_instance.pipeline_instance_dir()
+        ):
+            return res
+
+        return False
 
 
 class PipelineRunner:
@@ -154,7 +171,7 @@ class PipelineRunner:
 
             for pipeline_type, state, pid, state_file_path in self.iterate_pipelines_state_pids():
 
-                if state not in ["ready", "running"]: # "stopped", "not-ready"
+                if state not in ["ready", "running"]: # "stopped", "not-ready", "completed"
                     continue
 
                 if pid not in self.pipeline_instances:
@@ -168,6 +185,12 @@ class PipelineRunner:
             for pid, running_pipeline_instance in self.pipeline_instances.items():
 
                 if running_pipeline_instance.is_running():
+
+                    def check_completed():
+                        if running_pipeline_instance.check_if_completed():
+                            running_pipeline_instance.set_completed()
+                            return True
+
                     try:
                         for state_file in running_pipeline_instance.state_machine.iterate_tasks_to_launch():
                             control_dir = state_file.control_dir()
@@ -179,8 +202,10 @@ class PipelineRunner:
                             logger.info("will launch %", tp.task_key)
                             tp.run(by_pipeline_runner=True)
                             work_done += 1
+                            check_completed()
                     except AllRunnableTasksCompletedOrInError:
-                        running_pipeline_instance.set_stopped()
+                        if not check_completed():
+                            running_pipeline_instance.set_stopped()
                         work_done += 1
                     except Exception as ex:
                         logger.error("Error in pipeline instance %s", pid, exc_info=ex)

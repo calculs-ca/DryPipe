@@ -17,6 +17,9 @@ class PipelineInstance:
             self.prepare_instance_dir()
         self.monitor = None
 
+    def pipeline_instance_dir(self):
+        return self.state_file_tracker.pipeline_instance_dir
+
     def prepare_instance_dir(self):
         self.state_file_tracker.prepare_instance_dir({
             "__pipeline_code_dir": self.pipeline.pipeline_code_dir,
