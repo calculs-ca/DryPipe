@@ -72,9 +72,18 @@ class PipelineInstanceAccessor:
 
     def update_args(self, json_args):
 
-        self.pipeline_type.validator(json_args)
+        #self.pipeline_type.validator(json_args, self.pipeline_instance.pipeline_instance_dir())
 
         self.pipeline_instance.state_file_tracker.save_args_as_json(json_args)
+
+    def completed_files(self):
+        if self.pipeline_type.complete_func is None:
+            return []
+
+        for res, it in self.pipeline_type.complete_func(
+            self.pipeline_instance.pipeline_instance_dir()
+        ):
+            return list(it)
 
     def check_if_completed(self):
         if self.pipeline_type.complete_func is None:
