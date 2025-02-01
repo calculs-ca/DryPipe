@@ -33,8 +33,11 @@ class StateFileTracker:
 
         latest_json_conf = json.dumps(conf_dict, indent=4)
 
-        with open(self.conf_file()) as cf1:
-            saved_json_conf = json.dumps(json.loads(cf1.read()), indent=4)
+        if os.path.exists(self.conf_file()):
+            with open(self.conf_file()) as cf1:
+                saved_json_conf = json.dumps(json.loads(cf1.read()), indent=4)
+        else:
+            saved_json_conf = "..."
 
         if latest_json_conf != saved_json_conf:
 
