@@ -31,9 +31,16 @@ class StateFileTracker:
         Path(self.pipeline_instance_dir, "output").mkdir(
             exist_ok=True, mode=FileCreationDefaultModes.pipeline_instance_directories)
 
-        with open(self.conf_file(), "w") as conf_file:
-            conf_file.write(json.dumps(conf_dict, indent=4))
-            conf_file.flush()
+        latest_json_conf = json.dumps(conf_dict, indent=4)
+
+        with open(self.conf_file()) as cf1:
+            saved_json_conf = json.dumps(json.loads(cf1.read()), indent=4)
+
+        if latest_json_conf != saved_json_conf:
+
+            with open(self.conf_file(), "w") as conf_file:
+                conf_file.write(latest_json_conf)
+                conf_file.flush()
 
         src_dir_drypipe = os.path.dirname(__file__)
 
