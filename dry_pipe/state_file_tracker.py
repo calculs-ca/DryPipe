@@ -200,7 +200,7 @@ class StateFileTracker:
 
     def load_all_task_states_from_disk(self):
         for task_key, task_control_dir, state_file_dir_entry in self._iterate_all_tasks_from_disk(None):
-            yield task_key, os.path.basename(state_file_dir_entry)[6:]
+            yield task_key, os.path.basename(state_file_dir_entry)[6:], task_control_dir
 
     def load_task_from_state_file(self, task_key):
         state_file_path =  self._find_state_file_path_in_task_control_dir(task_key)
