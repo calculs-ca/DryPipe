@@ -3,8 +3,9 @@ import shutil
 import unittest
 from pathlib import Path
 
-from dry_pipe.pipeline import Pipeline
+from dry_pipe.pipeline import Pipeline, PipelineType
 from dry_pipe.service import PipelineRunner
+from tests.pipeline_tests_with_local_slurm import python_path_for_tests
 from tests.pipeline_tests_with_multiple_tasks import PipelineWithVariablePassing
 from tests.pipeline_tests_with_single_tasks import PipelineWithSingleBashTask, PipelineWithSinglePythonTask
 
@@ -39,11 +40,11 @@ class TestPipeline:
         return self.pipeline_instance
 
 
-    def validate_pipeline_instance(self):
+    def validate_pipeline_instance(self, pipeline_instance):
 
         tasks_by_keys = {
             t.key: t
-            for t in self.pipeline_instance.query("*")
+            for t in pipeline_instance.query("*")
         }
 
         self.base_pipeline_test.validate(tasks_by_keys)
@@ -78,17 +79,19 @@ class ServiceRunnerTest1(TestWithDirectorySandbox2):
 
         class C(PipelineWithSinglePythonTask):
             def task_conf(self):
-                return TaskConf.default()
+                tc = TaskConf.default()
+                tc.extra_env = {"PYTHONPATH": python_path_for_tests}
+                return tc
+
 
         a = TestPipeline(PipelineWithSingleBashTask())
         b = TestPipeline(C())
         c = TestPipeline(PipelineWithVariablePassing())
 
-        return {
-            str(Path(self.dir, "a")): a,
-            str(Path(self.dir, "b")): b,
-            str(Path(self.dir, "c")): c
-        }
+        yield str(Path(self.dir, "a")), PipelineType("a", a, lambda : None, {}, {}, None, a.validate_pipeline_instance)
+        yield str(Path(self.dir, "b")), PipelineType("b", b, lambda : None, {}, {}, None, b.validate_pipeline_instance)
+        yield str(Path(self.dir, "c")), PipelineType("c", c, lambda : None, {}, {}, None, c.validate_pipeline_instance)
+
 
 
     def test(self):
@@ -102,5 +105,13 @@ class ServiceRunnerTest1(TestWithDirectorySandbox2):
 
         pipeline_runner.watch()
 
-        for p in pipeline_runner.pipeline_instances:
-            p.pipeline.validate_pipeline_instance()
+        for pid, pipeline_accessor in pipeline_runner.pipeline_instances.items():
+
+            state = pipeline_accessor.latest_state()
+
+            self.assertEqual(state, "stopped")
+
+            pipeline_accessor.pipeline_type.post_run_validator(pipeline_accessor.pipeline_instance)
+
+
+

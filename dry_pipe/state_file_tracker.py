@@ -23,6 +23,17 @@ class StateFileTracker:
     def instance_exists(self):
         return os.path.exists(self.pipeline_work_dir)
 
+    def load_pipeline_state_file(self):
+
+        pipeline_state_files = list(Path(self.pipeline_work_dir).glob("state.*"))
+
+        if len(pipeline_state_files) > 1:
+            raise Exception(f"found more than one state file in {self.pipeline_work_dir}")
+        elif len(pipeline_state_files) == 0:
+            raise Exception(f"no state file found in {self.pipeline_work_dir}")
+
+        return pipeline_state_files[0]
+
     def prepare_instance_dir(self, conf_dict):
         Path(self.pipeline_instance_dir).mkdir(
             exist_ok=True, mode=FileCreationDefaultModes.pipeline_instance_directories)

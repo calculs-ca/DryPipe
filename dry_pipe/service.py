@@ -9,6 +9,17 @@ from dry_pipe.task_process import TaskProcess
 
 logger = logging.getLogger(__name__)
 
+def _pipeline_state_and_pid_from_pipeline_state_file(pipeline_state_file):
+
+    state_file_path = Path(pipeline_state_file).absolute()
+
+    bn = os.path.basename(state_file_path)
+    state = bn[6:]
+    pid = str(state_file_path.parent.parent.absolute())
+
+    return state, pid
+
+
 class PipelineInstanceAccessor:
 
     def __init__(self, pipeline_type, pipeline_state_file):
@@ -29,6 +40,14 @@ class PipelineInstanceAccessor:
 
     def state(self):
         return Path(self.pipeline_state_file).name.split(".")[1]
+
+    def latest_state(self):
+
+        state, pid = _pipeline_state_and_pid_from_pipeline_state_file(
+            self.pipeline_instance.state_file_tracker.load_pipeline_state_file()
+        )
+
+        return state
 
     def _change_state(self, new_state):
         next_state = Path(self.pipeline_instance.state_file_tracker.pipeline_work_dir, new_state)
@@ -162,12 +181,8 @@ class PipelineRunner:
         for instances_dir, pipeline_type in self.instances_dir_to_pipeline_types.items():
 
             for state_file_path in Path(instances_dir).glob("*/.drypipe/state.*"):
-                state_file_path = Path(state_file_path).absolute()
 
-                bn = os.path.basename(state_file_path)
-                state = bn[6:]
-                pid = str(state_file_path.parent.parent.absolute())
-
+                state, pid = _pipeline_state_and_pid_from_pipeline_state_file(state_file_path)
                 yield pipeline_type, state, pid, state_file_path
 
 
@@ -188,6 +203,10 @@ class PipelineRunner:
                     rpi = PipelineInstanceAccessor(pipeline_type, state_file_path)
                     self.pipeline_instances[pid] = rpi
                     rpi.set_running()
+
+                    #if rpi.latest_state() == "running":
+                    #    raise Exception(f"good !")
+
                     rpi.pipeline_instance.prepare_instance_dir()
                     work_done += 1
 
