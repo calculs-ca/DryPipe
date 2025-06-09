@@ -38,6 +38,7 @@ def setup_cli_logging(logging_level):
     add_handler("dry_pipe.pipeline_runner")
     add_handler("dry_pipe.pipeline_instance")
     add_handler("dry_pipe.task_process")
+    add_handler("dry_pipe.slurm_array_task")
     add_handler(__name__)
 
     logger.info(f"Logging level: {logging.getLevelName(logging_level)}")
