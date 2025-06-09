@@ -8,6 +8,7 @@ from dry_pipe.pipeline_instance import Monitor
 from dry_pipe.state_machine import AllRunnableTasksCompletedOrInError
 from tests.exportable_funcs import test_func
 
+python_path_for_tests = str(Path(__file__).resolve().parent.parent)
 
 class PipelineWithMultiCallSlurmArrayForRealSlurmTest(BasePipelineTest):
 
@@ -287,7 +288,10 @@ def array_test_3(i, r):
 class PipelineWithSlurmArrayForRestarts(BasePipelineTest):
 
     def task_conf(self):
-        return TaskConf(executer_type="slurm", slurm_account="dummy", extra_env={"DRYPIPE_TASK_DEBUG": "True"})
+        return TaskConf(
+            executer_type="slurm", slurm_account="dummy",
+            extra_env={"DRYPIPE_TASK_DEBUG": "True", "PYTHONPATH": python_path_for_tests}
+        )
 
     def dag_gen(self, dsl):
 

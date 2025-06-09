@@ -311,7 +311,10 @@ class Cli:
 
             array_parent_task = SlurmArrayParentTask(task_process)
 
-            array_parent_task.prepare_and_launch_next_array(restart_failed=True)
+            array_parent_task.prepare_and_launch_next_array(
+                restart_failed=True,
+                include_pre_launch=self.parsed_args.include_pre_launch
+            )
 
 
     def _sub_parsers(self):
@@ -338,6 +341,13 @@ class Cli:
 
         #self._add_task_key_parser_arg(restart_array)
         self.add_array_args(restart_array)
+
+        restart_array.add_argument(
+            '--include-pre-launch',
+            help='Also restart tasks that have failed to launch (useful after scancel on an array)',
+            action='store_true',
+            default=False
+        )
 
 
     def add_status_args(self):

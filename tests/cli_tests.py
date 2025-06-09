@@ -172,6 +172,7 @@ class CliTestsPipelineWithSlurmArrayForRestarts(PipelineWithSlurmArrayForRestart
             f'--pipeline-instance-dir={pid}',
             'restart-failed-array-tasks',
             '--task-key=array_parent',
+            '--include-pre-launch',
             '--wait'
         )
 

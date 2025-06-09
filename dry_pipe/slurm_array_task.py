@@ -324,12 +324,15 @@ class SlurmArrayParentTask:
     def i_th_submitted_array_file(self, array_number, job_id):
         return os.path.join(self.control_dir(), f"array.{array_number}.job.{job_id}")
 
-    def _iterate_next_task_state_files(self, start_next_n, restart_failed):
+    def _iterate_next_task_state_files(self, start_next_n, restart_failed, include_pre_launch):
         i = 0
         for k in self.children_task_keys():
             state_file = self.tracker.load_state_file(k)
             if state_file.is_in_pre_launch():
-                pass
+                if include_pre_launch:
+                    #self.tracker.register_pre_launch(state_file, restart_failed)
+                    yield state_file
+                    i += 1
             elif state_file.is_ready():
                 yield state_file
                 i += 1
@@ -340,7 +343,7 @@ class SlurmArrayParentTask:
             if start_next_n is not None and i >= start_next_n:
                 break
 
-    def prepare_and_launch_next_array(self, limit=None, restart_failed=False, call_sbatch_mockup=None):
+    def prepare_and_launch_next_array(self, limit=None, restart_failed=False, call_sbatch_mockup=None, include_pre_launch=False):
 
         arrays_files = list(self.arrays_files())
 
@@ -352,7 +355,7 @@ class SlurmArrayParentTask:
 
         next_task_key_file = os.path.join(self.control_dir(), f"array.{next_array_number}.tsv")
 
-        next_task_state_files = list(self._iterate_next_task_state_files(limit, restart_failed))
+        next_task_state_files = list(self._iterate_next_task_state_files(limit, restart_failed, include_pre_launch))
 
         if len(next_task_state_files) == 0:
             return 0
