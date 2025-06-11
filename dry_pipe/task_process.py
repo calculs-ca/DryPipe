@@ -1214,6 +1214,13 @@ class TaskProcess:
                     p = os.path.join(_drypipe_dir, task_key)
                     self.control_dir = p
                     self.task_output_dir = os.path.join(self.pipeline_output_dir, task_key)
+
+                    # rename job_name with task key
+                    slurm_array_job_id = os.environ.get("SLURM_ARRAY_JOB_ID")
+                    this_task_job_id = f"{slurm_array_job_id}_{self.slurm_array_task_id}"
+                    with PortablePopen(["scontrol", "update", f"JobId={this_task_job_id}", f"JobName={task_key}"]) as p:
+                        p.wait_and_raise_if_non_zero()
+
                     return
                 else:
                     c += 1
