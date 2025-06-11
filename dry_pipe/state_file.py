@@ -90,7 +90,7 @@ class StateFile:
         return not self.is_waiting()
 
     def is_in_pre_launch(self):
-        return fnmatch.fnmatch(self.path, "*/state._step-started")
+        return fnmatch.fnmatch(self.path, "*/state._step-started.*")
 
     def control_dir(self):
         return os.path.join(self.tracker.pipeline_work_dir, self.task_key)

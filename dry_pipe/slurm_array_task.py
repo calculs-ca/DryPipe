@@ -10,6 +10,7 @@ from dry_pipe.state_file_tracker import StateFileTracker
 from dry_pipe.task_lib import upload_array, download_array
 from dry_pipe.task_process import TaskProcess
 
+logger = logging.getLogger(__name__)
 
 class SlurmArrayParentTask:
 
@@ -331,12 +332,15 @@ class SlurmArrayParentTask:
             if state_file.is_in_pre_launch():
                 if include_pre_launch:
                     #self.tracker.register_pre_launch(state_file, restart_failed)
+                    logger.debug("will launch %s", state_file.task_key)
                     yield state_file
                     i += 1
             elif state_file.is_ready():
+                logger.debug("will launch %s", state_file.task_key)
                 yield state_file
                 i += 1
             elif restart_failed and (state_file.is_failed() or state_file.is_timed_out() or state_file.is_killed()):
+                logger.debug("will launch %s", state_file.task_key)
                 self.tracker.register_pre_launch(state_file, restart_failed)
                 yield state_file
                 i += 1
@@ -355,9 +359,12 @@ class SlurmArrayParentTask:
 
         next_task_key_file = os.path.join(self.control_dir(), f"array.{next_array_number}.tsv")
 
+        logger.info("next array task keys in %s", next_task_key_file)
+
         next_task_state_files = list(self._iterate_next_task_state_files(limit, restart_failed, include_pre_launch))
 
         if len(next_task_state_files) == 0:
+            logger.info("no tasks to relaunch")
             return 0
         else:
             with open(next_task_key_file, "w") as _next_task_key_file:
