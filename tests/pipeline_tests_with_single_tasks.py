@@ -420,11 +420,19 @@ task_conf_with_test_container = TaskConf(
 
 class PipelineWithSingleBashTaskInContainer(PipelineWithSingleBashTask):
     def task_conf(self):
-        return task_conf_with_test_container
+        return TaskConf(
+            executer_type="process",
+            container="singularity-test-container.sif",
+            apptainer_exec_args=["--nv", "--no-home"]
+        )
 
 class PipelineWithSinglePythonTaskInContainer(PipelineWithSinglePythonTask):
     def task_conf(self):
-        return task_conf_with_test_container
+        return TaskConf(
+            executer_type="process",
+            container="singularity-test-container.sif",
+            apptainer_exec_args="--nv"
+        )
 
 class PipelineWithVarAndFileOutputInContainer(PipelineWithVarAndFileOutput):
     def task_conf(self):

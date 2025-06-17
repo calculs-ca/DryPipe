@@ -407,7 +407,8 @@ class TaskConf:
             extra_env=None,
             label=None,
             work_on_local_file_copies=None,
-            run_as_group=None
+            run_as_group=None,
+            apptainer_exec_args=None
     ):
 
         self.external_files_root = None
@@ -458,6 +459,7 @@ class TaskConf:
         self.inputs = []
         self.outputs = []
         self.run_as_group = run_as_group
+        self.apptainer_exec_args = apptainer_exec_args
 
         if extra_env is not None:
             if not isinstance(extra_env, dict):

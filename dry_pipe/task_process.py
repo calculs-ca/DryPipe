@@ -622,6 +622,22 @@ class TaskProcess:
         else:
             return scratch_dir
 
+
+    def _apptainer_cmd(self, container, cmd):
+
+        def apt_cmd():
+            yield APPTAINER_COMMAND
+            yield "exec"
+            if self.task_conf.apptainer_exec_args is not None:
+                if isinstance(self.task_conf.apptainer_exec_args, str):
+                    yield self.task_conf.apptainer_exec_args
+                elif isinstance(self.task_conf.apptainer_exec_args, list):
+                    for a in self.task_conf.apptainer_exec_args:
+                        yield a
+            yield self.resolve_container_path(container)
+
+        return list(apt_cmd()) + cmd
+
     def run_python(self, mod_func, container=None):
 
         env = self.env
@@ -643,11 +659,7 @@ class TaskProcess:
         ]
 
         if container is not None:
-            cmd = [
-                APPTAINER_COMMAND,
-                "exec",
-                self.resolve_container_path(container)
-            ] + cmd
+            cmd = self._apptainer_cmd(container, cmd)
 
             self._set_apptainer_bind_in_env(env)
 
@@ -968,11 +980,7 @@ class TaskProcess:
         cmd = ["bash", "-c", f". {script} 1>> {out} 2>> {err}{dump_env}"]
 
         if container is not None:
-            cmd = [
-                APPTAINER_COMMAND,
-                "exec",
-                self.resolve_container_path(container),
-            ] + cmd
+            cmd = self._apptainer_cmd(container, cmd)
 
         self._set_apptainer_bind_in_env(env)
 
