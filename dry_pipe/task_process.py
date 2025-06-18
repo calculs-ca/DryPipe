@@ -10,17 +10,16 @@ import sys
 import tarfile
 import traceback
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from threading import Thread
 
 from dry_pipe import TaskConf
-from dry_pipe.core_lib import UpstreamTasksNotCompleted, PortablePopen, func_from_mod_func, invoke_rsync, exec_remote, \
+from dry_pipe.core_lib import UpstreamTasksNotCompleted, PortablePopen, func_from_mod_func, invoke_rsync, \
     FileCreationDefaultModes, expandvars_from_dict
 
-from dry_pipe.task import TaskOutput, TaskInputs, TaskOutputs, TaskInput, FileSet
-from dry_pipe.task_lib import execute_remote_task
+from dry_pipe.task import TaskOutput, TaskInputs, TaskOutputs, TaskInput
 
 APPTAINER_COMMAND = "apptainer"
 
@@ -147,6 +146,29 @@ class TaskProcess:
                 if self.task_conf.extra_env.get("DRYPIPE_TASK_DEBUG") == "True":
                     return True
         return False
+
+
+    def _create_time_logger(self, label):
+
+        l = self.task_logger
+        class TimeLogger:
+            def __init__(self):
+                self.start_time = None
+                self.end_time = None
+
+            def __enter__(self):
+                self.start_time = time.time()
+
+            def __exit__(self, exc_type, exc_val, exc_tb):
+                self.end_time = time.time()
+                t = self.end_time - self.start_time
+
+                td = timedelta(round(t))
+
+                l.info(f"TIME_ELAPSED_FOR:{label}: {td}, {round(t, 2)}")
+
+
+        return TimeLogger()
 
     def _create_task_logger(self):
 
@@ -1107,17 +1129,18 @@ class TaskProcess:
 
                 call = step_invocation["call"]
 
-                if call == "python":
-                    module_function = step_invocation["module_function"]
-                    if self.run_python_calls_in_process or module_function.startswith("dry_pipe.task_lib:"):
-                        python_call = func_from_mod_func(module_function)
-                        self.call_python(module_function, python_call)
+                with self._create_time_logger(f"STEP-{i}"):
+                    if call == "python":
+                        module_function = step_invocation["module_function"]
+                        if self.run_python_calls_in_process or module_function.startswith("dry_pipe.task_lib:"):
+                            python_call = func_from_mod_func(module_function)
+                            self.call_python(module_function, python_call)
+                        else:
+                            self.run_python(module_function, step_invocation.get("container"))
+                    elif call == "bash":
+                        self.run_script(os.path.expandvars(step_invocation["script"]), step_invocation.get("container"))
                     else:
-                        self.run_python(module_function, step_invocation.get("container"))
-                elif call == "bash":
-                    self.run_script(os.path.expandvars(step_invocation["script"]), step_invocation.get("container"))
-                else:
-                    raise Exception(f"unknown step invocation type: {call}")
+                        raise Exception(f"unknown step invocation type: {call}")
 
                 state_file, step_number = self.transition_to_step_completed(state_file, step_number)
 
@@ -1278,7 +1301,10 @@ class TaskProcess:
         def task_func_wrapper():
             try:
                 self.task_logger.debug("task func started")
-                self._run_steps()
+
+                with self._create_time_logger("TASK"):
+                    self._run_steps()
+
                 self.task_logger.info("task completed")
             except Exception as ex:
                 if not exit_process_when_done:
