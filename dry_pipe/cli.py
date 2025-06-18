@@ -1,4 +1,5 @@
 import argparse
+import glob
 import logging
 import os
 import sys
@@ -9,6 +10,7 @@ from dry_pipe.core_lib import func_from_mod_func, is_inside_slurm_job
 from dry_pipe.pipeline_instance import Monitor
 from dry_pipe.task_process import TaskProcess
 from dry_pipe.slurm_array_task import SlurmArrayParentTask
+from dry_pipe.reports import timers_for_tasks
 
 logger = logging.getLogger(__name__)
 
@@ -109,7 +111,8 @@ class Cli:
                 default_pid = os.path.dirname(os.path.dirname(control_dir))
 
         if default_pid is None:
-            default_pid = Path(__file__).parent.parent.parent
+            if Path(__file__).name == "cli":
+                default_pid = Path(__file__).parent.parent.parent
 
         parser.add_argument(
             '--pipeline-instance-dir',
@@ -317,12 +320,20 @@ class Cli:
                 include_pre_launch=self.parsed_args.include_pre_launch
             )
 
+        elif self.parsed_args.command == 'report-perf':
+
+            if self.parsed_args.pipeline_instance_dir is None:
+                raise Exception(f"--pipeline-instance-dir must be specified")
+
+            for task_key, timer_label, hms, s in timers_for_tasks(self.parsed_args.pipeline_instance_dir, self.parsed_args.filter):
+                print(f"{timer_label}\t{task_key}\t{hms}\t{s}")
 
     def _sub_parsers(self):
 
 
         self.subparsers = self.parser.add_subparsers(required=True, dest='command')
         self.add_run_args(self.subparsers.add_parser('run'))
+        self.add_report_args(self.subparsers.add_parser('report-perf'))
         self.add_generator_arg(self.subparsers.add_parser('prepare'))
         self.add_call_args(self.subparsers.add_parser('call'))
         self.add_task_args(self.subparsers.add_parser('task'))
@@ -361,6 +372,16 @@ class Cli:
             metavar="GENERATOR",
             default=self.env.get("DRYPIPE_PIPELINE_GENERATOR")
         )
+
+    def add_report_args(self, report_parser):
+        report_parser.add_argument(
+            '--filter',
+            help='glob expression to filter tasks',
+            default='*'
+        )
+
+        self._add_pipeline_instance_dir_arg(report_parser)
+
 
     def add_run_args(self, run_parser):
 
