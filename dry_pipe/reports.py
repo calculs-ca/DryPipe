@@ -14,10 +14,15 @@ def timers_for_tasks(pipeline_instance_dir, glob_filter, include_steps=False):
 def parse_timers_in_log(drypipe_log):
 
     with open(drypipe_log, "r") as log:
+        c = 0
         for line in log:
-            parts = line.split("TIME_ELAPSED_FOR:")
-            if len(parts) < 2:
-                continue
-            label, p2 = parts[1].split(":", 1)
-            time_h_m_s, time_s = p2.split(",")
-            yield label, time_h_m_s.strip(), time_s.strip()
+            c += 1
+            try:
+                parts = line.split("TIME_ELAPSED_FOR:")
+                if len(parts) < 2:
+                    continue
+                label, p2 = parts[1].split(":", 1)
+                time_h_m_s, time_s = p2.split(",")
+                yield label, time_h_m_s.strip(), time_s.strip()
+            except Exception:
+                raise Exception(f"Error parsing line : {c} in log {drypipe_log}")
