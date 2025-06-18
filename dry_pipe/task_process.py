@@ -10,7 +10,7 @@ import sys
 import tarfile
 import traceback
 import time
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from threading import Thread
@@ -163,7 +163,14 @@ class TaskProcess:
                 self.end_time = time.time()
                 t = self.end_time - self.start_time
 
-                td = timedelta(round(t))
+                def format_seconds_to_hhmmss(seconds):
+                    hours = seconds // (60 * 60)
+                    seconds %= (60 * 60)
+                    minutes = seconds // 60
+                    seconds %= 60
+                    return "%02i:%02i:%02i" % (hours, minutes, seconds)
+
+                td = format_seconds_to_hhmmss(round(t))
 
                 l.info(f"TIME_ELAPSED_FOR:{label}: {td}, {round(t, 2)}")
 
