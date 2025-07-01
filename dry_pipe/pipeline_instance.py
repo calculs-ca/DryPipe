@@ -132,7 +132,7 @@ class Monitor:
 
     def default_grouper(self, task_key):
         if "." in task_key:
-            task_group_key = task_key.rsplit(".", 1)[0]
+            task_group_key = task_key.split(".", 1)[0]
             task_group_key = f"{task_group_key}.*"
             return task_group_key
         else:
