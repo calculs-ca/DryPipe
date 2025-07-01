@@ -65,6 +65,8 @@ class StateFileTracker:
         for py_file in glob.glob(os.path.join(src_dir_drypipe, "*.py")):
             shutil.copy(py_file, dp_dir)
 
+        shutil.copy(os.path.join(src_dir_drypipe, "cli-init.sh"), self.pipeline_work_dir)
+
     def conf_file(self):
         return Path(self.pipeline_work_dir, "conf.json")
 

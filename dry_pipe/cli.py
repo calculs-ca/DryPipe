@@ -4,6 +4,7 @@ import logging
 import os
 import sys
 import textwrap
+from os import environ
 from pathlib import Path
 
 from dry_pipe.core_lib import func_from_mod_func, is_inside_slurm_job
@@ -72,6 +73,8 @@ class Cli:
         else:
             self.env = env
 
+        self.is_dp_func = environ.get("__IS_DRYPIPE_DP_FUNC") == "True"
+
         self.parser = argparse.ArgumentParser(
             description="DryPipe CLI"
         )
@@ -127,6 +130,7 @@ class Cli:
             return cwd
         else:
             return None
+
     def _add_task_key_parser_arg(self, parser):
 
         control_dir = self._guess_control_dir_from_cwd()
@@ -325,7 +329,13 @@ class Cli:
             if self.parsed_args.pipeline_instance_dir is None:
                 raise Exception(f"--pipeline-instance-dir must be specified")
 
-            for task_key, timer_label, hms, s in timers_for_tasks(self.parsed_args.pipeline_instance_dir, self.parsed_args.filter):
+
+            if self.parsed_args.task_key is not None and self.parsed_args.filter == "*":
+                f = self.parsed_args.task_key
+            else:
+                f = self.parsed_args.filter
+
+            for task_key, timer_label, hms, s in timers_for_tasks(self.parsed_args.pipeline_instance_dir, f):
                 print(f"{timer_label}\t{task_key}\t{hms}\t{s}")
 
     def _sub_parsers(self):
@@ -379,6 +389,8 @@ class Cli:
             help='glob expression to filter tasks',
             default='*'
         )
+
+        self._add_task_key_parser_arg(report_parser)
 
         self._add_pipeline_instance_dir_arg(report_parser)
 
