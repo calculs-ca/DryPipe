@@ -260,7 +260,7 @@ class StateMachineTests(unittest.TestCase):
 
         monitor = Monitor(group_t)
 
-        monitor.dump(state_file_tracker.all_state_files())
+        monitor.dump(state_file_tracker)
 
         # mutate
         tester.iterate_once_and_mutate_set_of_next_state_files_ready()
@@ -283,7 +283,7 @@ class StateMachineTests(unittest.TestCase):
             "t3": ["t2"]
         })
 
-        monitor.dump(state_file_tracker.all_state_files())
+        monitor.dump(state_file_tracker)
 
         # mutate
         tester.set_completed_on_disk("t2")
@@ -297,7 +297,7 @@ class StateMachineTests(unittest.TestCase):
         tester.set_completed_on_disk("t3")
         tester.iterate_once_and_mutate_set_of_next_state_files_ready()
 
-        monitor.dump(state_file_tracker.all_state_files())
+        monitor.dump(state_file_tracker)
 
         # verify
         tester.assert_no_new_task_to_launch()
@@ -308,7 +308,7 @@ class StateMachineTests(unittest.TestCase):
             "t3": []
         })
 
-        monitor.dump(state_file_tracker.all_state_files())
+        monitor.dump(state_file_tracker)
 
         self.assertRaises(
             AllRunnableTasksCompletedOrInError,

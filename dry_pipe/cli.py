@@ -55,9 +55,17 @@ def setup_verbose2():
 
 
 class CliMonitor(Monitor):
-    def dump(self, all_state_files):
-        print("==========================")
-        for task_group, state_counts in self.produce_report(all_state_files):
+
+    def __init__(self, pipeline_instance, mod_func):
+        super().__init__()
+        self.pipeline_instance = pipeline_instance
+        self.mod_func = mod_func
+
+    def dump(self, state_file_tracker):
+
+        os.system('clear')
+        print(f"PipelineInstance({self.mod_func}, {state_file_tracker.pipeline_instance_dir})")
+        for task_group, state_counts in self.produce_report(state_file_tracker.all_state_files()):
             dump_counts = ",".join([
                 f"{s}: {c}" for s, c in state_counts
             ])
@@ -214,8 +222,8 @@ class Cli:
         elif self.parsed_args.command == 'run':
             pipeline_instance = pipeline_instance_from_args()
             pipeline_instance.prepare_instance_dir()
-            if not test_mode:
-                pipeline_instance.monitor = CliMonitor()
+            #if not test_mode:
+            pipeline_instance.monitor = CliMonitor(pipeline_instance, self.parsed_args.generator)
 
             pipeline_instance.run(
                 until_patterns=self.parsed_args.until,

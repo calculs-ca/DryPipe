@@ -82,7 +82,7 @@ class PipelineInstance:
         def mon():
             if self.monitor is not None:
                 self.monitor.dump(
-                    state_machine.state_file_tracker.all_state_files()
+                    state_machine.state_file_tracker
                 )
 
         for func, suggested_sleep in iterate_work_rounds(restart_failed, reset_failed):
@@ -138,8 +138,9 @@ class Monitor:
         else:
             return task_key
 
-    def dump(self, all_state_files):
-        for task_group, state_counts in self.produce_report(all_state_files):
+    def dump(self, state_file_tracker):
+
+        for task_group, state_counts in self.produce_report(state_file_tracker.all_state_files()):
             dump_counts = ",".join([
                 f"{s}: {c}" for s, c in state_counts
             ])
