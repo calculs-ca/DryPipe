@@ -124,6 +124,8 @@ class Cli:
         if default_pid is None:
             if Path(__file__).name == "cli":
                 default_pid = Path(__file__).parent.parent.parent
+            elif Path(__file__).name == "cli.py" and Path(__file__).parent.parent.name == ".drypipe":
+                default_pid = Path(__file__).parent.parent.parent
 
         parser.add_argument(
             '--pipeline-instance-dir',
