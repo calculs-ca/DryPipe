@@ -76,6 +76,11 @@ class Cli:
 
     def __init__(self, args, invocation_script=None, env=None):
 
+        self._has_implicit_generator = False
+        self._has_implicit_control_dir = False
+        self._has_implicit_pid = False
+        self._has_implicit_task_key = False
+
         if env is None:
             self.env = os.environ
         else:
@@ -127,6 +132,9 @@ class Cli:
             elif Path(__file__).name == "cli.py" and Path(__file__).parent.parent.name == ".drypipe":
                 default_pid = Path(__file__).parent.parent.parent
 
+        if default_pid is not None:
+            self._has_implicit_pid = True
+
         parser.add_argument(
             '--pipeline-instance-dir',
             help='pipeline instance directory, can also be set with environment var DRYPIPE_PIPELINE_INSTANCE_DIR',
@@ -141,18 +149,34 @@ class Cli:
         else:
             return None
 
+    def _implicit_control_dir(self):
+        DRYPIPE_DP_HINT_DIR = os.environ.get("DRYPIPE_DP_HINT_DIR")
+        if DRYPIPE_DP_HINT_DIR is not None:
+            icd = Path(DRYPIPE_DP_HINT_DIR)
+            if icd.parent.name == ".drypipe":
+                self._has_implicit_control_dir = True
+                return icd
+
+        return None
+
     def _add_task_key_parser_arg(self, parser):
 
-        control_dir = self._guess_control_dir_from_cwd()
+        icd = self._implicit_control_dir()
 
-        if control_dir is not None:
-            default_task_key = os.path.basename(control_dir)
+        if icd is not None:
+            implicit_task_key = icd.name
+            self._has_implicit_task_key = True
         else:
-            default_task_key = None
+            control_dir = self._guess_control_dir_from_cwd()
+            if control_dir is not None:
+                implicit_task_key = os.path.basename(control_dir)
+                self._has_implicit_task_key = True
+            else:
+                implicit_task_key = None
 
         parser.add_argument(
             '--task-key',
-            default=default_task_key
+            default=implicit_task_key
         )
 
     def _control_dir(self):
@@ -192,6 +216,14 @@ class Cli:
                 ssh_remote_dest = self.parsed_args.ssh_remote_dest
 
     def invoke(self, test_mode=False):
+
+        if self._has_implicit_pid:
+            print(f"implicit --pipeline-instance-dir={self.parsed_args.pipeline_instance_dir}")
+        if self._has_implicit_task_key:
+            print(f"implicit --task-key={self.parsed_args.task_key}")
+        if self._has_implicit_generator:
+            print(f"implicit --generator={self.parsed_args.generator}")
+
 
         if self.parsed_args.v:
             setup_verbose1()
@@ -241,7 +273,6 @@ class Cli:
             call(self.parsed_args.module_function)
 
         elif self.parsed_args.command == 'task':
-
             task_process = TaskProcess(
                 self._complete_control_dir(self.parsed_args.control_dir),
                 wait_for_completion=self._wait(),
@@ -386,11 +417,17 @@ class Cli:
         pass
 
     def add_generator_arg(self, parser):
+
+        ig = self.env.get("DRYPIPE_PIPELINE_GENERATOR")
+
+        if ig is not None:
+            self._has_implicit_generator = True
+
         parser.add_argument(
             '--generator',
             help='<module>:<function> task generator function, can also be set with environment var DRYPIPE_PIPELINE_GENERATOR',
             metavar="GENERATOR",
-            default=self.env.get("DRYPIPE_PIPELINE_GENERATOR")
+            default=ig
         )
 
     def add_report_args(self, report_parser):
@@ -514,7 +551,7 @@ class Cli:
         parser.set_defaults(wait=False)
 
     def add_task_args(self, parser):
-        parser.add_argument('control_dir', type=str)
+        parser.add_argument('control_dir', type=str, nargs='?', default=str(self._implicit_control_dir()))
         self._add_task_key_parser_arg(parser)
         self.__wait_arg(parser)
         parser.add_argument("--by-runner", dest="by_runner", action="store_true")

@@ -191,6 +191,9 @@ def download_array(
         if child_task_key_task_state == "":
             continue
 
+        if child_task_key_task_state.startswith("implicit") and "=" in child_task_key_task_state:
+            continue
+
         child_task_key, child_task_state = child_task_key_task_state.split("/")
 
         child_task_control_dir = os.path.join(__pipeline_work_dir, child_task_key)

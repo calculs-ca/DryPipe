@@ -51,6 +51,13 @@ def array_remote_tests():
         CliTestsPipelineWithSlurmArrayRemote
     ]
 
+def cli_tests():
+    return [
+        CliArrayTests1,
+        CliTestsPipelineWithSlurmArray,
+        CliTestScenario2,
+    ]
+
 
 def quick_sanity_tests():
     return [
@@ -88,7 +95,8 @@ if __name__ == '__main__':
         "ad_hoc": ad_hoc,
         "array_tests": array_tests,
         "all_local_tests": all_local_tests,
-        "exhaustive_test_suite": exhaustive_test_suite
+        "exhaustive_test_suite": exhaustive_test_suite,
+        "cli_tests": cli_tests
     }
 
     def gen_test_classes(test_classes_or_list_of_test_classes):
