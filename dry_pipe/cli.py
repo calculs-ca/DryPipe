@@ -185,7 +185,7 @@ class Cli:
         if ssh_remote_dest is None:
             if self.parsed_args.ssh_remote_dest is None:
                 raise Exception(
-                    f"--ssh-remote-dest is required for 'upload-array', OR must be defined with " +
+                    f"--ssh-remote-dest is required for 'array-upload', OR must be defined with " +
                     " .task(task_conf=TaskConf(ss_remote_dest=...)"
                 )
             else:
@@ -212,7 +212,7 @@ class Cli:
 
             return pipeline.create_pipeline_instance(self.parsed_args.pipeline_instance_dir)
 
-        if self.parsed_args.command == 'submit-array':
+        if self.parsed_args.command == 'array-submit':
             task_process = TaskProcess(
                 os.path.join(self.parsed_args.pipeline_instance_dir, ".drypipe", self.parsed_args.task_key),
                 as_subprocess=not test_mode,
@@ -269,7 +269,7 @@ class Cli:
             task_process = TaskProcess(self.parsed_args.control_dir, wait_for_completion=self._wait())
             print(" ".join(task_process.sbatch_cmd_lines()))
 
-        elif self.parsed_args.command == 'upload-array':
+        elif self.parsed_args.command == 'array-upload':
 
             task_process = TaskProcess(
                 os.path.join(self.parsed_args.pipeline_instance_dir, ".drypipe", self.parsed_args.task_key)
@@ -282,7 +282,7 @@ class Cli:
 
             array_parent_task._upload_array()
 
-        elif self.parsed_args.command == 'download-array':
+        elif self.parsed_args.command == 'array-download':
 
             task_process = TaskProcess(
                 os.path.join(self.parsed_args.pipeline_instance_dir, ".drypipe", self.parsed_args.task_key)
@@ -359,9 +359,9 @@ class Cli:
         self.add_task_args(self.subparsers.add_parser('task'))
         self.add_sbatch_args(self.subparsers.add_parser('sbatch'))
         self.add_sbatch_args(self.subparsers.add_parser('sbatch-gen'))
-        self.add_array_args(self.subparsers.add_parser('submit-array'))
-        self.add_upload_download_array_args(self.subparsers.add_parser('upload-array'))
-        self.add_upload_download_array_args(self.subparsers.add_parser('download-array'))
+        self.add_array_args(self.subparsers.add_parser('array-submit'))
+        self.add_upload_download_array_args(self.subparsers.add_parser('array-upload'))
+        self.add_upload_download_array_args(self.subparsers.add_parser('array-download'))
         self.add_create_array_parent_args(self.subparsers.add_parser('create-array-parent'))
         self._add_task_key_parser_arg(
             self.subparsers.add_parser('list-array-states')

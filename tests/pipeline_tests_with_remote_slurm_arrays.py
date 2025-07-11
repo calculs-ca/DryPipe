@@ -156,7 +156,7 @@ class CliTestsPipelineWithSlurmArrayRemote(PipelineWithSlurmArray):
 
         test_cli(
             '--pipeline-instance-dir', pid,
-            'upload-array',
+            'array-upload',
             '--task-key=array_parent',
             f'--ssh-remote-dest={ssh_dest}'
         )
@@ -171,7 +171,7 @@ class CliTestsPipelineWithSlurmArrayRemote(PipelineWithSlurmArray):
 
         test_cli(
             '--pipeline-instance-dir', pid,
-            'download-array',
+            'array-download',
             '--task-key=array_parent',
             f'--ssh-remote-dest={ssh_dest}'
         )

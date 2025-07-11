@@ -87,7 +87,7 @@ class CliArrayTests1(PipelineWithSlurmArrayForRealSlurmTest):
 
         test_cli(
             f'--pipeline-instance-dir={pipeline_instance.state_file_tracker.pipeline_instance_dir}',
-            'submit-array',
+            'array-submit',
             '--task-key=array-parent'
         )
 
@@ -103,7 +103,7 @@ class CliArrayTests1(PipelineWithSlurmArrayForRealSlurmTest):
 
         test_cli(
             '--pipeline-instance-dir', pipeline_instance.state_file_tracker.pipeline_instance_dir,
-            'submit-array',
+            'array-submit',
             '--task-key', 'array-parent',
             '--limit', '1'
         )
@@ -114,7 +114,7 @@ class CliArrayTests1(PipelineWithSlurmArrayForRealSlurmTest):
         )
 
         Cli([
-            'submit-array',
+            'array-submit',
             '--task-key', 'array-parent'
         ], env={
             "DRYPIPE_PIPELINE_INSTANCE_DIR": pipeline_instance.state_file_tracker.pipeline_instance_dir
@@ -133,7 +133,7 @@ class CliArrayTests1(PipelineWithSlurmArrayForRealSlurmTest):
         for _ in [1, 1, 1]:
             test_cli(
                 '--pipeline-instance-dir', pipeline_instance.state_file_tracker.pipeline_instance_dir,
-                'submit-array',
+                'array-submit',
                 '--task-key', 'array-parent',
                 '--limit=1'
             )
@@ -159,7 +159,7 @@ class CliTestsPipelineWithSlurmArrayForRestarts(PipelineWithSlurmArrayForRestart
         pid = pipeline_instance.state_file_tracker.pipeline_instance_dir
         test_cli(
             f'--pipeline-instance-dir={pid}',
-            'submit-array',
+            'array-submit',
             '--task-key=array_parent'
         )
 
@@ -269,14 +269,14 @@ class CliTestsPipelineWithSlurmArray(PipelineWithSlurmArray):
 
         test_cli(
             f'--pipeline-instance-dir={pipeline_instance.state_file_tracker.pipeline_instance_dir}',
-            'submit-array',
+            'array-submit',
             '--task-key=p2',
             '--limit=1'
         )
 
         test_cli(
             f'--pipeline-instance-dir={pipeline_instance.state_file_tracker.pipeline_instance_dir}',
-            'submit-array',
+            'array-submit',
             '--task-key=p2',
             '--limit=1'
         )
