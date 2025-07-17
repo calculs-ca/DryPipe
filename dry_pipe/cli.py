@@ -222,7 +222,8 @@ class Cli:
         if self._has_implicit_task_key:
             print(f"implicit --task-key={self.parsed_args.task_key}")
         if self._has_implicit_generator:
-            print(f"implicit --generator={self.parsed_args.generator}")
+            if hasattr(self.parsed_args, "generator"):
+                print(f"implicit --generator={self.parsed_args.generator}")
 
 
         if self.parsed_args.v:
