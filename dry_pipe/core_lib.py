@@ -68,8 +68,12 @@ class PortablePopen:
     def raise_if_non_zero(self):
         r = self.popen.returncode
         if r != 0:
+            if isinstance(self.process_args, list):
+                msg = " ".join(self.process_args)
+            else:
+                msg = self.process_args
             raise Exception(
-                f"process invocation returned non zero {r}: {self.process_args}\nstderr: {self.safe_stderr_as_string()}"
+                f"process invocation returned non zero {r}: {msg}\nstderr: {self.safe_stderr_as_string()}"
             )
 
     def wait_and_raise_if_non_zero(self, timeout=None):
