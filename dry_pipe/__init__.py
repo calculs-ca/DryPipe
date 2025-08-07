@@ -3,9 +3,11 @@ import inspect
 import json
 import os
 import re
+import shutil
 import sys
 import textwrap
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from dry_pipe.core_lib import PortablePopen
 
@@ -342,7 +344,11 @@ def host_has_sbatch():
 
 class RemotePipelineSpecs:
 
-    def __init__(self, task_conf, pipeline_instance_dir):
+    def __init__(self, task_process):
+
+        self.task_process = task_process
+        task_conf = task_process.task_conf
+        pipeline_instance_dir = task_process.pipeline_instance_dir
 
         self.user_at_host, self.remote_base_dir, self.ssh_key_file = task_conf.parse_ssh_remote_dest()
 
@@ -368,7 +374,27 @@ class RemotePipelineSpecs:
             user = self.user_at_host.split("@")[0].strip()
             self.rsync_chown_arg = f"--chown={user}:{task_conf.run_as_group}"
 
+    def gen_and_upload_task_conf_remote_overrides(self, upload_cmd):
+        overrides_basename = "task-conf-overrides.json"
+        with TemporaryDirectory(dir=self.task_process.control_dir) as tmp_dir:
+            overrides_file = os.path.join(tmp_dir, overrides_basename)
+            with open(overrides_file, "w") as tmp_overrides:
+                tmp_overrides.write(json.dumps(
+                    {
+                        "is_on_remote_site": True,
+                        "external_files_root": f"{self.remote_pid}/external-file-deps"
+                    },
+                    indent=2
+                ))
 
+            # make a copy, just for transparency (self documenting)
+            shutil.copy(
+                overrides_file,
+                os.path.join(self.task_process.control_dir, f"task-conf-overrides-{self.user_at_host}.json")
+            )
+            dst = f"{self.user_at_host}:{self.remote_pid}/.drypipe/{self.task_process.task_key}/"
+
+            upload_cmd(overrides_file, dst)
 
 
 class TaskConf:
@@ -517,9 +543,6 @@ class TaskConf:
             user_at_host = user_at_host[:-1]
 
         return user_at_host, remote_base_dire, ssh_key_file
-
-    def remote_pipeline_specs(self, pipeline_instance_dir):
-        return RemotePipelineSpecs(self, pipeline_instance_dir)
 
     def hash_values(self):
         yield self.executer_type

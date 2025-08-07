@@ -107,33 +107,11 @@ def upload_task_inputs(
         __task_logger.info("%s", rsync_cmd)
         invoke_rsync(rsync_cmd)
 
-    overrides_basename = "task-conf-overrides.json"
-    def gen_task_conf_remote_overrides():
 
-        with TemporaryDirectory(dir=__task_control_dir) as tmp_dir:
-            overrides_file = os.path.join(tmp_dir, overrides_basename)
-            with open(overrides_file, "w") as tmp_overrides:
-                tmp_overrides.write(json.dumps(
-                    {
-                        "is_on_remote_site": True,
-                        "external_files_root": f"{__remote_pipeline_specs.remote_pid}/external-file-deps"
-                    },
-                    indent=2
-                ))
+    def rsync_upload(overrides_file, dst):
+        invoke_rsync(f"rsync {__remote_pipeline_specs.rsync_chown_arg} --mkpath {overrides_file} {dst}")
 
-            try:
-                # make a copy, just for transparency (self documenting)
-                shutil.copy(
-                    overrides_file,
-                    os.path.join(__task_control_dir, f"task-conf-overrides-{__remote_pipeline_specs.user_at_host}.json")
-                )
-                dst = f"{__remote_pipeline_specs.user_at_host}:{__remote_pipeline_specs.remote_pid}/.drypipe/{__task_key}/"
-                invoke_rsync(f"rsync {__remote_pipeline_specs.rsync_chown_arg} --mkpath {overrides_file} {dst}")
-            finally:
-                if os.path.exists(overrides_file):
-                    os.remove(overrides_file)
-
-    gen_task_conf_remote_overrides()
+    __remote_pipeline_specs.gen_and_upload_task_conf_remote_overrides(rsync_upload)
 
     do_rsync(__remote_pipeline_specs.absolute_pid, __remote_pipeline_specs.ssh_remote_dest, internal_dep_file_txt)
 

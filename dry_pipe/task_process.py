@@ -15,7 +15,7 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile
 from threading import Thread
 
-from dry_pipe import TaskConf
+from dry_pipe import TaskConf, RemotePipelineSpecs
 from dry_pipe.core_lib import UpstreamTasksNotCompleted, PortablePopen, func_from_mod_func, invoke_rsync, \
     FileCreationDefaultModes, expandvars_from_dict
 
@@ -288,20 +288,14 @@ class TaskProcess:
 
     def _get_drypipe_arg(self, name, mod_func):
 
-        if self.task_conf.ssh_remote_dest is not None:
-            rps = self.task_conf.remote_pipeline_specs(self.pipeline_instance_dir)
-        else:
-            rps = None
-
-        def _rps():
-            if rps is None:
+        if name == "__remote_pipeline_specs":
+            if self.task_conf.ssh_remote_dest is not None:
+                return RemotePipelineSpecs(self)
+            else:
                 raise Exception(
-                    f"Task({self.task_key}) python_call, has argument {mod_func} has argument {name} " +
+                    f"Task({self.task_key}) python_call {mod_func} has argument {name} " +
                     " that requires task_conf.ssh_remote_dest to be not None"
                 )
-            return rps
-        if name == "__remote_pipeline_specs":
-            return _rps()
         elif name == "__task_logger":
             return self.task_logger
         elif name == "__children_task_keys":

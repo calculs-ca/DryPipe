@@ -5,7 +5,7 @@ import time
 from pathlib import Path
 from typing import List, Iterator, Tuple
 
-from dry_pipe import PortablePopen, TaskConf
+from dry_pipe import PortablePopen, TaskConf, RemotePipelineSpecs
 from dry_pipe.state_file_tracker import StateFileTracker
 from dry_pipe.task_lib import upload_task_inputs, download_task_outputs
 from dry_pipe.task_process import TaskProcess
@@ -478,12 +478,10 @@ class SlurmArrayParentTask:
                 f"requires ssh_remote_dest in TaskConf OR --ssh-remote-dest argument to be set"
             )
 
-        rps = self.task_process.task_conf.remote_pipeline_specs(self.tracker.pipeline_instance_dir)
-
         upload_task_inputs.func(
             __task_key=self.task_process.task_key,
             __task_control_dir=self.task_process.control_dir,
-            __remote_pipeline_specs=rps,
+            __remote_pipeline_specs=RemotePipelineSpecs(self.task_process),
             __task_logger=self.task_process.task_logger,
             __children_task_keys=self.children_task_keys(),
             __pipeline_work_dir=self.task_process.pipeline_work_dir,
@@ -493,8 +491,6 @@ class SlurmArrayParentTask:
 
     def _download_array(self):
 
-        rps = self.task_process.task_conf.remote_pipeline_specs(self.tracker.pipeline_instance_dir)
-
         download_task_outputs.func(
             __task_key=self.task_process.task_key,
             __task_control_dir=self.task_process.control_dir,
@@ -502,7 +498,7 @@ class SlurmArrayParentTask:
             __children_task_keys=self.children_task_keys(),
             __pipeline_work_dir=self.task_process.pipeline_work_dir,
             __pipeline_instance_dir=self.task_process.pipeline_instance_dir,
-            __remote_pipeline_specs=rps
+            __remote_pipeline_specs=RemotePipelineSpecs(self.task_process)
         )
 
     @staticmethod
