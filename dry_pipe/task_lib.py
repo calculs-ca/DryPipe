@@ -1,9 +1,4 @@
-import glob
-import json
 import os
-import shutil
-from tempfile import TemporaryDirectory
-
 from dry_pipe import DryPipe
 from dry_pipe.core_lib import invoke_rsync, exec_remote
 from dry_pipe.state_file_tracker import StateFileTracker
@@ -27,39 +22,23 @@ def upload_task_inputs(
     __pipeline_instance_dir,
     __task_conf
 ):
-    def dump_unique_files_in_file(files, dep_file):
-        uniq_files = set()
-        with open(dep_file, "w") as tf:
-            for dep_file in files:
-                if dep_file not in uniq_files:
-                    tf.write(dep_file)
-                    tf.write("\n")
-                    uniq_files.add(dep_file)
 
-    internal_dep_file_txt = os.path.join(__task_control_dir, "deps.txt")
-    external_dep_file_txt = os.path.join(__task_control_dir, "external-deps.txt")
     external_file_deps = []
 
-    def gen_inner_pipeline_file_deps():
+    __task_logger.info("will generate file list for upload")
 
-        __task_logger.info("will generate file list for upload")
+    internal_dep_file_txt = __remote_pipeline_specs.dump_unique_files_in_file(
+        __task_process.gen_internal_file_deps(external_file_deps),
+        "deps.txt"
+    )
 
-        dump_unique_files_in_file(__task_process.gen_internal_file_deps(external_file_deps), internal_dep_file_txt)
 
-        __task_logger.info("done")
+    if len(external_file_deps) == 0:
+        __task_logger.info("no external file deps")
+    else:
+        __task_logger.info("will generate external file deps")
+        external_dep_file_txt = __remote_pipeline_specs.dump_unique_files_in_file(external_file_deps, "external-deps.txt")
 
-    def gen_external_file_deps():
-        if len(external_file_deps) == 0:
-            __task_logger.info("no external file deps")
-        else:
-            __task_logger.info("will generate external file deps")
-
-        dump_unique_files_in_file(external_file_deps, external_dep_file_txt)
-
-    # gen all deps files before rsync
-    gen_inner_pipeline_file_deps()
-
-    gen_external_file_deps()
 
     def do_rsync(src, dst, deps_file):
         rsync_cmd = f"rsync {__remote_pipeline_specs.rsync_chown_arg} --mkpath -a --dirs --files-from={deps_file} {src}/ {dst}/"
@@ -78,7 +57,8 @@ def upload_task_inputs(
         internal_dep_file_txt
     )
 
-    do_rsync("", f"{__remote_pipeline_specs.ssh_remote_dest}/{__remote_pipeline_specs.pid_base_name}/external-file-deps", external_dep_file_txt)
+    if len(external_file_deps) > 0:
+        do_rsync("", f"{__remote_pipeline_specs.ssh_remote_dest}/{__remote_pipeline_specs.pid_base_name}/external-file-deps", external_dep_file_txt)
 
 
 @DryPipe.python_call()
@@ -125,9 +105,7 @@ def download_task_outputs(
             actual_state = os.path.join(child_task_control_dir, child_task_state)
             os.rename(child_state_file_path.path, actual_state)
 
-
     def gen_result_files():
-
         for child_task_key in __task_process.children_task_keys():
             p = TaskProcess(
                 os.path.join(__pipeline_work_dir, child_task_key),
@@ -138,14 +116,7 @@ def download_task_outputs(
 
         yield f".drypipe/{__task_key}/file-sets-rsync-list.txt"
 
-    result_file_txt = os.path.join(__task_control_dir, "result-files.txt")
-    uniq_files = set()
-    with open(result_file_txt, "w") as tf:
-        for result_file in gen_result_files():
-            if result_file not in uniq_files:
-                tf.write(result_file)
-                tf.write("\n")
-                uniq_files.add(result_file)
+    result_file_txt = __remote_pipeline_specs.dump_unique_files_in_file(gen_result_files(), "result-files.txt")
 
     pid = __pipeline_instance_dir
 

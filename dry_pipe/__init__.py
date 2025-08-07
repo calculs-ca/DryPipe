@@ -396,7 +396,17 @@ class RemotePipelineSpecs:
 
             upload_cmd(overrides_file, dst)
 
+    def dump_unique_files_in_file(self, files, dep_file_name):
+        dep_file_path = os.path.join(self.task_process.control_dir, dep_file_name)
+        uniq_files = set()
+        with open(dep_file_path, "w") as tf:
+            for dep_file in files:
+                if dep_file not in uniq_files:
+                    tf.write(dep_file)
+                    tf.write("\n")
+                    uniq_files.add(dep_file)
 
+        return dep_file_path
 
 class TaskConf:
     """
