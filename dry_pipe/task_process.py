@@ -1179,25 +1179,6 @@ class TaskProcess:
         except TaskFailedException as tfe:
             self._transition_state_file(state_file, "failed", step_number)
 
-    """
-    def run_array(self, limit):
-
-        from dry_pipe.slurm_array_task import SlurmArrayParentTask
-
-        step_number, _, state_file, _ = self.read_task_state(non_existant_ok=True)
-        try:
-            sapt = SlurmArrayParentTask(self)
-
-            all_children_completed = sapt.run_array(False, False, limit)
-
-            if all_children_completed:
-                self.transition_to_completed(state_file)
-        except Exception as ex:
-            self.task_logger.exception(ex)
-            self._transition_state_file(state_file, "failed", step_number)
-            raise ex
-    """
-
     def sbatch_cmd_lines(self):
 
         if self.task_conf.executer_type != "slurm":

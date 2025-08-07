@@ -85,34 +85,35 @@ def download_task_outputs(
 
     __task_logger.debug("remote states:\n %s", remote_exec_result)
 
-    for child_task_key_task_state in remote_exec_result.split("\n"):
-
-        child_task_key_task_state = child_task_key_task_state.strip()
-
-        if child_task_key_task_state == "":
-            continue
-
-        if child_task_key_task_state.startswith("implicit") and "=" in child_task_key_task_state:
-            continue
-
-        child_task_key, child_task_state = child_task_key_task_state.split("/")
-
-        child_task_control_dir = os.path.join(__pipeline_work_dir, child_task_key)
-
-        child_state_file_path = StateFileTracker.find_state_file_if_exists(child_task_control_dir)
-
-        if child_state_file_path is not None:
-            actual_state = os.path.join(child_task_control_dir, child_task_state)
-            os.rename(child_state_file_path.path, actual_state)
+    if __task_process.is_slurm_array_parent():
+        for child_task_key_task_state in remote_exec_result.split("\n"):
+            child_task_key_task_state = child_task_key_task_state.strip()
+            if child_task_key_task_state == "":
+                continue
+            if child_task_key_task_state.startswith("implicit") and "=" in child_task_key_task_state:
+                continue
+            child_task_key, child_task_state = child_task_key_task_state.split("/")
+            child_task_control_dir = os.path.join(__pipeline_work_dir, child_task_key)
+            child_state_file_path = StateFileTracker.find_state_file_if_exists(child_task_control_dir)
+            if child_state_file_path is not None:
+                actual_state = os.path.join(child_task_control_dir, child_task_state)
+                os.rename(child_state_file_path.path, actual_state)
 
     def gen_result_files():
-        for child_task_key in __task_process.children_task_keys():
+
+        def g(task_key):
             p = TaskProcess(
-                os.path.join(__pipeline_work_dir, child_task_key),
+                os.path.join(__pipeline_work_dir, task_key),
                 ensure_all_upstream_deps_complete=False
             )
             for file in p.outputs.rsync_file_list():
                 yield file
+
+        if __task_process.is_slurm_array_parent():
+            for child_task_key in __task_process.children_task_keys():
+                yield from g(child_task_key)
+        else:
+            yield from g(__task_key)
 
         yield f".drypipe/{__task_key}/file-sets-rsync-list.txt"
 
