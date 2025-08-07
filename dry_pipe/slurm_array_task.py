@@ -7,7 +7,7 @@ from typing import List, Iterator, Tuple
 
 from dry_pipe import PortablePopen, TaskConf
 from dry_pipe.state_file_tracker import StateFileTracker
-from dry_pipe.task_lib import upload_array, download_array
+from dry_pipe.task_lib import upload_task_inputs, download_task_outputs
 from dry_pipe.task_process import TaskProcess
 
 logger = logging.getLogger(__name__)
@@ -480,35 +480,29 @@ class SlurmArrayParentTask:
 
         rps = self.task_process.task_conf.remote_pipeline_specs(self.tracker.pipeline_instance_dir)
 
-        upload_array.func(
+        upload_task_inputs.func(
             __task_key=self.task_process.task_key,
             __task_control_dir=self.task_process.control_dir,
-            __user_at_host=rps.user_at_host,
-            __remote_base_dir=rps.remote_base_dir,
-            __ssh_key_file=rps.ssh_key_file,
+            __remote_pipeline_specs=rps,
             __task_logger=self.task_process.task_logger,
             __children_task_keys=self.children_task_keys(),
             __pipeline_work_dir=self.task_process.pipeline_work_dir,
             __pipeline_instance_dir=self.task_process.pipeline_instance_dir,
-            __remote_pipeline_work_dir=rps.remote_instance_work_dir,
-            __task_conf=self.task_process.task_conf
+            __task_conf = self.task_process.task_conf
         )
 
     def _download_array(self):
 
         rps = self.task_process.task_conf.remote_pipeline_specs(self.tracker.pipeline_instance_dir)
 
-        download_array.func(
+        download_task_outputs.func(
             __task_key=self.task_process.task_key,
             __task_control_dir=self.task_process.control_dir,
-            __user_at_host=rps.user_at_host,
-            __remote_base_dir=rps.remote_base_dir,
-            __ssh_key_file=rps.ssh_key_file,
             __task_logger=self.task_process.task_logger,
             __children_task_keys=self.children_task_keys(),
             __pipeline_work_dir=self.task_process.pipeline_work_dir,
             __pipeline_instance_dir=self.task_process.pipeline_instance_dir,
-            __remote_pipeline_work_dir=rps.remote_instance_work_dir
+            __remote_pipeline_specs=rps
         )
 
     @staticmethod

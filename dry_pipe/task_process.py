@@ -300,19 +300,12 @@ class TaskProcess:
                     " that requires task_conf.ssh_remote_dest to be not None"
                 )
             return rps
-
-        if name == "__user_at_host":
-            return _rps().user_at_host
-        elif name == "__remote_base_dir":
-            return _rps().remote_base_dir
-        elif name == "__ssh_key_file":
-            return _rps().ssh_key_file
+        if name == "__remote_pipeline_specs":
+            return _rps()
         elif name == "__task_logger":
             return self.task_logger
         elif name == "__children_task_keys":
             return self._children_task_keys()
-        elif name == "__remote_pipeline_work_dir":
-            return _rps().remote_instance_work_dir
         elif name == "__task_process":
             return self
         elif name == "__task_conf":
@@ -1104,13 +1097,9 @@ class TaskProcess:
 
     def _resolve_steps(self):
         if self.task_conf.ssh_remote_dest is not None and not self.task_conf.is_on_remote_site:
-            if self.is_slurm_array_parent():
-                yield {"call": "python", "module_function": "dry_pipe.task_lib:upload_array"}
-                yield {"call": "python", "module_function": "dry_pipe.task_lib:execute_remote_task"}
-                yield {"call": "python", "module_function": "dry_pipe.task_lib:download_array"}
-
-            else:
-                yield {"call": "python", "module_function": "dry_pipe.task_lib:execute_remote_task"}
+            yield {"call": "python", "module_function": "dry_pipe.task_lib:upload_task_inputs"}
+            yield {"call": "python", "module_function": "dry_pipe.task_lib:execute_remote_task"}
+            yield {"call": "python", "module_function": "dry_pipe.task_lib:download_task_outputs"}
         elif self.is_slurm_array_parent():
             yield {"call": "python", "module_function": "dry_pipe.task_lib:run_array"}
         else:

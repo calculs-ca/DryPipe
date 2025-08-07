@@ -17,17 +17,14 @@ def run_array(__task_process):
 
 
 @DryPipe.python_call()
-def upload_array(
+def upload_task_inputs(
     __task_key,
     __task_control_dir,
-    __user_at_host,
-    __remote_base_dir,
-    __ssh_key_file,
+    __remote_pipeline_specs,
     __task_logger,
     __children_task_keys,
     __pipeline_work_dir,
     __pipeline_instance_dir,
-    __remote_pipeline_work_dir,
     __task_conf
 ):
     from dry_pipe.task_process import TaskProcess
@@ -105,22 +102,8 @@ def upload_array(
 
     gen_external_file_deps()
 
-    ssh_remote_dest = f"{__user_at_host}:{__remote_base_dir}"
-
-    pid = os.path.abspath(os.path.dirname(__pipeline_instance_dir))
-
-    pid_base_name = os.path.basename(__pipeline_instance_dir)
-
-    remote_pid = os.path.join(__remote_base_dir, pid_base_name)
-
-    if __task_conf.run_as_group is None:
-        rsync_chown_arg = ""
-    else:
-        user = __user_at_host.split("@")[0].strip()
-        rsync_chown_arg = f"--chown={user}:{__task_conf.run_as_group}"
-
     def do_rsync(src, dst, deps_file):
-        rsync_cmd = f"rsync {rsync_chown_arg} --mkpath -a --dirs --files-from={deps_file} {src}/ {dst}/"
+        rsync_cmd = f"rsync {__remote_pipeline_specs.rsync_chown_arg} --mkpath -a --dirs --files-from={deps_file} {src}/ {dst}/"
         __task_logger.info("%s", rsync_cmd)
         invoke_rsync(rsync_cmd)
 
@@ -133,7 +116,7 @@ def upload_array(
                 tmp_overrides.write(json.dumps(
                     {
                         "is_on_remote_site": True,
-                        "external_files_root": f"{remote_pid}/external-file-deps"
+                        "external_files_root": f"{__remote_pipeline_specs.remote_pid}/external-file-deps"
                     },
                     indent=2
                 ))
@@ -142,40 +125,37 @@ def upload_array(
                 # make a copy, just for transparency (self documenting)
                 shutil.copy(
                     overrides_file,
-                    os.path.join(__task_control_dir, f"task-conf-overrides-{__user_at_host}.json")
+                    os.path.join(__task_control_dir, f"task-conf-overrides-{__remote_pipeline_specs.user_at_host}.json")
                 )
-                dst = f"{__user_at_host}:{remote_pid}/.drypipe/{__task_key}/"
-                invoke_rsync(f"rsync {rsync_chown_arg} --mkpath {overrides_file} {dst}")
+                dst = f"{__remote_pipeline_specs.user_at_host}:{__remote_pipeline_specs.remote_pid}/.drypipe/{__task_key}/"
+                invoke_rsync(f"rsync {__remote_pipeline_specs.rsync_chown_arg} --mkpath {overrides_file} {dst}")
             finally:
                 if os.path.exists(overrides_file):
                     os.remove(overrides_file)
 
     gen_task_conf_remote_overrides()
 
-    do_rsync(pid, ssh_remote_dest, internal_dep_file_txt)
+    do_rsync(__remote_pipeline_specs.absolute_pid, __remote_pipeline_specs.ssh_remote_dest, internal_dep_file_txt)
 
-    do_rsync("", f"{ssh_remote_dest}/{pid_base_name}/external-file-deps", external_dep_file_txt)
+    do_rsync("", f"{__remote_pipeline_specs.ssh_remote_dest}/{__remote_pipeline_specs.pid_base_name}/external-file-deps", external_dep_file_txt)
 
 
 @DryPipe.python_call()
-def download_array(
+def download_task_outputs(
     __task_key,
     __task_control_dir,
-    __user_at_host,
-    __remote_base_dir,
-    __ssh_key_file,
     __task_logger,
     __children_task_keys,
     __pipeline_work_dir,
     __pipeline_instance_dir,
-    __remote_pipeline_work_dir
+    __remote_pipeline_specs
 ):
     from dry_pipe.task_process import TaskProcess
 
     #fetch states, and generate rsync list
-    remote_cli = os.path.join(__remote_pipeline_work_dir, "cli")
+    remote_cli = os.path.join(__remote_pipeline_specs.remote_instance_work_dir, "cli")
 
-    remote_exec_result = exec_remote(__user_at_host, [
+    remote_exec_result = exec_remote(__remote_pipeline_specs.user_at_host, [
         "python3",
         remote_cli,
         "list-array-states",
@@ -232,7 +212,7 @@ def download_array(
     pipeline_base_name = os.path.basename(pid)
 
     ssh_remote_dest = \
-        f"{__user_at_host}:{__remote_base_dir}/{pipeline_base_name}/"
+        f"{__remote_pipeline_specs.user_at_host}:{__remote_pipeline_specs.remote_base_dir}/{pipeline_base_name}/"
 
     rsync_cmd = f"rsync -a --dirs --partial --ignore-missing-args --files-from={result_file_txt} {ssh_remote_dest} {pid}/"
     __task_logger.debug("rsync file list: %s", rsync_cmd)
@@ -249,24 +229,21 @@ def download_array(
 @DryPipe.python_call()
 def execute_remote_task(
     __task_key,
-    __user_at_host,
-    __remote_base_dir,
-    __ssh_key_file,
+    __remote_pipeline_specs,
     __pipeline_instance_name,
-    __remote_pipeline_work_dir,
     __task_conf,
     __task_logger
 ):
 
-    remote_cli = os.path.join(__remote_pipeline_work_dir, "cli")
-    remote_task_control_dir = os.path.join(__remote_pipeline_work_dir, __task_key)
+    remote_cli = os.path.join(__remote_pipeline_specs.remote_instance_work_dir, "cli")
+    remote_task_control_dir = os.path.join(__remote_pipeline_specs.remote_instance_work_dir, __task_key)
 
     cmd = [
         "python3", remote_cli, "task", remote_task_control_dir, "--from-remote"
     ]
 
     if __task_conf.run_as_group is not None:
-        __task_logger.info("remote execution at %s, as group %s ", __user_at_host,  __task_conf.run_as_group)
+        __task_logger.info("remote execution at %s, as group %s ", __remote_pipeline_specs.user_at_host,  __task_conf.run_as_group)
         cmd = " ".join(cmd)
         cmd = [
             "newgrp", __task_conf.run_as_group, "<<<", f"'{cmd}'"
@@ -275,4 +252,4 @@ def execute_remote_task(
         __task_logger.info("remote execution at %s")
 
 
-    exec_remote(__user_at_host, cmd)
+    exec_remote(__remote_pipeline_specs.user_at_host, cmd)

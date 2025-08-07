@@ -354,6 +354,21 @@ class RemotePipelineSpecs:
 
         self.remote_cli = os.path.join(self.remote_instance_work_dir, "cli")
 
+        self.ssh_remote_dest = f"{self.user_at_host}:{self.remote_base_dir}"
+
+        self.absolute_pid = os.path.abspath(os.path.dirname(pipeline_instance_dir))
+
+        self.pid_base_name = os.path.basename(pipeline_instance_dir)
+
+        self.remote_pid = os.path.join(self.remote_base_dir, self.pid_base_name)
+
+        if task_conf.run_as_group is None:
+            self.rsync_chown_arg = ""
+        else:
+            user = self.user_at_host.split("@")[0].strip()
+            self.rsync_chown_arg = f"--chown={user}:{task_conf.run_as_group}"
+
+
 
 
 class TaskConf:
