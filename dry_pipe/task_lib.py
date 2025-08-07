@@ -22,13 +22,11 @@ def upload_task_inputs(
     __task_control_dir,
     __remote_pipeline_specs,
     __task_logger,
-    __children_task_keys,
+    __task_process,
     __pipeline_work_dir,
     __pipeline_instance_dir,
     __task_conf
 ):
-    from dry_pipe.task_process import TaskProcess
-
     def dump_unique_files_in_file(files, dep_file):
         uniq_files = set()
         with open(dep_file, "w") as tf:
@@ -44,48 +42,9 @@ def upload_task_inputs(
 
     def gen_inner_pipeline_file_deps():
 
-        def gen_internal_file_deps():
-            def _gen_0():
-                for child_task_key in __children_task_keys:
-
-                    p = TaskProcess(
-                        os.path.join(__pipeline_work_dir, child_task_key),
-                        ensure_all_upstream_deps_complete=True
-                    )
-
-                    for _, file in p.inputs.rsync_file_list_produced_upstream():
-                        yield file
-
-                    for file in p.inputs.rsync_output_var_file_list_produced_upstream():
-                        yield file
-
-                    for _, file in p.inputs.rsync_external_file_list():
-                        external_file_deps.append(file)
-
-                    yield f".drypipe/{child_task_key}/state.ready"
-                    yield f".drypipe/{child_task_key}/task-conf.json"
-
-                    for step in p.task_conf.step_invocations:
-                        if step["call"] == "bash":
-                            _, script = step["script"].rsplit("/", 1)
-                            yield f".drypipe/{child_task_key}/{script}"
-
-                yield ".drypipe/cli"
-
-                for py_file in glob.glob(os.path.join(os.path.dirname(__file__), "*.py")):
-                    yield f".drypipe/dry_pipe/{os.path.basename(py_file)}"
-
-                yield f".drypipe/{__task_key}/task-conf.json"
-                yield f".drypipe/{__task_key}/task-keys.tsv"
-                #yield f".drypipe/{__task_key}/state.ready"
-
-            pipeline_instance_name = os.path.basename(__pipeline_instance_dir)
-            for f in _gen_0():
-                yield f"{pipeline_instance_name}/{f}"
-
         __task_logger.info("will generate file list for upload")
 
-        dump_unique_files_in_file(gen_internal_file_deps(), internal_dep_file_txt)
+        dump_unique_files_in_file(__task_process.gen_internal_file_deps(external_file_deps), internal_dep_file_txt)
 
         __task_logger.info("done")
 
@@ -113,7 +72,11 @@ def upload_task_inputs(
 
     __remote_pipeline_specs.gen_and_upload_task_conf_remote_overrides(rsync_upload)
 
-    do_rsync(__remote_pipeline_specs.absolute_pid, __remote_pipeline_specs.ssh_remote_dest, internal_dep_file_txt)
+    do_rsync(
+        __remote_pipeline_specs.absolute_pid,
+        f"{__remote_pipeline_specs.ssh_remote_dest}/{__remote_pipeline_specs.pid_base_name}",
+        internal_dep_file_txt
+    )
 
     do_rsync("", f"{__remote_pipeline_specs.ssh_remote_dest}/{__remote_pipeline_specs.pid_base_name}/external-file-deps", external_dep_file_txt)
 
@@ -123,7 +86,7 @@ def download_task_outputs(
     __task_key,
     __task_control_dir,
     __task_logger,
-    __children_task_keys,
+    __task_process,
     __pipeline_work_dir,
     __pipeline_instance_dir,
     __remote_pipeline_specs
@@ -136,7 +99,7 @@ def download_task_outputs(
     remote_exec_result = exec_remote(__remote_pipeline_specs.user_at_host, [
         "python3",
         remote_cli,
-        "list-array-states",
+        "list-states",
         f"--task-key={__task_key}"
     ])
 
@@ -162,11 +125,10 @@ def download_task_outputs(
             actual_state = os.path.join(child_task_control_dir, child_task_state)
             os.rename(child_state_file_path.path, actual_state)
 
-    file_set_list = f".drypipe/{__task_key}/file-sets-rsync-list.txt"
 
     def gen_result_files():
 
-        for child_task_key in __children_task_keys:
+        for child_task_key in __task_process.children_task_keys():
             p = TaskProcess(
                 os.path.join(__pipeline_work_dir, child_task_key),
                 ensure_all_upstream_deps_complete=False
@@ -174,7 +136,7 @@ def download_task_outputs(
             for file in p.outputs.rsync_file_list():
                 yield file
 
-        yield file_set_list
+        yield f".drypipe/{__task_key}/file-sets-rsync-list.txt"
 
     result_file_txt = os.path.join(__task_control_dir, "result-files.txt")
     uniq_files = set()
@@ -196,7 +158,7 @@ def download_task_outputs(
     __task_logger.debug("rsync file list: %s", rsync_cmd)
     invoke_rsync(rsync_cmd)
 
-    file_set_list = os.path.join(__pipeline_instance_dir, file_set_list)
+    file_set_list = __task_process.file_sets_rsync_list_file()
 
     if os.path.exists(file_set_list) and os.stat(file_set_list).st_size > 0:
         rsync_cmd = f"rsync -a --dirs --partial --files-from={file_set_list} {ssh_remote_dest} {pid}/"

@@ -281,10 +281,48 @@ class TaskProcess:
         if self.task_conf.sbatch_options is not None and len(self.task_conf.sbatch_options) > 0:
             yield " ".join(self.task_conf.sbatch_options)
 
-    def _children_task_keys(self):
+    def children_task_keys(self):
         with open(os.path.join(self.control_dir,  "task-keys.tsv")) as f:
             for line in f:
                 yield line.strip()
+
+    def gen_internal_file_deps(self, external_file_deps):
+
+        def g(task_key):
+            p = TaskProcess(
+                os.path.join(self.pipeline_work_dir, task_key),
+                ensure_all_upstream_deps_complete=True
+            )
+
+            for _, file in p.inputs.rsync_file_list_produced_upstream():
+                yield file
+
+            for file in p.inputs.rsync_output_var_file_list_produced_upstream():
+                yield file
+
+            for _, file in p.inputs.rsync_external_file_list():
+                external_file_deps.append(file)
+            yield f".drypipe/{task_key}/task-conf.json"
+
+            for step in p.task_conf.step_invocations:
+                if step["call"] == "bash":
+                    _, script = step["script"].rsplit("/", 1)
+                    yield f".drypipe/{task_key}/{script}"
+
+        if self.is_slurm_array_parent():
+            yield f".drypipe/{self.task_key}/task-keys.tsv"
+            for child_task_key in self.children_task_keys():
+                yield from g(child_task_key)
+                yield f".drypipe/{child_task_key}/state.ready"
+
+        yield from g(self.task_key)
+
+        yield ".drypipe/cli"
+        yield ".drypipe/cli-init.sh"
+
+        for py_file in glob.glob(os.path.join(os.path.dirname(__file__), "*.py")):
+            yield f".drypipe/dry_pipe/{os.path.basename(py_file)}"
+
 
     def _get_drypipe_arg(self, name, mod_func):
 
@@ -299,7 +337,7 @@ class TaskProcess:
         elif name == "__task_logger":
             return self.task_logger
         elif name == "__children_task_keys":
-            return self._children_task_keys()
+            return self.children_task_keys()
         elif name == "__task_process":
             return self
         elif name == "__task_conf":
@@ -1375,21 +1413,26 @@ class TaskProcess:
 
     def generate_rsync_list_for_file_sets(self):
 
-        from dry_pipe.slurm_array_task import SlurmArrayParentTask
-        array_parent_task = SlurmArrayParentTask(self)
-        c = 0
+        if self.is_slurm_array_parent():
+            from dry_pipe.slurm_array_task import SlurmArrayParentTask
+            array_parent_task = SlurmArrayParentTask(self)
+            task_keys_iterator = array_parent_task.children_task_keys()
+        else:
+            task_keys_iterator = [self.task_key]
+
+
         with open(self.file_sets_rsync_list_file(), "w") as rsync_list_file:
 
-            for child_task_key in array_parent_task.children_task_keys():
-                child_process = TaskProcess(
-                    os.path.join(self.pipeline_work_dir, child_task_key),
+            for task_key in task_keys_iterator:
+                task_process = TaskProcess(
+                    os.path.join(self.pipeline_work_dir, task_key),
                     ensure_all_upstream_deps_complete=False
                 )
 
-                for f in child_process.outputs.rsync_filter_list(child_process.task_output_dir):
+                for f in task_process.outputs.rsync_filter_list(task_process.task_output_dir):
                     rsync_list_file.write(f)
                     rsync_list_file.write(f"\n")
-                    c += 1
+
 
     def _set_apptainer_bind_in_env(self, env, script=None):
 

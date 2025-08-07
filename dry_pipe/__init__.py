@@ -362,7 +362,7 @@ class RemotePipelineSpecs:
 
         self.ssh_remote_dest = f"{self.user_at_host}:{self.remote_base_dir}"
 
-        self.absolute_pid = os.path.abspath(os.path.dirname(pipeline_instance_dir))
+        self.absolute_pid = os.path.abspath(pipeline_instance_dir)
 
         self.pid_base_name = os.path.basename(pipeline_instance_dir)
 
@@ -395,6 +395,7 @@ class RemotePipelineSpecs:
             dst = f"{self.user_at_host}:{self.remote_pid}/.drypipe/{self.task_process.task_key}/"
 
             upload_cmd(overrides_file, dst)
+
 
 
 class TaskConf:

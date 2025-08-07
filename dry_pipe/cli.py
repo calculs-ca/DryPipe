@@ -12,6 +12,7 @@ from dry_pipe.pipeline_instance import Monitor
 from dry_pipe.task_process import TaskProcess
 from dry_pipe.slurm_array_task import SlurmArrayParentTask
 from dry_pipe.reports import timers_for_tasks
+from dry_pipe.state_machine import StateFileTracker
 
 logger = logging.getLogger(__name__)
 
@@ -339,16 +340,25 @@ class Cli:
                 self.parsed_args.slurm_account,
                 split_into=self.parsed_args.split
             )
-        elif self.parsed_args.command == 'list-array-states':
+        elif self.parsed_args.command == 'list-states':
             task_process = TaskProcess(
                 os.path.join(self.parsed_args.pipeline_instance_dir, ".drypipe", self.parsed_args.task_key)
             )
 
             task_process.generate_rsync_list_for_file_sets()
 
-            array_parent_task = SlurmArrayParentTask(task_process)
+            def p():
+                if task_process.is_slurm_array_parent():
+                    array_parent_task = SlurmArrayParentTask(task_process)
+                    for task_key, state in array_parent_task.list_array_states():
+                        yield task_key, state
 
-            for task_key, state in array_parent_task.list_array_states():
+                else:
+                    state_file_path = StateFileTracker.find_state_file_if_exists(task_process.control_dir)
+                    if state_file_path is not None:
+                        yield task_process.task_key, state_file_path.name
+
+            for task_key, state in p():
                 print(f"{task_key}/{state}")
 
         elif self.parsed_args.command == 'restart-failed-array-tasks':
@@ -396,7 +406,7 @@ class Cli:
         self.add_upload_download_array_args(self.subparsers.add_parser('array-download'))
         self.add_create_array_parent_args(self.subparsers.add_parser('create-array-parent'))
         self._add_task_key_parser_arg(
-            self.subparsers.add_parser('list-array-states')
+            self.subparsers.add_parser('list-states')
         )
 
         restart_array = self.subparsers.add_parser('restart-failed-array-tasks')
