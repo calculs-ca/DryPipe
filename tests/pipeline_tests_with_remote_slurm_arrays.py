@@ -58,8 +58,8 @@ class RemoteArrayTaskFullyAutomatedRun(PipelineWithSlurmArray):
                 "PYTHONPATH": ":".join([
                     f"$__pipeline_instance_dir/external-file-deps{repo_dir}"
                 ])
-            },
-            run_as_group="def-xroucou"
+            }
+            #run_as_group="def-xroucou"
         )
         tc.python_bin = None
         return tc
@@ -127,15 +127,15 @@ class CliTestsPipelineWithSlurmArrayRemote(PipelineWithSlurmArray):
             extra_env={
                 "DRYPIPE_TASK_DEBUG": "True",
                 "PYTHONPATH": ":".join([
-                    f"{remote_test_site.remote_base_dir()}/CliTestsPipelineWithSlurmArrayRemote.test_array_upload/.drypipe",
-                    f"{remote_test_site.remote_base_dir()}/CliTestsPipelineWithSlurmArrayRemote.test_array_upload/external-file-deps/{repo_dir}"
+                    f"{remote_test_site.remote_base_dir()}/CliTestsPipelineWithSlurmArrayRemote.test_array_upload_run_and_download/.drypipe",
+                    f"{remote_test_site.remote_base_dir()}/CliTestsPipelineWithSlurmArrayRemote.test_array_upload_run_and_download/external-file-deps{repo_dir}"
                 ])
             }
         )
         tc.python_bin = None
         return tc
 
-    def test_array_upload(self):
+    def test_array_upload_run_and_download(self):
         d = TestSandboxDir(self)
 
         pipeline_instance = self.create_prepare_and_run_pipeline(d)
