@@ -119,7 +119,7 @@ class GlobusFileTransfer:
 
         if log_file is not None:
             with open(log_file, "w") as u:
-                json.dump(transfer_items, u)
+                json.dump(transfer_items, u, indent=4)
 
         transfer_res = requests.post(
             "https://transfer.api.globusonline.org/v0.10/transfer",
