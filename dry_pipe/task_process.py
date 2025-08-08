@@ -1132,9 +1132,14 @@ class TaskProcess:
 
     def _resolve_steps(self):
         if self.task_conf.ssh_remote_dest is not None and not self.task_conf.is_on_remote_site:
-            yield {"call": "python", "module_function": "dry_pipe.task_lib:upload_task_inputs"}
-            yield {"call": "python", "module_function": "dry_pipe.task_lib:execute_remote_task"}
-            yield {"call": "python", "module_function": "dry_pipe.task_lib:download_task_outputs"}
+            if self.task_conf.globus_transfer is not None:
+                yield {"call": "python", "module_function": "dry_pipe.globus:upload_task_inputs_globus"}
+                yield {"call": "python", "module_function": "dry_pipe.task_lib:execute_remote_task"}
+                yield {"call": "python", "module_function": "dry_pipe.globus:download_task_outputs_globus"}
+            else:
+                yield {"call": "python", "module_function": "dry_pipe.task_lib:upload_task_inputs"}
+                yield {"call": "python", "module_function": "dry_pipe.task_lib:execute_remote_task"}
+                yield {"call": "python", "module_function": "dry_pipe.task_lib:download_task_outputs"}
         elif self.is_slurm_array_parent():
             yield {"call": "python", "module_function": "dry_pipe.task_lib:run_array"}
         else:

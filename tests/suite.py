@@ -13,7 +13,8 @@ from tests.pipeline_tests_with_local_slurm import all_with_local_slurm
 from tests import pipeline_tests_with_slurm_arrays
 from tests.pipeline_tests_with_remote_slurm_arrays import CliTestsPipelineWithSlurmArrayRemote, \
     RemoteArrayTaskFullyAutomatedRun
-from tests.pipeline_tests_with_remote_tasks import RemoteTestFileSet, RemoteTestFileSetWithDataDirVar
+from tests.pipeline_tests_with_remote_tasks import RemoteTestFileSet, RemoteTestFileSetWithDataDirVar, \
+    RemoteTestFileSetWithGlobus
 from tests.service_runner_tests import ServiceRunnerTest1
 
 
@@ -60,6 +61,11 @@ def remote_task_tests():
         # ^ not remote, but useful, since it's the basis of the two following tests
         RemoteTestFileSetWithDataDirVar,
         RemoteTestFileSet
+    ]
+
+def globus_tests():
+    return [
+        RemoteTestFileSetWithGlobus
     ]
 
 def all_remote_tests():
@@ -112,7 +118,8 @@ if __name__ == '__main__':
         "exhaustive_test_suite": exhaustive_test_suite,
         "remote_array_tests": array_remote_tests,
         "all_remote_tests": all_remote_tests,
-        "cli_tests": cli_tests
+        "cli_tests": cli_tests,
+        "globus_tests": globus_tests
     }
 
     def gen_test_classes(test_classes_or_list_of_test_classes):

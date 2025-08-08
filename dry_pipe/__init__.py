@@ -12,6 +12,7 @@ from tempfile import TemporaryDirectory
 from dry_pipe.core_lib import PortablePopen
 
 from dry_pipe.task import Task, TaskStep, TaskInput, TaskOutput, FileSet
+from dry_pipe.state_file_tracker import StateFileTracker
 
 
 class DryPipe:
@@ -358,6 +359,8 @@ class RemotePipelineSpecs:
             ".drypipe"
         )
 
+        self.remote_control_dir = os.path.join(self.remote_instance_work_dir, self.task_process.task_key)
+
         self.remote_cli = os.path.join(self.remote_instance_work_dir, "cli")
 
         self.ssh_remote_dest = f"{self.user_at_host}:{self.remote_base_dir}"
@@ -374,18 +377,28 @@ class RemotePipelineSpecs:
             user = self.user_at_host.split("@")[0].strip()
             self.rsync_chown_arg = f"--chown={user}:{task_conf.run_as_group}"
 
+    def _write_override_file_into(self, f):
+        f.write(json.dumps(
+            {
+                "is_on_remote_site": True,
+                "external_files_root": f"{self.remote_pid}/external-file-deps"
+            },
+            indent=2
+        ))
+
+    def gen_override_file(self):
+        overrides_file = os.path.join(self.task_process.control_dir, f"task-conf-overrides-{self.user_at_host}.json")
+        with open(overrides_file, "w") as f:
+            self._write_override_file_into(f)
+
+        return overrides_file
+
     def gen_and_upload_task_conf_remote_overrides(self, upload_cmd):
         overrides_basename = "task-conf-overrides.json"
         with TemporaryDirectory(dir=self.task_process.control_dir) as tmp_dir:
             overrides_file = os.path.join(tmp_dir, overrides_basename)
             with open(overrides_file, "w") as tmp_overrides:
-                tmp_overrides.write(json.dumps(
-                    {
-                        "is_on_remote_site": True,
-                        "external_files_root": f"{self.remote_pid}/external-file-deps"
-                    },
-                    indent=2
-                ))
+                self._write_override_file_into(tmp_overrides)
 
             # make a copy, just for transparency (self documenting)
             shutil.copy(
@@ -427,6 +440,19 @@ class RemotePipelineSpecs:
 
         yield f".drypipe/{self.task_process.task_key}/file-sets-rsync-list.txt"
 
+    def reconcile_local_array_states_with_remote_state(self, remote_exec_result, __pipeline_work_dir):
+        for child_task_key_task_state in remote_exec_result.split("\n"):
+            child_task_key_task_state = child_task_key_task_state.strip()
+            if child_task_key_task_state == "":
+                continue
+            if child_task_key_task_state.startswith("implicit") and "=" in child_task_key_task_state:
+                continue
+            child_task_key, child_task_state = child_task_key_task_state.split("/")
+            child_task_control_dir = os.path.join(__pipeline_work_dir, child_task_key)
+            child_state_file_path = StateFileTracker.find_state_file_if_exists(child_task_control_dir)
+            if child_state_file_path is not None:
+                actual_state = os.path.join(child_task_control_dir, child_task_state)
+                os.rename(child_state_file_path.path, actual_state)
 
 
 class TaskConf:

@@ -20,7 +20,6 @@ def upload_task_inputs(
     __remote_pipeline_specs,
     __task_logger,
     __task_process,
-    __pipeline_work_dir,
     __pipeline_instance_dir,
     __task_conf
 ):
@@ -97,18 +96,7 @@ def download_task_outputs(
     __task_logger.debug("remote states:\n %s", remote_exec_result)
 
     if __task_process.is_slurm_array_parent():
-        for child_task_key_task_state in remote_exec_result.split("\n"):
-            child_task_key_task_state = child_task_key_task_state.strip()
-            if child_task_key_task_state == "":
-                continue
-            if child_task_key_task_state.startswith("implicit") and "=" in child_task_key_task_state:
-                continue
-            child_task_key, child_task_state = child_task_key_task_state.split("/")
-            child_task_control_dir = os.path.join(__pipeline_work_dir, child_task_key)
-            child_state_file_path = StateFileTracker.find_state_file_if_exists(child_task_control_dir)
-            if child_state_file_path is not None:
-                actual_state = os.path.join(child_task_control_dir, child_task_state)
-                os.rename(child_state_file_path.path, actual_state)
+        __remote_pipeline_specs.reconcile_local_array_states_with_remote_state(remote_exec_result, __pipeline_work_dir)
 
     result_file_txt = __remote_pipeline_specs.dump_unique_files_in_file(
         __remote_pipeline_specs.gen_result_files(),
