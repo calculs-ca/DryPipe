@@ -408,6 +408,27 @@ class RemotePipelineSpecs:
 
         return dep_file_path
 
+    def gen_result_files(self):
+        from dry_pipe.task_process import TaskProcess
+
+        def g(task_key):
+            p = TaskProcess(
+                os.path.join(self.task_process.pipeline_work_dir, task_key),
+                ensure_all_upstream_deps_complete=False
+            )
+            for file in p.outputs.rsync_file_list():
+                yield file
+
+        if self.task_process.is_slurm_array_parent():
+            for child_task_key in self.task_process.children_task_keys():
+                yield from g(child_task_key)
+        else:
+            yield from g(self.task_process.task_key)
+
+        yield f".drypipe/{self.task_process.task_key}/file-sets-rsync-list.txt"
+
+
+
 class TaskConf:
     """
     :param executer_type: 'process' or 'slurm'

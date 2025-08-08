@@ -71,7 +71,6 @@ def download_task_outputs(
     __pipeline_instance_dir,
     __remote_pipeline_specs
 ):
-    from dry_pipe.task_process import TaskProcess
 
     #fetch states, and generate rsync list
     remote_cli = os.path.join(__remote_pipeline_specs.remote_instance_work_dir, "cli")
@@ -99,25 +98,10 @@ def download_task_outputs(
                 actual_state = os.path.join(child_task_control_dir, child_task_state)
                 os.rename(child_state_file_path.path, actual_state)
 
-    def gen_result_files():
-
-        def g(task_key):
-            p = TaskProcess(
-                os.path.join(__pipeline_work_dir, task_key),
-                ensure_all_upstream_deps_complete=False
-            )
-            for file in p.outputs.rsync_file_list():
-                yield file
-
-        if __task_process.is_slurm_array_parent():
-            for child_task_key in __task_process.children_task_keys():
-                yield from g(child_task_key)
-        else:
-            yield from g(__task_key)
-
-        yield f".drypipe/{__task_key}/file-sets-rsync-list.txt"
-
-    result_file_txt = __remote_pipeline_specs.dump_unique_files_in_file(gen_result_files(), "result-files.txt")
+    result_file_txt = __remote_pipeline_specs.dump_unique_files_in_file(
+        __remote_pipeline_specs.gen_result_files(),
+        "result-files.txt"
+    )
 
     pid = __pipeline_instance_dir
 
