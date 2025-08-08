@@ -481,7 +481,8 @@ class TaskConf:
             label=None,
             work_on_local_file_copies=None,
             run_as_group=None,
-            apptainer_exec_args=None
+            apptainer_exec_args=None,
+            globus_transfer=None
     ):
 
         self.external_files_root = None
@@ -533,6 +534,7 @@ class TaskConf:
         self.outputs = []
         self.run_as_group = run_as_group
         self.apptainer_exec_args = apptainer_exec_args
+        self.globus_transfer = globus_transfer
 
         if extra_env is not None:
             if not isinstance(extra_env, dict):
@@ -664,23 +666,6 @@ class TaskConf:
             self.command_before_task,
             self.remote_pipeline_code_dir,
             python_bin,
-            self.remote_base_dir,
-            self.remote_containers_dir,
-            self.init_bash_command,
-            self.python_interpreter_switches,
-            extra_env=self.extra_env
-        )
-
-    def override_executer(self, executer_type):
-        return TaskConf(
-            executer_type,
-            self.ssh_remote_dest,
-            self.slurm_account,
-            self.sbatch_options,
-            self.container,
-            self.command_before_task,
-            self.remote_pipeline_code_dir,
-            self.python_bin,
             self.remote_base_dir,
             self.remote_containers_dir,
             self.init_bash_command,

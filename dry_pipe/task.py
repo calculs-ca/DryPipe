@@ -537,7 +537,11 @@ class TaskInputs:
         for task_key in upstream_output_var_deps:
             yield f".drypipe/{task_key}/output_vars"
 
-    def rsync_external_file_list(self):
+    def pre_existing_non_produced_file_list(self):
+        """
+        A pre existing file is most likely an input file, not produced by the pipeline.
+        It can be in the pipeline_instance_dir, or not
+        """
         for i in self._task_inputs.values():
             if not i.is_upstream_output() and i.is_file():
                 yield i.name, i.file_name

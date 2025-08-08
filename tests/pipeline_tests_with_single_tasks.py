@@ -3,7 +3,6 @@ from pathlib import Path
 
 from base_pipeline_test import BasePipelineTest
 from dry_pipe import DryPipe, TaskConf
-from dry_pipe.pipeline import Pipeline
 
 
 @DryPipe.python_call()
@@ -357,7 +356,9 @@ class PipelineWith4MixedStepsNoCrash(BasePipelineTest):
             fi
     
             echo "s3" >> $out_file    
-        """).calls(
+        """,
+        container="singularity-test-container.sif"
+        ).calls(
             step4_in_python
         )()
 
@@ -459,18 +460,36 @@ class PipelineWith3StepsCrash3InContainer(PipelineWith3StepsCrash3):
 
 class TestFileSet(BasePipelineTest):
 
+    def init_pipeline_instance(self, pipeline_instance):
+
+        pid = pipeline_instance.state_file_tracker.pipeline_instance_dir
+
+        data_dir = Path(pid, "data-dir")
+        data_dir.mkdir(exist_ok=False)
+
+        def dump_in_file(file_name, str_content):
+            with open(Path(data_dir, file_name), "w") as f:
+                f.write(str_content)
+
+        dump_in_file("palindrome.txt", "123454321")
+
     def dag_gen(self, dsl):
         yield dsl.task(
             key="t",
             task_conf=self.task_conf()
         ).inputs(
             x=3,
-            y=5
+            y=5,
+            palindrome_file=Path("data-dir/palindrome.txt")
         ).outputs(
-            random_files=dsl.file_set("**/*", "*.no")
+            random_files=dsl.file_set("**/*", "*.no"),
+            palindrome=int
         ).calls(
             """
             #!/usr/bin/bash
+                        
+            export palindrome=`cat $palindrome_file`            
+            cp $palindrome_file $__task_output_dir            
             
             mkdir -p $__task_output_dir/a1/b        
             mkdir -p $__task_output_dir/a2/c/x/y/z            
@@ -480,9 +499,7 @@ class TestFileSet(BasePipelineTest):
             
             echo "z" > $__task_output_dir/z.no                    
             echo "z" > $__task_output_dir/a2/b.txt
-
-            mkdir -p $__task_output_dir/../z
-            echo "z" > $__task_output_dir/../z/x.txt            
+            
             """
         )()
 
@@ -491,13 +508,18 @@ class TestFileSet(BasePipelineTest):
             {
                 "t/a2/b.txt",
                 "t/a1/a.yes",
-                "t/a2/c/x/y/z/pop"
+                "t/a2/c/x/y/z/pop",
+                "t/palindrome.txt",
             },
             {
                 str(Path(f).relative_to(Path(self.pipeline_instance_dir, "output")))
                 for f in tasks_by_keys["t"].outputs.random_files
             }
         )
+
+        self.assertEqual(str(tasks_by_keys["t"].outputs.palindrome), "123454321")
+
+        self.assertEqual(int(tasks_by_keys["t"].outputs.palindrome), 123454321)
 
 
 

@@ -300,8 +300,11 @@ class TaskProcess:
             for file in p.inputs.rsync_output_var_file_list_produced_upstream():
                 yield file
 
-            for _, file in p.inputs.rsync_external_file_list():
-                external_file_deps.append(file)
+            for _, file in p.inputs.pre_existing_non_produced_file_list():
+                if os.path.isabs(file):
+                    external_file_deps.append(file)
+                else:
+                    yield file
             yield f".drypipe/{task_key}/task-conf.json"
 
             for step in p.task_conf.step_invocations:
@@ -1085,7 +1088,7 @@ class TaskProcess:
 
         def gen():
             local_inputs = self._local_inputs_root()
-            for var_name, file in self.inputs.rsync_external_file_list():
+            for var_name, file in self.inputs.pre_existing_non_produced_file_list():
                 yield var_name, os.path.join(local_inputs, file)
 
             for var_name, file in self.inputs.rsync_file_list_produced_upstream():
@@ -1098,7 +1101,7 @@ class TaskProcess:
         return dict(gen())
 
     def dependent_file_list(self):
-        for var_name, file in self.inputs.rsync_external_file_list():
+        for var_name, file in self.inputs.pre_existing_non_produced_file_list():
             yield file
 
         for var_name, file in self.inputs.rsync_file_list_produced_upstream():

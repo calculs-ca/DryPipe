@@ -1,4 +1,6 @@
 import os
+from pathlib import Path
+
 from dry_pipe import DryPipe
 from dry_pipe.core_lib import invoke_rsync, exec_remote
 from dry_pipe.state_file_tracker import StateFileTracker
@@ -27,8 +29,16 @@ def upload_task_inputs(
 
     __task_logger.info("will generate file list for upload")
 
+    def g():
+        for f in __task_process.gen_internal_file_deps(external_file_deps):
+            ff = Path(__pipeline_instance_dir, f)
+            if ff.is_dir() and not f.endswith("/"):
+                yield f"{f}/"
+            else:
+                yield f
+
     internal_dep_file_txt = __remote_pipeline_specs.dump_unique_files_in_file(
-        __task_process.gen_internal_file_deps(external_file_deps),
+        g(),
         "deps.txt"
     )
 
@@ -40,14 +50,16 @@ def upload_task_inputs(
         external_dep_file_txt = __remote_pipeline_specs.dump_unique_files_in_file(external_file_deps, "external-deps.txt")
 
 
+    def rs(cmd):
+        __task_logger.info(f"running command: {cmd}")
+        invoke_rsync(cmd)
+
     def do_rsync(src, dst, deps_file):
-        rsync_cmd = f"rsync {__remote_pipeline_specs.rsync_chown_arg} --mkpath -a --dirs --files-from={deps_file} {src}/ {dst}/"
-        __task_logger.info("%s", rsync_cmd)
-        invoke_rsync(rsync_cmd)
+        rs(f"rsync {__remote_pipeline_specs.rsync_chown_arg} --mkpath -a --dirs --files-from={deps_file} {src}/ {dst}/")
 
 
     def rsync_upload(overrides_file, dst):
-        invoke_rsync(f"rsync {__remote_pipeline_specs.rsync_chown_arg} --mkpath {overrides_file} {dst}")
+        rs(f"rsync {__remote_pipeline_specs.rsync_chown_arg} --mkpath {overrides_file} {dst}")
 
     __remote_pipeline_specs.gen_and_upload_task_conf_remote_overrides(rsync_upload)
 
@@ -110,16 +122,16 @@ def download_task_outputs(
     ssh_remote_dest = \
         f"{__remote_pipeline_specs.user_at_host}:{__remote_pipeline_specs.remote_base_dir}/{pipeline_base_name}/"
 
-    rsync_cmd = f"rsync -a --dirs --partial --ignore-missing-args --files-from={result_file_txt} {ssh_remote_dest} {pid}/"
-    __task_logger.debug("rsync file list: %s", rsync_cmd)
-    invoke_rsync(rsync_cmd)
+    def rs(cmd):
+        __task_logger.info(f"running command: {cmd}")
+        invoke_rsync(cmd)
+
+    rs(f"rsync -a --dirs --partial --ignore-missing-args --files-from={result_file_txt} {ssh_remote_dest} {pid}/")
 
     file_set_list = __task_process.file_sets_rsync_list_file()
 
     if os.path.exists(file_set_list) and os.stat(file_set_list).st_size > 0:
-        rsync_cmd = f"rsync -a --dirs --partial --files-from={file_set_list} {ssh_remote_dest} {pid}/"
-        __task_logger.debug("rsync file set list: %s", rsync_cmd)
-        invoke_rsync(rsync_cmd)
+        rs(f"rsync -a --dirs --partial --files-from={file_set_list} {ssh_remote_dest} {pid}/")
 
 
 @DryPipe.python_call()
