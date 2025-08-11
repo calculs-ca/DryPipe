@@ -365,6 +365,8 @@ class TaskProcess:
         # python_calls can access outputs of previous ones with input args
         var_outputs_by_name = {}
 
+        task_output_vars = dict(self.iterate_out_vars_from())
+
         for k, v in self.inputs._task_inputs.items():
             inputs_by_name[k] = v.resolved_value
 
@@ -372,7 +374,9 @@ class TaskProcess:
             file_outputs_by_name[k] = f
 
         for o in self.outputs.iterate_non_file_outputs():
-            v = os.environ.get(o.name)
+            v = task_output_vars.get(o.name)
+            if v is None:
+                v = os.environ.get(o.name)
             if v is not None:
                 var_outputs_by_name[o.name] = o.parse(v)
 
