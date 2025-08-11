@@ -578,6 +578,7 @@ class Cli:
 
     def add_call_args(self, parser):
         parser.add_argument('module_function', type=str)
+        self._add_task_key_parser_arg(parser)
 
 def run_cli():
     handle_script_lib_main()
