@@ -181,8 +181,14 @@ class StateFileTracker:
         if state_file.is_completed():
             pass
         else:
-            task_conf = self._load_task_conf(task_control_dir)
-            if task_conf.digest != state_file.hash_code:
+            try:
+                # task_conf can be recreated if it got deleted
+                task_conf = self._load_task_conf(task_control_dir)
+                task_digest = task_conf.digest
+            except FileNotFoundError:
+                task_digest = "no match"
+
+            if task_digest != state_file.hash_code:
                 task.save(state_file, current_hash_code)
                 state_file.hash_code = current_hash_code
                 self.resave_count += 1
