@@ -144,7 +144,7 @@ def execute_remote_task(
             "newgrp", __task_conf.run_as_group, "<<<", f"'{cmd}'"
         ]
 
-    __task_logger.info("remote execution: ", ' '.join(cmd))
+    __task_logger.info("remote execution: %s", ' '.join(cmd))
 
 
     exec_remote(__remote_pipeline_specs.user_at_host, cmd)
