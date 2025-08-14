@@ -2,6 +2,7 @@ import os.path
 from pathlib import Path
 
 from base_pipeline_test import BasePipelineTest
+from dry_pipe.cli import Cli
 from dry_pipe import DryPipe, TaskConf
 
 
@@ -201,6 +202,77 @@ class PipelineWithVarSharingBetweenSteps(BasePipelineTest):
         self.assertEqual(x1, 7)
         self.assertEqual(x2, 14)
         self.assertEqual(x3, 21)
+
+
+@DryPipe.python_call()
+def crash_on_first_run_then_succeed(__task_control_dir, x1):
+
+    f = Path(__task_control_dir, "f")
+    if not f.exists():
+        f.touch()
+        raise Exception("expected f")
+
+    return {
+        "x2": x1 * 2
+    }
+
+class PipelineWithCrashOnFirstRun(BasePipelineTest):
+
+    def dag_gen(self, dsl):
+        yield dsl.task(
+            key="t",
+            task_conf=self.task_conf()
+        ).outputs(
+            x1=int,
+            x2=int,
+            x3=int
+        ).calls("""
+            #!/usr/bin/env bash        
+            export x1=7
+        """).calls(
+            crash_on_first_run_then_succeed
+        ).calls(f3)()
+
+    def run_pipeline(self, until_patterns=None):
+
+        pipeline_instance = self.create_pipeline_instance()
+        pipeline_instance.monitor=self.create_monitor()
+
+        pipeline_instance.run_sync(
+            until_patterns=until_patterns,
+            run_tasks_in_process=self.launches_tasks_in_process()
+        )
+
+        tasks_by_keys = {
+            t.key: t
+            for t in pipeline_instance.query("*", include_incomplete_tasks=True)
+        }
+
+        self.assertTrue(tasks_by_keys["t"].is_failed())
+
+        Cli([
+            "task", f"{self.pipeline_instance_dir}/.drypipe/t"
+        ]).invoke(test_mode=True)
+
+        tasks_by_keys = {
+            t.key: t
+            for t in pipeline_instance.query("*", include_incomplete_tasks=False)
+        }
+
+        t = tasks_by_keys["t"]
+
+        self.assertTrue(t.is_completed())
+
+        x1 = int(t.outputs.x1)
+        x2 = int(t.outputs.x2)
+        x3 = int(t.outputs.x3)
+
+        self.assertEqual(x1, 7)
+        self.assertEqual(x2, 14)
+        self.assertEqual(x3, 21)
+
+        return pipeline_instance
+
 
 
 
@@ -604,7 +676,8 @@ def all_basic_tests():
         PipelineWithVarSharingBetweenSteps,
         PipelineWith4MixedStepsPythonCrash,
         TestPythonPathInExtraEnv,
-        TestPythonPathInExtraEnv2
+        TestPythonPathInExtraEnv2,
+        PipelineWithCrashOnFirstRun
     ]
 
 def all_tests_in_containers():
