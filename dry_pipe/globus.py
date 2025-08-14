@@ -197,11 +197,11 @@ def upload_task_inputs_globus(
         if __task_conf.globus_local_path_rewrite is None:
             yield from it
         else:
-            prefix = __task_conf.globus_local_path_rewrite
+            prefix, replacement_prefix = __task_conf.globus_local_path_rewrite.split(":")
             for f1, f2 in it:
                 if f1.startswith(prefix):
                     f_suffix = f1[len(prefix):]
-                    yield f"{prefix}{f_suffix}", f2
+                    yield f"{replacement_prefix}{f_suffix}", f2
                 else:
                     yield f1, f2
 
@@ -254,11 +254,11 @@ def download_task_outputs_globus(
         if __task_conf.globus_local_path_rewrite is None:
             yield from it
         else:
-            prefix = __task_conf.globus_local_path_rewrite
+            prefix, replacement_prefix = __task_conf.globus_local_path_rewrite.split(":")
             for f1, f2 in it:
                 if f2.startswith(prefix):
                     f_suffix = f2[len(prefix):]
-                    yield f1, f"{prefix}{f_suffix}"
+                    yield f1, f"{replacement_prefix}{f_suffix}"
                 else:
                     yield f1, f2
 
