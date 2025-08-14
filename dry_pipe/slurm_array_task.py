@@ -484,7 +484,6 @@ class SlurmArrayParentTask:
             __remote_pipeline_specs=RemotePipelineSpecs(self.task_process),
             __task_logger=self.task_process.task_logger,
             __task_process=self.task_process,
-            __pipeline_work_dir=self.task_process.pipeline_work_dir,
             __pipeline_instance_dir=self.task_process.pipeline_instance_dir,
             __task_conf = self.task_process.task_conf
         )

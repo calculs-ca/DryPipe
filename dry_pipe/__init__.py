@@ -378,6 +378,10 @@ class RemotePipelineSpecs:
             user = self.user_at_host.split("@")[0].strip()
             self.rsync_chown_arg = f"--chown={user}:{task_conf.run_as_group}"
 
+
+    def __str__(self, *args, **kwargs):
+        return f"RemotePipelineSpecs({self.user_at_host},...)"
+
     def _write_override_file_into(self, f):
         f.write(json.dumps(
             {

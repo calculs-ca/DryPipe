@@ -139,13 +139,12 @@ def execute_remote_task(
     ]
 
     if __task_conf.run_as_group is not None:
-        __task_logger.info("remote execution at %s, as group %s ", __remote_pipeline_specs.user_at_host,  __task_conf.run_as_group)
         cmd = " ".join(cmd)
         cmd = [
             "newgrp", __task_conf.run_as_group, "<<<", f"'{cmd}'"
         ]
-    else:
-        __task_logger.info("remote execution at %s")
+
+    __task_logger.info("remote execution: ", ' '.join(cmd))
 
 
     exec_remote(__remote_pipeline_specs.user_at_host, cmd)
