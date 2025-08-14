@@ -508,7 +508,8 @@ class TaskConf:
             work_on_local_file_copies=None,
             run_as_group=None,
             apptainer_exec_args=None,
-            globus_transfer=None
+            globus_transfer=None,
+            globus_local_path_rewrite=None
     ):
 
         self.external_files_root = None
@@ -561,6 +562,7 @@ class TaskConf:
         self.run_as_group = run_as_group
         self.apptainer_exec_args = apptainer_exec_args
         self.globus_transfer = globus_transfer
+        self.globus_local_path_rewrite = globus_local_path_rewrite
 
         if extra_env is not None:
             if not isinstance(extra_env, dict):

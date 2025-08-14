@@ -182,7 +182,6 @@ class GlobusFileTransferResponse:
 
 
 
-
 @DryPipe.python_call()
 def upload_task_inputs_globus(
     __task_key,
@@ -193,6 +192,18 @@ def upload_task_inputs_globus(
     __pipeline_instance_dir,
     __task_conf
 ):
+
+    def rewrite_if(it):
+        if __task_conf.globus_local_path_rewrite is None:
+            yield from it
+        else:
+            prefix = __task_conf.globus_local_path_rewrite
+            for f1, f2 in it:
+                if f1.startswith(prefix):
+                    f_suffix = f1[len(prefix):]
+                    yield f"{prefix}{f_suffix}", f2
+                else:
+                    yield f1, f2
 
     __task_logger.info("will generate file list for upload")
 
@@ -215,7 +226,7 @@ def upload_task_inputs_globus(
         yield o_src, str(Path(__remote_pipeline_specs.remote_control_dir, "task-conf-overrides.json"))
 
     transfer_response = transfer.submit_file_transfer(
-        g(),
+        rewrite_if(g()),
         log_file=
         Path(__task_control_dir, "globus-uploads.json")
         if __task_logger.isEnabledFor(logging.DEBUG)
@@ -235,8 +246,22 @@ def download_task_outputs_globus(
     __task_process,
     __pipeline_work_dir,
     __pipeline_instance_dir,
-    __remote_pipeline_specs
+    __remote_pipeline_specs,
+    __task_conf
 ):
+
+    def rewrite_if(it):
+        if __task_conf.globus_local_path_rewrite is None:
+            yield from it
+        else:
+            prefix = __task_conf.globus_local_path_rewrite
+            for f1, f2 in it:
+                if f2.startswith(prefix):
+                    f_suffix = f2[len(prefix):]
+                    yield f1, f"{prefix}{f_suffix}"
+                else:
+                    yield f1, f2
+
 
     #fetch states, and generate rsync list
     remote_cli = os.path.join(__remote_pipeline_specs.remote_instance_work_dir, "cli")
@@ -267,7 +292,7 @@ def download_task_outputs_globus(
             yield str(Path(__remote_pipeline_specs.remote_pid, f)), str(Path(__pipeline_instance_dir, f))
 
     transfer_response = transfer.submit_file_transfer(
-        g(),
+        rewrite_if(g()),
         log_file=
             Path(__task_control_dir, "globus-downloads-1.json")
             if __task_logger.isEnabledFor(logging.DEBUG)
@@ -287,7 +312,7 @@ def download_task_outputs_globus(
                     yield str(Path(__remote_pipeline_specs.remote_pid, f)), str(Path(__pipeline_instance_dir, f))
 
         transfer_response = transfer.submit_file_transfer(
-            g2(),
+            rewrite_if(g2()),
             log_file=
                 Path(__task_control_dir, "globus-downloads-2.json")
                 if __task_logger.isEnabledFor(logging.DEBUG)
