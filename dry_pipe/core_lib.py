@@ -198,8 +198,13 @@ def invoke_rsync(command):
                 raise RetryableRsyncException(msg)
 
 
-def exec_remote(user_at_host, cmd):
-    with PortablePopen(["ssh", user_at_host, " ".join(cmd)]) as p:
+def exec_remote(user_at_host, cmd, logger_func=None):
+    p_args = ["ssh", user_at_host, " ".join(cmd)]
+
+    if logger_func is not None:
+        logger_func(" ".join(p_args))
+
+    with PortablePopen(p_args) as p:
         p.wait_and_raise_if_non_zero()
         return p.stdout_as_string()
 

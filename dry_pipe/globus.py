@@ -271,7 +271,7 @@ def download_task_outputs_globus(
         remote_cli,
         "list-states",
         f"--task-key={__task_key}"
-    ])
+    ], logger_func=__task_logger.info)
 
     __task_logger.debug("remote states:\n %s", remote_exec_result)
 

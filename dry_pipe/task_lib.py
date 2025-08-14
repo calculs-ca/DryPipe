@@ -147,4 +147,4 @@ def execute_remote_task(
     __task_logger.info("remote execution: %s", ' '.join(cmd))
 
 
-    exec_remote(__remote_pipeline_specs.user_at_host, cmd)
+    exec_remote(__remote_pipeline_specs.user_at_host, cmd, logger_func=__task_logger.info)
