@@ -4,7 +4,7 @@ import time
 from pathlib import Path
 import logging
 
-import requests
+from dry_pipe.thttp import request
 
 from dry_pipe.core_lib import exec_remote
 from dry_pipe import DryPipe
@@ -65,12 +65,12 @@ class GlobusToken:
             "grant_type": "refresh_token"
         }
 
-        res = requests.post("https://auth.globus.org/v2/oauth2/token", data=form_data)
+        res = request("https://auth.globus.org/v2/oauth2/token", data=form_data, method="POST")
 
-        if res.status_code != 200:
-            raise RuntimeError(f"Globus Token Refresh Error: {res.status_code}")
+        if res.status != 200:
+            raise RuntimeError(f"Globus Token Refresh Error: {res.status}")
 
-        self.token = res.json()
+        self.token = res.json
 
     def save_to_file(self):
         if self.file is None:
@@ -90,25 +90,25 @@ class GlobusFileTransfer:
     def submit_file_transfer(self, file_tuples, log_file=None):
 
         def get_submission_id():
-            return requests.get(
+            return request(
                 'https://transfer.api.globusonline.org/v0.10/submission_id',
                 headers=self.auth_token.create_auth_headers()
             )
 
         res = get_submission_id()
 
-        if res.status_code != 200:
+        if res.status != 200:
 
-            if res.status_code == 401:
+            if res.status == 401:
                 self.auth_token.refresh()
                 res = get_submission_id()
 
-                if res.status_code == 200:
+                if res.status == 200:
                     self.auth_token.save_to_file()
                 else:
-                    raise Exception(f"unexpected status code {res.status_code}")
+                    raise Exception(f"unexpected status code {res.status}")
 
-        j = res.json()
+        j = res.json
 
         submission_id = j["value"]
 
@@ -121,8 +121,9 @@ class GlobusFileTransfer:
             with open(log_file, "w") as u:
                 json.dump(transfer_items, u, indent=4)
 
-        transfer_res = requests.post(
+        transfer_res = request(
             "https://transfer.api.globusonline.org/v0.10/transfer",
+            method="POST",
             data=json.dumps({
                 "DATA_TYPE": "transfer",
                 "submission_id": submission_id,
@@ -133,7 +134,7 @@ class GlobusFileTransfer:
             headers=self.auth_token.create_auth_headers()
         )
 
-        return GlobusFileTransferResponse(self, transfer_res.json())
+        return GlobusFileTransferResponse(self, transfer_res.json)
 
 class GlobusFileTransferResponse:
 
@@ -145,15 +146,15 @@ class GlobusFileTransferResponse:
 
         task_id = self.transfer_response["task_id"]
 
-        res3 = requests.get(
+        res3 = request(
             f'https://transfer.api.globusonline.org/v0.10/task/{task_id}',
             headers=self.globus_file_transfer.auth_token.create_auth_headers()
         )
 
-        if res3.status_code != 200:
-            raise Exception(f"unexpected status code {res3.status_code}")
+        if res3.status != 200:
+            raise Exception(f"unexpected status code {res3.status}")
 
-        return res3.json()
+        return res3.json
 
     def spin_until_complete(self, logger=module_logger, sleep_schedule=[3, 5, 8, 10, 20, 30]):
 
