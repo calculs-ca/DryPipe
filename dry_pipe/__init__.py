@@ -2,6 +2,7 @@ import collections
 import inspect
 import json
 import os
+import copy
 import re
 import shutil
 import sys
@@ -625,6 +626,10 @@ class TaskConf:
             yield self.python_bin
         if self.run_as_group is not None:
             yield self.run_as_group
+        if self.globus_local_path_rewrite is not None:
+            yield self.globus_local_path_rewrite
+        if self.globus_transfer is not None:
+            yield self.globus_transfer
 
 
     def as_json(self):
@@ -668,38 +673,17 @@ class TaskConf:
         return self.container is not None
 
     def override_container(self, container):
-        return TaskConf(
-            self.executer_type,
-            self.ssh_remote_dest,
-            self.slurm_account,
-            self.sbatch_options,
-            container,
-            self.command_before_task,
-            self.remote_pipeline_code_dir,
-            self.python_bin,
-            self.remote_base_dir,
-            self.remote_containers_dir,
-            self.init_bash_command,
-            self.python_interpreter_switches,
-            extra_env=self.extra_env
-        )
+        tc = copy.copy(self)
+        tc.container = container
+        return tc
+
 
     def override_python_bin(self, python_bin):
-        return TaskConf(
-            self.executer_type,
-            self.ssh_remote_dest,
-            self.slurm_account,
-            self.sbatch_options,
-            self.container,
-            self.command_before_task,
-            self.remote_pipeline_code_dir,
-            python_bin,
-            self.remote_base_dir,
-            self.remote_containers_dir,
-            self.init_bash_command,
-            self.python_interpreter_switches,
-            extra_env=self.extra_env
-        )
+        tc = copy.copy(self)
+        tc.python_bin = python_bin
+        return tc
+
+
 
 
 class ApptainerConf:
