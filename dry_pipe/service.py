@@ -141,20 +141,23 @@ class PipelineRunner:
         return False
 
     def create_pipeline_instance(self, instances_dir_basename, name, args):
-        for instances_dir, _ in self.instances_dir_to_pipeline_types.items():
+        for instances_dir, pipeline_type in self.instances_dir_to_pipeline_types.items():
             if instances_dir.endswith(f"/{instances_dir_basename}"):
-                p = Path(instances_dir, name)
-                if p.exists():
+                pipeline_instance_dir = Path(instances_dir, name)
+                if pipeline_instance_dir.exists():
                     raise Exception(f"pipeline already exists: {instances_dir}/{name}")
                 else:
-                    p.mkdir(exist_ok=False, parents=True)
-                    wd = Path(p, ".drypipe")
+                    pipeline_instance_dir.mkdir(exist_ok=False, parents=True)
+                    wd = Path(pipeline_instance_dir, ".drypipe")
                     wd.mkdir()
                     Path(wd, "state.not-ready").touch()
-                    with open(Path(p, "args.json"), "w") as f:
+                    with open(Path(pipeline_instance_dir, "args.json"), "w") as f:
                         json.dump(args, f, indent=4, sort_keys=True)
 
-                    return {"pid": str(p)}
+                    if pipeline_type.init_func is not None:
+                        pipeline_type.init_func(pipeline_instance_dir)
+
+                    return {"pid": str(pipeline_instance_dir)}
 
         raise Exception(f"unknown instances dir basename {instances_dir_basename}")
 
