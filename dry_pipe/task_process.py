@@ -66,6 +66,7 @@ class TaskProcess:
         self.task_output_dir = os.path.join(self.pipeline_output_dir, self.task_key)
         self.no_dynamic_steps = from_remote
         self.slurm_array_task_id = os.environ.get("SLURM_ARRAY_TASK_ID")
+        self.command_before_task_has_run = False
 
         if not is_python_call:
             # override causes problems for python_call
@@ -118,9 +119,6 @@ class TaskProcess:
                 self.env[k] = v
 
             self.task_logger.debug(f"done iterating env")
-
-            if self.task_conf.command_before_task is not None:
-                self.exec_cmd_before_launch(self.task_conf.command_before_task)
 
             self.task_logger.debug(f"normal TaskProcess constructor end")
         except Exception as ex:
@@ -701,6 +699,8 @@ class TaskProcess:
 
     def run_python(self, mod_func, container=None):
 
+        self.exec_cmd_before_launch_if_applies()
+
         env = self.env
         python_bin = self.task_conf.python_bin
         if python_bin is None:
@@ -809,6 +809,12 @@ class TaskProcess:
             delete_if_exists("slurm_job_id")
         except Exception as ex:
             self.task_logger.exception(ex)
+
+
+    def exec_cmd_before_launch_if_applies(self):
+        if self.task_conf.command_before_task is not None and not self.command_before_task_has_run:
+            self.exec_cmd_before_launch(self.task_conf.command_before_task)
+            self.command_before_task_has_run = True
 
 
     def exec_cmd_before_launch(self, command_before_task):
@@ -1021,6 +1027,8 @@ class TaskProcess:
 
     def run_script(self, script, container=None):
 
+        self.exec_cmd_before_launch_if_applies()
+
         env = {
             ** self.env,
             ** self._local_copy_adjusted_file_env_vars()
@@ -1134,8 +1142,11 @@ class TaskProcess:
             f"rsync -a --dirs {self._local_outputs_root()}/ {self.pipeline_output_dir}/{self.task_key}"
         )
 
+    def _is_remote_execution_from_local_site(self):
+        return self.task_conf.ssh_remote_dest is not None and not self.task_conf.is_on_remote_site
+
     def _resolve_steps(self):
-        if self.task_conf.ssh_remote_dest is not None and not self.task_conf.is_on_remote_site:
+        if self._is_remote_execution_from_local_site():
             if self.task_conf.globus_transfer is not None:
                 yield {"call": "python", "module_function": "dry_pipe.globus:upload_task_inputs_globus"}
                 yield {"call": "python", "module_function": "dry_pipe.task_lib:execute_remote_task"}
@@ -1172,12 +1183,14 @@ class TaskProcess:
                 with self._create_time_logger(f"STEP-{i}"):
                     if call == "python":
                         module_function = step_invocation["module_function"]
-                        if self.run_python_calls_in_process or module_function.startswith("dry_pipe.task_lib:"):
+                        self.task_logger.debug("step %s, %s %s", i, call, module_function)
+                        if self.run_python_calls_in_process or module_function.startswith("dry_pipe."):
                             python_call = func_from_mod_func(module_function)
                             self.call_python(module_function, python_call)
                         else:
                             self.run_python(module_function, step_invocation.get("container"))
                     elif call == "bash":
+                        self.task_logger.debug("step %s, %s %s,", i, call, step_invocation["script"])
                         self.run_script(os.path.expandvars(step_invocation["script"]), step_invocation.get("container"))
                     else:
                         raise Exception(f"unknown step invocation type: {call}")

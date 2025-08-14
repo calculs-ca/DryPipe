@@ -14,33 +14,31 @@ module_logger = logging.getLogger(__name__)
 
 class GlobusToken:
 
-    def __init__(self, env_var_name=None, access_token=None, client_id=None):
+    def __init__(self, env_var_name=None, access_token=None, client_id=None, access_token_file=None):
 
         self.client_id = client_id
-        self.file = None
+        self.file = access_token_file
 
         if access_token is not None:
             self.token = {
                 "access_token": access_token
             }
         else:
+            if self.file is None:
+                if env_var_name is None:
+                    raise Exception('env_var_name must be provided')
 
-            if env_var_name is None:
-                raise Exception('env_var_name must be provided')
+                self.file = os.environ.get(env_var_name)
 
-            f = os.environ.get(env_var_name)
+                if self.file is None:
+                    raise Exception(f'env var {env_var_name} not set')
 
-            if f is None:
-                raise Exception(f'env var {env_var_name} not set')
+            if not Path(self.file).exists():
+                raise Exception(f"file {self.file} does not  exists")
 
-            if f.endswith(".json"):
-                self.file = f
-                with open(f) as globus_token_file:
-                    self.token = json.load(globus_token_file)
-            else:
-                self.token = {
-                    "access_token": f,
-                }
+            with open(self.file) as globus_token_file:
+                self.token = json.load(globus_token_file)
+
 
     def bearer_token(self):
         return self.token['access_token']
@@ -198,9 +196,9 @@ def upload_task_inputs_globus(
 
     __task_logger.info("will generate file list for upload")
 
-    tok = GlobusToken(env_var_name="DRYPIPE_GLOBUS_TOKEN")
+    src_endpoint, dst_endpoint, tok_file = __task_conf.globus_transfer.split(":")
 
-    src_endpoint, dst_endpoint = __task_conf.globus_transfer.split(":")
+    tok = GlobusToken(tok_file=tok_file)
 
     transfer = GlobusFileTransfer(tok, src_endpoint, dst_endpoint)
 
@@ -258,9 +256,9 @@ def download_task_outputs_globus(
 
     __task_logger.info("will generate file list for upload")
 
-    tok = GlobusToken(env_var_name="DRYPIPE_GLOBUS_TOKEN")
+    src_endpoint, dst_endpoint, tok_file = __task_process.task_conf.globus_transfer.split(":")
 
-    src_endpoint, dst_endpoint = __task_process.task_conf.globus_transfer.split(":")
+    tok = GlobusToken(tok_file=tok_file)
 
     transfer = GlobusFileTransfer(tok, dst_endpoint, src_endpoint)
 
