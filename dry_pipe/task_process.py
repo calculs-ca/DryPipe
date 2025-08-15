@@ -271,10 +271,6 @@ class TaskProcess:
         logging.shutdown()
         os._exit(0)
 
-    def sbatch_options(self):
-        if self.task_conf.sbatch_options is not None and len(self.task_conf.sbatch_options) > 0:
-            yield " ".join(self.task_conf.sbatch_options)
-
     def children_task_keys(self):
         with open(os.path.join(self.control_dir,  "task-keys.tsv")) as f:
             for line in f:
@@ -1221,7 +1217,7 @@ class TaskProcess:
         if sacc is not None:
             yield f"--account={sacc}"
 
-        yield from self.sbatch_options()
+        yield from self.task_conf.sbatch_options
 
         yield f"--output={self.control_dir}/out.log"
 

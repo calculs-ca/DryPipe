@@ -53,7 +53,7 @@ class SlurmArrayParentTask:
             else:
                 yield "--output=/dev/null"
 
-            yield from self.task_process.sbatch_options()
+            yield from self.task_process.task_conf.sbatch_options
 
             if self.debug:
                 yield f"--error={self.control_dir()}/debug-%A_%a.log"
