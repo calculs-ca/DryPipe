@@ -622,6 +622,10 @@ class TaskProcess:
                         "__pipeline_code_dir"
                     )
 
+            if self._is_remote_execution_on_remote_site():
+                if self.task_conf.remote_pipeline_code_dir is not None:
+                    yield "__pipeline_code_dir", self.task_conf.remote_pipeline_code_dir
+
             yield "__pipeline_instance_dir", self.pipeline_instance_dir
             yield "__pipeline_instance_name", self.pipeline_instance_name
             yield "__pipeline_work_dir", self.pipeline_work_dir
@@ -1144,6 +1148,9 @@ class TaskProcess:
 
     def _is_remote_execution_from_local_site(self):
         return self.task_conf.ssh_remote_dest is not None and not self.task_conf.is_on_remote_site
+
+    def _is_remote_execution_on_remote_site(self):
+        return self.task_conf.ssh_remote_dest is not None and self.task_conf.is_on_remote_site
 
     def _resolve_steps(self):
         if self._is_remote_execution_from_local_site():
