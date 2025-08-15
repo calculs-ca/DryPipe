@@ -132,6 +132,9 @@ class GlobusFileTransfer:
             headers=self.auth_token.create_auth_headers()
         )
 
+        if transfer_res.status != 200:
+            raise Exception(f"unexpected status code {transfer_res.status}")
+
         return GlobusFileTransferResponse(self, transfer_res.json)
 
 class GlobusFileTransferResponse:
