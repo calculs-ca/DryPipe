@@ -291,6 +291,9 @@ class Cli:
                 if self.parsed_args.by_runner and not task_process.task_conf.is_slurm_parent:
                     task_process.submit_sbatch_task()
                     return
+                elif self.parsed_args.from_remote:
+                    task_process.submit_sbatch_task()
+                    return
 
             task_process.launch_task()
 
