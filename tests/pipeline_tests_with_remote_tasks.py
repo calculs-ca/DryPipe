@@ -87,12 +87,13 @@ class RemoteTestFileSetWithGlobus(RemoteTestFileSetWithDataDirVar):
         rts = RemoteTestSite("maxl@mp2.ccs.usherbrooke.ca")
 
         globus_tok=str(Path(repo_dir, "tests", "tok.json"))
-
+        client_id = "aca3664d-645e-4ea1-9afd-e73d6772a970"
         tc = TaskConf(
             executer_type="slurm",
             slurm_account="def-xroucou",
             ssh_remote_dest=rts.ssh_remote_dst(),
-            globus_transfer=f"3e9dcd5e-6274-11f0-be3d-0efa17cb03ab:29f94847-8c7b-4c7b-b102-b3f3d5351e83:{globus_tok}",
+            globus_transfer=
+                f"3e9dcd5e-6274-11f0-be3d-0efa17cb03ab:29f94847-8c7b-4c7b-b102-b3f3d5351e83:{globus_tok}:{client_id}",
             extra_env={
                 "DRYPIPE_TASK_DEBUG": "True",
                 "PYTHONPATH": ":".join([

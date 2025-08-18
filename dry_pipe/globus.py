@@ -210,9 +210,9 @@ def upload_task_inputs_globus(
 
     __task_logger.info("will generate file list for upload")
 
-    src_endpoint, dst_endpoint, tok_file = __task_conf.globus_transfer.split(":")
+    src_endpoint, dst_endpoint, tok_file, client_id = __task_conf.globus_transfer.split(":")
 
-    tok = GlobusToken(access_token_file=tok_file)
+    tok = GlobusToken(access_token_file=tok_file, client_id=client_id)
 
     transfer = GlobusFileTransfer(tok, src_endpoint, dst_endpoint)
 
@@ -284,9 +284,9 @@ def download_task_outputs_globus(
 
     __task_logger.info("will generate file list for upload")
 
-    src_endpoint, dst_endpoint, tok_file = __task_process.task_conf.globus_transfer.split(":")
+    src_endpoint, dst_endpoint, tok_file, client_id = __task_conf.globus_transfer.split(":")
 
-    tok = GlobusToken(access_token_file=tok_file)
+    tok = GlobusToken(access_token_file=tok_file, client_id=client_id)
 
     transfer = GlobusFileTransfer(tok, dst_endpoint, src_endpoint)
 
