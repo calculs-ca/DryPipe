@@ -1,7 +1,7 @@
 import os
 from pathlib import Path
 
-from tests.pipeline_tests_with_remote_slurm_arrays import RemoteTestSite
+from tests.pipeline_tests_with_remote_slurm_arrays import RemoteTestSite, remote_test_site_gh1301
 from tests.pipeline_tests_with_single_tasks import TestFileSet
 from dry_pipe import TaskConf
 
@@ -10,11 +10,12 @@ class RemoteTestFileSet(TestFileSet):
 
     def task_conf(self):
 
-        rts = RemoteTestSite()
+        rts = remote_test_site_gh1301
 
         tc = TaskConf(
             executer_type="slurm",
-            slurm_account="def-xroucou",
+            #slurm_account="def-xroucou",
+            sbatch_options=rts.sbatch_options,
             ssh_remote_dest=rts.ssh_remote_dst(),
             extra_env={
                 "DRYPIPE_TASK_DEBUG": "True"
@@ -27,7 +28,8 @@ class RemoteTestFileSet(TestFileSet):
 
     def test_run_pipeline(self):
 
-        rts = RemoteTestSite()
+        rts = RemoteTestSite("maxl@gh1301")
+
         rts.reset(self.pipeline_instance_dir)
 
         pipeline_instance = self.create_pipeline_instance(self.pipeline_instance_dir)
@@ -82,7 +84,7 @@ class RemoteTestFileSetWithGlobus(RemoteTestFileSetWithDataDirVar):
 
         repo_dir = os.path.abspath(os.path.dirname(os.path.dirname(__file__)))
 
-        rts = RemoteTestSite()
+        rts = RemoteTestSite("maxl@mp2.ccs.usherbrooke.ca")
 
         globus_tok=str(Path(repo_dir, "tests", "tok.json"))
 

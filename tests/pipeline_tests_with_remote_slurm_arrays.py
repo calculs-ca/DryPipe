@@ -10,8 +10,10 @@ from tests.test_utils import TestSandboxDir
 
 class RemoteTestSite:
 
-    #def __init__(self):
-    #    #self.test_sandbox_dir = test_sandbox_dir
+    def __init__(self, user_at_host):
+        self._user_at_host = user_at_host
+        self.sbatch_options = []
+
 
     def exec_remote(self, cmd):
         with PortablePopen(["ssh", self.user_at_host(), " ".join(cmd)]) as p:
@@ -21,7 +23,7 @@ class RemoteTestSite:
         return "/home/maxl/tests-drypipe"
 
     def user_at_host(self):
-        return "maxl@mp2.ccs.usherbrooke.ca"
+        return self._user_at_host
 
     #def remote_pipeline_dir(self):
     #    return os.path.join(self.remote_base_dir(), os.path.basename(self.test_sandbox_dir.test_name))
@@ -35,7 +37,9 @@ class RemoteTestSite:
         return f"{self.user_at_host()}:{self.remote_base_dir()}"
 
 
-remote_test_site = RemoteTestSite()
+remote_test_site_gh1301 = RemoteTestSite("maxl@gh1301")
+remote_test_site_gh1301.sbatch_options = ["-p", "c-gh"]
+
 
 
 class RemoteArrayTaskFullyAutomatedRun(PipelineWithSlurmArray):
@@ -47,11 +51,12 @@ class RemoteArrayTaskFullyAutomatedRun(PipelineWithSlurmArray):
 
         repo_dir = os.path.abspath(os.path.dirname(os.path.dirname(__file__)))
 
-        rts = RemoteTestSite()
+        rts = remote_test_site_gh1301
 
         tc = TaskConf(
             executer_type="slurm",
-            slurm_account="def-xroucou",
+            sbatch_options=remote_test_site_gh1301.sbatch_options,
+            #slurm_account="def-xroucou",
             ssh_remote_dest=rts.ssh_remote_dst(),
             extra_env={
                 "DRYPIPE_TASK_DEBUG": "True",
@@ -66,7 +71,7 @@ class RemoteArrayTaskFullyAutomatedRun(PipelineWithSlurmArray):
 
     def test_run_pipeline(self):
 
-        rts = RemoteTestSite()
+        rts = remote_test_site_gh1301
         rts.reset(self.pipeline_instance_dir)
 
         pipeline_instance = self.create_pipeline_instance(self.pipeline_instance_dir)
@@ -123,12 +128,13 @@ class CliTestsPipelineWithSlurmArrayRemote(PipelineWithSlurmArray):
 
         tc = TaskConf(
             executer_type="slurm",
-            slurm_account="def-xroucou",
+            #slurm_account="def-xroucou",
+            sbatch_options=remote_test_site_gh1301.sbatch_options,
             extra_env={
                 "DRYPIPE_TASK_DEBUG": "True",
                 "PYTHONPATH": ":".join([
-                    f"{remote_test_site.remote_base_dir()}/CliTestsPipelineWithSlurmArrayRemote.test_array_upload_run_and_download/.drypipe",
-                    f"{remote_test_site.remote_base_dir()}/CliTestsPipelineWithSlurmArrayRemote.test_array_upload_run_and_download/external-file-deps{repo_dir}"
+                    f"{remote_test_site_gh1301.remote_base_dir()}/CliTestsPipelineWithSlurmArrayRemote.test_array_upload_run_and_download/.drypipe",
+                    f"{remote_test_site_gh1301.remote_base_dir()}/CliTestsPipelineWithSlurmArrayRemote.test_array_upload_run_and_download/external-file-deps{repo_dir}"
                 ])
             }
         )
@@ -142,10 +148,10 @@ class CliTestsPipelineWithSlurmArrayRemote(PipelineWithSlurmArray):
 
         pid = pipeline_instance.state_file_tracker.pipeline_instance_dir
 
-        remote_test_site.exec_remote(["rm", "-Rf", remote_test_site.remote_base_dir()])
-        remote_test_site.exec_remote(["mkdir", "-p", remote_test_site.remote_base_dir()])
+        remote_test_site_gh1301.exec_remote(["rm", "-Rf", remote_test_site_gh1301.remote_base_dir()])
+        remote_test_site_gh1301.exec_remote(["mkdir", "-p", remote_test_site_gh1301.remote_base_dir()])
 
-        ssh_dest = f"{remote_test_site.user_at_host()}:{remote_test_site.remote_base_dir()}"
+        ssh_dest = f"{remote_test_site_gh1301.user_at_host()}:{remote_test_site_gh1301.remote_base_dir()}"
 
         test_cli(
             '--pipeline-instance-dir', pid,

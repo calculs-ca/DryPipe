@@ -69,7 +69,7 @@ def globus_tests():
     ]
 
 def all_remote_tests():
-    return remote_task_tests() +array_remote_tests()
+    return remote_task_tests() + array_remote_tests() + globus_tests()
 
 def cli_tests():
     return [
@@ -96,7 +96,7 @@ def all_local_tests():
     return quick_sanity_tests() + array_tests() + low_level_tests()
 
 def exhaustive_test_suite():
-    return quick_sanity_tests() + array_tests() + array_remote_tests() + low_level_tests()
+    return quick_sanity_tests() + array_tests() + all_remote_tests() + low_level_tests()
 
 
 if __name__ == '__main__':
