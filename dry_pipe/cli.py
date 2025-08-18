@@ -291,9 +291,16 @@ class Cli:
                 if self.parsed_args.by_runner and not task_process.task_conf.is_slurm_parent:
                     task_process.submit_sbatch_task()
                     return
-                elif self.parsed_args.from_remote:
-                    task_process.submit_sbatch_task()
-                    return
+
+            task_process.launch_task()
+
+        elif self.parsed_args.command == 'remote-exec':
+            task_process = TaskProcess(
+                self._complete_control_dir(self.parsed_args.control_dir),
+                wait_for_completion=True,
+                test_mode=test_mode,
+                as_subprocess=not test_mode,
+            )
 
             task_process.launch_task()
 
@@ -402,6 +409,7 @@ class Cli:
         self.add_generator_arg(self.subparsers.add_parser('prepare'))
         self.add_call_args(self.subparsers.add_parser('call'))
         self.add_task_args(self.subparsers.add_parser('task'))
+        self.add_task_args(self.subparsers.add_parser('remote-exec'))
         self.add_sbatch_args(self.subparsers.add_parser('sbatch'))
         self.add_sbatch_args(self.subparsers.add_parser('sbatch-gen'))
         self.add_array_args(self.subparsers.add_parser('array-submit'))

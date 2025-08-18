@@ -135,7 +135,7 @@ def execute_remote_task(
     remote_task_control_dir = os.path.join(__remote_pipeline_specs.remote_instance_work_dir, __task_key)
 
     cmd = [
-        "python3", remote_cli, "task", remote_task_control_dir, "--from-remote"
+        "python3", remote_cli, "remote-exec", remote_task_control_dir
     ]
 
     if __task_conf.run_as_group is not None:
