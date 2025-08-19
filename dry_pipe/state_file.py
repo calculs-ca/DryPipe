@@ -1,9 +1,16 @@
 import fnmatch
+import glob
 import os
 from pathlib import Path
 
 
 class StateFile:
+
+    @staticmethod
+    def create_from_path(task_key, path):
+
+        sf = StateFile(task_key, None, None, path)
+        return sf
 
     def __init__(self, task_key, current_hash_code, tracker, path=None, slurm_array_id=None):
         self.tracker = tracker

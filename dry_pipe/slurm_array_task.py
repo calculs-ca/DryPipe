@@ -468,6 +468,36 @@ class SlurmArrayParentTask:
 
         return False
 
+    def inspect_child_tasks(self):
+        total_children_tasks = 0
+        ended_tasks = 0
+        completed_tasks = 0
+        failed_tasks = []
+        for task_key in self.children_task_keys():
+            total_children_tasks += 1
+            state_file = self.tracker.load_state_file(task_key)
+            self.task_process.task_logger.debug(f"%s -> %s", task_key, state_file)
+            if state_file.has_ended():
+                ended_tasks += 1
+            if state_file.is_completed():
+                completed_tasks += 1
+
+            if state_file.is_failed():
+                failed_tasks.append(state_file.task_key)
+
+        def z(state_name):
+            return str(Path(self.control_dir(), state_name))
+
+        if len(failed_tasks) > 0:
+            return z("state.failed")
+
+        if completed_tasks == total_children_tasks:
+            return z("state.completed")
+
+        return z("state.step-started.0")
+
+
+
     def _upload_array(self):
 
         task_key = self.task_process.task_key

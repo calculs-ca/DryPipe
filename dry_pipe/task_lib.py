@@ -1,9 +1,10 @@
 import os
+import time
 from pathlib import Path
 
 from dry_pipe import DryPipe
 from dry_pipe.core_lib import invoke_rsync, exec_remote
-from dry_pipe.state_file_tracker import StateFileTracker
+from dry_pipe.state_file import StateFile
 
 
 @DryPipe.python_call()
@@ -122,29 +123,65 @@ def download_task_outputs(
         rs(f"rsync -a --dirs --partial --files-from={file_set_list} {ssh_remote_dest} {pid}/")
 
 
-@DryPipe.python_call()
-def execute_remote_task(
+def _remote_exec(
+    cmd,
     __task_key,
-    __remote_pipeline_specs,
-    __pipeline_instance_name,
-    __task_conf,
-    __task_logger
+    __remote_pipeline_specs
 ):
 
     remote_cli = os.path.join(__remote_pipeline_specs.remote_instance_work_dir, "cli")
     remote_task_control_dir = os.path.join(__remote_pipeline_specs.remote_instance_work_dir, __task_key)
 
     cmd = [
-        "python3", remote_cli, "remote-exec", remote_task_control_dir
+        "python3", remote_cli, cmd, remote_task_control_dir
     ]
 
-    if __task_conf.run_as_group is not None:
+    if __remote_pipeline_specs.task_conf.run_as_group is not None:
         cmd = " ".join(cmd)
         cmd = [
-            "newgrp", __task_conf.run_as_group, "<<<", f"'{cmd}'"
+            "newgrp", __remote_pipeline_specs.task_conf.run_as_group, "<<<", f"'{cmd}'"
         ]
 
-    __task_logger.info("remote execution: %s", ' '.join(cmd))
+    __remote_pipeline_specs.task_logger.info("remote execution: %s", ' '.join(cmd))
 
 
-    exec_remote(__remote_pipeline_specs.user_at_host, cmd, logger_func=__task_logger.info)
+    return exec_remote(
+        __remote_pipeline_specs.user_at_host,
+        cmd,
+        logger_func=__remote_pipeline_specs.task_logger.info
+    )
+
+@DryPipe.python_call()
+def execute_remote_task(
+        __task_key,
+        __remote_pipeline_specs
+):
+
+    _remote_exec("remote-exec", __task_key, __remote_pipeline_specs)
+
+
+
+@DryPipe.python_call()
+def poll_remote_task(
+    __task_key,
+    __remote_pipeline_specs
+):
+    while True:
+        res = _remote_exec("poll-task", __task_key, __remote_pipeline_specs)
+
+        for remote_state_file_absolute_path in res.split("\n"):
+
+            if not "/state." in remote_state_file_absolute_path:
+                continue
+
+            remote_state_file = StateFile.create_from_path(__task_key, remote_state_file_absolute_path)
+
+            if (remote_state_file.is_failed() or remote_state_file.is_crashed()
+                or remote_state_file.is_killed() or remote_state_file.is_timed_out()
+            ):
+                raise Exception(f"remote state file {remote_state_file_absolute_path} did not succeed")
+
+            if remote_state_file.is_completed():
+                return
+
+            time.sleep(20)

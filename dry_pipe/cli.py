@@ -295,14 +295,52 @@ class Cli:
             task_process.launch_task()
 
         elif self.parsed_args.command == 'remote-exec':
+            control_dir = self._complete_control_dir(self.parsed_args.control_dir)
             task_process = TaskProcess(
-                self._complete_control_dir(self.parsed_args.control_dir),
-                wait_for_completion=True,
+                control_dir,
+                wait_for_completion=False,
                 test_mode=test_mode,
                 as_subprocess=not test_mode,
             )
 
-            task_process.launch_task()
+            s = list(Path(control_dir).glob("state.*"))
+
+            if len(s) == 0:
+                Path(control_dir, "state.waiting").touch(exist_ok=False)
+            elif len(s) > 1:
+                raise Exception(f"multiple state files in {control_dir}")
+
+            if task_process.task_conf.executer_type == "slurm":
+                if task_process.is_slurm_array_parent():
+                    task_process.wait_for_completion = True
+                    sa = SlurmArrayParentTask(task_process)
+                    sa.prepare_and_launch_next_array(None)
+                else:
+                    task_process.submit_sbatch_task()
+            else:
+                task_process.launch_task()
+
+        elif self.parsed_args.command == 'poll-task':
+            control_dir = self._complete_control_dir(self.parsed_args.control_dir)
+            task_process = TaskProcess(control_dir)
+
+            if task_process.task_conf.executer_type == "slurm" and task_process.is_slurm_array_parent():
+                task_process.task_logger.info("will reconcile array")
+                sa = SlurmArrayParentTask(task_process)
+                a_state = sa.inspect_child_tasks()
+                task_process.task_logger.info(f"array state {a_state}")
+                print(a_state)
+                return
+
+            s = list(Path(control_dir).glob("state.*"))
+
+            if len(s) == 0:
+                raise Exception(f"no state file in {control_dir}")
+            elif len(s) > 1:
+                raise Exception(f"multiple state files in {control_dir}")
+
+            state_file = s[0]
+            print(f"{state_file.absolute()}")
 
         elif self.parsed_args.command == 'sbatch':
             task_process = TaskProcess(self.parsed_args.control_dir, wait_for_completion=self._wait())
@@ -409,6 +447,7 @@ class Cli:
         self.add_generator_arg(self.subparsers.add_parser('prepare'))
         self.add_call_args(self.subparsers.add_parser('call'))
         self.add_task_args(self.subparsers.add_parser('task'))
+        self.add_task_args(self.subparsers.add_parser('poll-task'))
         self.add_task_args(self.subparsers.add_parser('remote-exec'))
         self.add_sbatch_args(self.subparsers.add_parser('sbatch'))
         self.add_sbatch_args(self.subparsers.add_parser('sbatch-gen'))

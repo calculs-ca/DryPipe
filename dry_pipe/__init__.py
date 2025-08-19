@@ -354,6 +354,8 @@ class RemotePipelineSpecs:
 
         self.user_at_host, self.remote_base_dir, self.ssh_key_file = task_conf.parse_ssh_remote_dest()
 
+        self.task_conf = task_conf
+
         self.remote_instance_work_dir = os.path.join(
             self.remote_base_dir,
             os.path.basename(pipeline_instance_dir),
@@ -371,6 +373,8 @@ class RemotePipelineSpecs:
         self.pid_base_name = os.path.basename(pipeline_instance_dir)
 
         self.remote_pid = os.path.join(self.remote_base_dir, self.pid_base_name)
+
+        self.task_logger = task_process.task_logger
 
         if task_conf.run_as_group is None:
             self.rsync_chown_arg = ""
