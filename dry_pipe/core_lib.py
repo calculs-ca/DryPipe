@@ -2,6 +2,7 @@ import importlib
 import os
 import subprocess
 import re
+import time
 
 
 class RetryableRsyncException(Exception):
@@ -224,3 +225,33 @@ def expandvars_from_dict(data, environ=os.environ):
             this += environ[v]
         out += this
     return out
+
+
+class SleepySpinner:
+
+    def __init__(self, sleep_schedule):
+
+        if not isinstance(sleep_schedule, list):
+            raise Exception(f"expected list, got {type(sleep_schedule)}")
+
+        if len(sleep_schedule) == 0:
+            raise Exception(f"sleep_schedule is empty")
+
+        self.sleep_schedule = sleep_schedule
+        self.idx = 0
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, type, value, traceback):
+        return
+
+    def next_sleep(self):
+        return self.sleep_schedule[self.idx]
+
+    def sleep(self):
+
+        time.sleep(self.next_sleep())
+
+        if self.idx < len(self.sleep_schedule) - 1:
+            self.idx += 1

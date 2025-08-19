@@ -6,7 +6,7 @@ import logging
 
 from dry_pipe.thttp import request
 
-from dry_pipe.core_lib import exec_remote
+from dry_pipe.core_lib import exec_remote, SleepySpinner
 from dry_pipe import DryPipe
 
 module_logger = logging.getLogger(__name__)
@@ -158,30 +158,17 @@ class GlobusFileTransferResponse:
         return res3.json
 
     def spin_until_complete(self, logger=module_logger, sleep_schedule=[3, 5, 8, 10, 20, 30]):
-
-        last_sleep = 30
-
-        def f():
-            res = self.fetch_status()
-            if res["status"] == "SUCCEEDED":
-                logger.info("globus upload completed")
-                return True
-            return False
-
-        for s in sleep_schedule:
-            last_sleep = s
-            if f():
-                return True
-
-            logger.debug("globus transfer in progress will sleep for %s seconds", last_sleep)
-            time.sleep(last_sleep)
+        with SleepySpinner(sleep_schedule) as ss:
+            while True:
+                res = self.fetch_status()
+                if res["status"] == "SUCCEEDED":
+                    logger.info("globus upload completed")
+                    return True
+                next_sleep = ss.next_sleep()
+                logger.debug("globus transfer in progress will sleep for %s seconds", next_sleep)
+                ss.sleep()
 
 
-        while True:
-            if f():
-                return True
-            logger.debug("globus transfer in progress will sleep for %s seconds", last_sleep)
-            time.sleep(last_sleep)
 
 
 

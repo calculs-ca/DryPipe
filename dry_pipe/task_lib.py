@@ -3,7 +3,7 @@ import time
 from pathlib import Path
 
 from dry_pipe import DryPipe
-from dry_pipe.core_lib import invoke_rsync, exec_remote
+from dry_pipe.core_lib import invoke_rsync, exec_remote, SleepySpinner
 from dry_pipe.state_file import StateFile
 
 
@@ -166,22 +166,30 @@ def poll_remote_task(
     __task_key,
     __remote_pipeline_specs
 ):
-    while True:
-        res = _remote_exec("poll-task", __task_key, __remote_pipeline_specs)
 
-        for remote_state_file_absolute_path in res.split("\n"):
+    with SleepySpinner([1, 5, 5, 10, 30, 30, 30, 120]) as ss:
 
-            if not "/state." in remote_state_file_absolute_path:
-                continue
+        while True:
+            res = _remote_exec("poll-task", __task_key, __remote_pipeline_specs)
 
-            remote_state_file = StateFile.create_from_path(__task_key, remote_state_file_absolute_path)
+            for remote_state_file_absolute_path in res.split("\n"):
 
-            if (remote_state_file.is_failed() or remote_state_file.is_crashed()
-                or remote_state_file.is_killed() or remote_state_file.is_timed_out()
-            ):
-                raise Exception(f"remote state file {remote_state_file_absolute_path} did not succeed")
+                if not "/state." in remote_state_file_absolute_path:
+                    continue
 
-            if remote_state_file.is_completed():
-                return
+                remote_state_file = StateFile.create_from_path(__task_key, remote_state_file_absolute_path)
 
-            time.sleep(20)
+                if (remote_state_file.is_failed() or remote_state_file.is_crashed()
+                    or remote_state_file.is_killed() or remote_state_file.is_timed_out()
+                ):
+                    raise Exception(f"remote state file {remote_state_file_absolute_path} did not succeed")
+
+                if remote_state_file.is_completed():
+                    return
+
+                ns = ss.next_sleep()
+                __remote_pipeline_specs.task_logger.debug(
+                    "remote state is %s, will sleep for %s", remote_state_file.state_as_string(), ns
+                )
+
+                ss.sleep()
