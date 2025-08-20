@@ -998,7 +998,8 @@ class TaskProcess:
             resolved_path = os.path.join(containers_dir, container)
 
         if not os.path.exists(resolved_path):
-            raise Exception(f"container file not found: {resolved_path}, __containers_dir={containers_dir}")
+            self.task_logger.error(f"container file not found: {resolved_path}, __containers_dir={containers_dir}")
+            raise TaskFailedException()
 
         self.task_logger.debug("container: %s resolves to: %s", container, resolved_path)
 

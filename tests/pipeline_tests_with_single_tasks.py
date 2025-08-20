@@ -490,6 +490,23 @@ task_conf_with_test_container = TaskConf(
 )
 
 
+class PipelineWithSingleBashTaskInMissingContainer(PipelineWithSingleBashTask):
+    def task_conf(self):
+        return TaskConf(
+            executer_type="process",
+            container="not-existing-container-file.sif"
+        )
+
+    def is_fail_test(self):
+        return True
+
+    def validate(self, tasks_by_keys):
+        multiply_x_by_y = tasks_by_keys["multiply_x_by_y"]
+
+        self.assertTrue(multiply_x_by_y.is_failed())
+
+
+
 
 class PipelineWithSingleBashTaskInContainer(PipelineWithSingleBashTask):
     def task_conf(self):
@@ -686,7 +703,8 @@ def all_tests_in_containers():
         PipelineWithSinglePythonTaskInContainer,
         PipelineWithSingleBashTaskInContainer,
         PipelineWithVarAndFileOutputInContainer,
-        PipelineWithVarSharingBetweenStepsInContainer
+        PipelineWithVarSharingBetweenStepsInContainer,
+        PipelineWithSingleBashTaskInMissingContainer
     ]
 
 
