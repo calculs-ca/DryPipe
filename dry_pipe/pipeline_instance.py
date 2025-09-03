@@ -23,11 +23,23 @@ class PipelineInstance:
         file_handler = logging.FileHandler(
             filename=os.path.join(self.state_file_tracker.pipeline_work_dir, "pipeline-instance.log")
         )
-        file_handler.setLevel(logging.INFO)
+
+        if self.is_debug():
+            logging_level = logging.DEBUG
+        else:
+            logging_level = logging.INFO
+
+        file_handler.setLevel(logging_level)
         file_handler.setFormatter(
             logging.Formatter("%(asctime)s - %(levelname)s - %(message)s", datefmt='%Y-%m-%d %H:%M:%S%z')
         )
         self.instance_logger.addHandler(file_handler)
+
+    def is_debug(self):
+        if os.environ.get("DRYPIPE_DEBUG") == "True":
+            return True
+        return False
+
 
     def pipeline_instance_dir(self):
         return self.state_file_tracker.pipeline_instance_dir
@@ -79,6 +91,8 @@ class PipelineInstance:
                         c += 1
                         sleep_idx = 0
 
+                    self.instance_logger.debug("DAG round completed")
+
                     if c == 0:
                         if sleep_idx < max_sleep_idx:
                             sleep_idx += 1
@@ -88,7 +102,9 @@ class PipelineInstance:
                     reset_failed = False
 
             except AllRunnableTasksCompletedOrInError:
-                logger.info(f"no more tasks to launch")
+                msg = f"no more tasks to launch"
+                logger.info(msg)
+                self.instance_logger.info(msg)
                 yield None, None
 
             except Exception as ex:
@@ -107,6 +123,7 @@ class PipelineInstance:
                 mon()
             elif suggested_sleep is not None:
                 time.sleep(suggested_sleep)
+                self.instance_logger.debug("will sleep %s", suggested_sleep)
                 mon()
             else:
                 mon()
