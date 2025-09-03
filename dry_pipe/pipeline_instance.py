@@ -1,4 +1,5 @@
 import logging
+import os
 import time
 from itertools import groupby
 
@@ -16,6 +17,17 @@ class PipelineInstance:
         if not self.state_file_tracker.instance_exists():
             self.prepare_instance_dir()
         self.monitor = None
+
+        self.instance_logger = logging.getLogger(f"pipeline-instance-logger-{os.path.basename(pipeline_instance_dir)}")
+
+        file_handler = logging.FileHandler(
+            filename=os.path.join(self.state_file_tracker.pipeline_work_dir, "pipeline-instance.log")
+        )
+        file_handler.setLevel(logging.INFO)
+        file_handler.setFormatter(
+            logging.Formatter("%(asctime)s - %(levelname)s - %(message)s", datefmt='%Y-%m-%d %H:%M:%S%z')
+        )
+        self.instance_logger.addHandler(file_handler)
 
     def pipeline_instance_dir(self):
         return self.state_file_tracker.pipeline_instance_dir
@@ -77,6 +89,10 @@ class PipelineInstance:
 
             except AllRunnableTasksCompletedOrInError:
                 logger.info(f"no more tasks to launch")
+                yield None, None
+
+            except Exception as ex:
+                self.instance_logger.error(f"unexpected error in ", exc_info=ex)
                 yield None, None
 
         def mon():
