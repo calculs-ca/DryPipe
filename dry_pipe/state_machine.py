@@ -35,7 +35,10 @@ class InvalidTaskDefinition(Exception):
 
 class StateMachine:
 
-    def __init__(self, state_file_tracker: StateFileTracker, task_generator=None, until_patterns=None, instance_logger=None):
+    def __init__(
+        self, state_file_tracker: StateFileTracker, task_generator=None, until_patterns=None,
+        instance_logger=None, filters=[]
+    ):
 
         if state_file_tracker is None:
             raise Exception(f"state_file_tracker can't be None")
@@ -56,6 +59,8 @@ class StateMachine:
                 return False
 
             self._queue_only_func = _queue_only
+
+        self.filters = filters
 
         self._task_generator = task_generator
 
@@ -80,6 +85,18 @@ class StateMachine:
 
         #TODO: clean up:
         self.task_conf = TaskConf.default()
+
+    def accept_task(self, task_key):
+
+        if len(self.filters) == 0:
+            return True
+
+        for f in self.filters:
+            if fnmatch.fnmatch(task_key, f):
+                return True
+
+        return False
+
 
     def task(self, key=None, task_conf=None, is_slurm_array_child=False):
         if key is None:
@@ -200,6 +217,17 @@ class StateMachine:
         if len(upstream_dep_keys) == 0:
             return True
         else:
+
+            is_ready = True
+            for k in upstream_dep_keys:
+                sf = self.state_file_tracker.state_files_in_memory.get(k)
+                if sf is None or not sf.is_completed():
+                    is_ready = False
+                    break
+
+            if is_ready:
+                return True
+
             # copy the set, because it will be mutated
             self._keys_of_waiting_tasks_to_set_of_incomplete_upstream_task_keys[task_key] = {
                 k for k in upstream_dep_keys
@@ -229,6 +257,9 @@ class StateMachine:
 
             if isinstance(task, TaskBuilder):
                 raise InvalidTaskDefinition(task, self._task_generator)
+
+            if not self.accept_task(task.key):
+                continue
 
             is_new, state_file = self.state_file_tracker.create_true_state_if_new_else_fetch_from_memory(task)
             if is_new:

@@ -95,7 +95,10 @@ class Pipeline:
 
 class PipelineType:
 
-    def __init__(self, name, pipeline, validator, spartan_schema, default_args, complete_func, post_run_validator=None, init_func=None):
+    def __init__(
+        self, name, pipeline, validator, spartan_schema, default_args,
+        complete_func, post_run_validator=None, init_func=None, pre_run_filters=None
+    ):
         self.name = name
         self.pipeline = pipeline
         self.validator = validator
@@ -104,6 +107,7 @@ class PipelineType:
         self.complete_func = complete_func
         self.post_run_validator = post_run_validator
         self.init_func = init_func
+        self.pre_run_filters = pre_run_filters
 
     def as_dict(self):
         return {

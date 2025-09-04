@@ -55,8 +55,8 @@ class PipelineInstance:
             "__containers_dir": self.pipeline.containers_dir
         })
 
-    def run_sync(self, until_patterns=None, run_tasks_in_process=True):
-        self._run(until_patterns, run_tasks_in_process, True, [0, 0, 0, 1])
+    def run_sync(self, until_patterns=None, run_tasks_in_process=True, filters=[]):
+        self._run(until_patterns, run_tasks_in_process, True, [0, 0, 0, 1], filters=filters)
 
     def run(self, until_patterns=None, restart_failed=False, reset_failed=False):
         self._run(
@@ -66,7 +66,7 @@ class PipelineInstance:
 
     def _run(
         self, until_patterns, run_tasks_in_process, run_tasks_sync, sleep_schedule,
-        restart_failed=False, reset_failed=False
+        restart_failed=False, reset_failed=False, filters=[]
     ):
 
         if until_patterns is not None and not isinstance(until_patterns, list):
@@ -76,7 +76,8 @@ class PipelineInstance:
             self.state_file_tracker,
             self.pipeline.task_generator,
             until_patterns=until_patterns,
-            instance_logger=self.instance_logger
+            instance_logger=self.instance_logger,
+            filters=filters
         )
 
         def iterate_work_rounds(restart_failed, reset_failed):
