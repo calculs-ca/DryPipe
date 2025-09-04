@@ -28,7 +28,8 @@ class PipelineInstanceAccessor:
         self.pipeline_instance = pipeline_type.pipeline.create_pipeline_instance(Path(pipeline_state_file).parent.parent)
         self.state_machine = StateMachine(
             self.pipeline_instance.state_file_tracker,
-            self.pipeline_instance.pipeline.task_generator
+            self.pipeline_instance.pipeline.task_generator,
+            instance_logger=self.pipeline_instance.instance_logger
         )
 
 
@@ -240,6 +241,9 @@ class PipelineRunner:
                         work_done += 1
                     except Exception as ex:
                         logger.error("Error in pipeline instance %s", pid, exc_info=ex)
+                        running_pipeline_instance.pipeline_instance.instance_logger.error(
+                            "unhandled exception %s", exc_info=ex
+                        )
 
                 else:
                     if not running_pipeline_instance.is_completed():

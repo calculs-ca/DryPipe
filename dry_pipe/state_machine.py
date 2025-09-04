@@ -1,4 +1,5 @@
 import fnmatch
+import logging
 import os.path
 import typing
 from pathlib import Path
@@ -57,7 +58,11 @@ class StateMachine:
             self._queue_only_func = _queue_only
 
         self._task_generator = task_generator
-        self.instance_logger = instance_logger
+
+        if instance_logger is None:
+            self.instance_logger = logging.getLogger('dummy')
+        else:
+            self.instance_logger = instance_logger
 
         self._keys_of_waiting_tasks_to_set_of_incomplete_upstream_task_keys: dict[str, set[str]] = {}
         self._keys_of_tasks_waiting_for_external_events: set[str] = set()
