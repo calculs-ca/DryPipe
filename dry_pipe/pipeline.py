@@ -97,7 +97,7 @@ class PipelineType:
 
     def __init__(
         self, name, pipeline, validator, spartan_schema, default_args,
-        complete_func, post_run_validator=None, init_func=None, pre_run_filters=None
+        complete_func, post_run_validator=None, init_func=None, pre_run_filters=[]
     ):
         self.name = name
         self.pipeline = pipeline
