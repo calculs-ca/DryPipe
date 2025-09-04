@@ -208,20 +208,22 @@ class PipelineRunner:
                     self.pipeline_instances[pid] = rpi
                     rpi.set_running()
 
-                    #if rpi.latest_state() == "running":
-                    #    raise Exception(f"good !")
-
                     rpi.pipeline_instance.prepare_instance_dir()
                     work_done += 1
 
             for pid, running_pipeline_instance in self.pipeline_instances.items():
 
+                instance_logger = running_pipeline_instance.pipeline_instance.instance_logger
+
                 def check_completed():
                     if running_pipeline_instance.check_if_completed():
                         running_pipeline_instance.set_completed()
+                        instance_logger.info("pipeline instance completed")
                         return True
 
                 if running_pipeline_instance.is_running():
+
+                    instance_logger.debug("running instance, start round")
 
                     try:
                         for state_file in running_pipeline_instance.state_machine.iterate_tasks_to_launch():
@@ -231,17 +233,18 @@ class PipelineRunner:
                                 as_subprocess=not self.run_tasks_in_process,
                                 wait_for_completion=self.run_sync
                             )
-                            logger.info("will launch %", tp.task_key)
+                            instance_logger.info("will launch %", tp.task_key)
                             tp.run(by_pipeline_runner=True)
                             work_done += 1
                             check_completed()
                     except AllRunnableTasksCompletedOrInError:
                         if not check_completed():
                             running_pipeline_instance.set_stopped()
+                            instance_logger.info("pipeline instance stopped")
                         work_done += 1
                     except Exception as ex:
                         logger.error("Error in pipeline instance %s", pid, exc_info=ex)
-                        running_pipeline_instance.pipeline_instance.instance_logger.error(
+                        instance_logger.error(
                             "unhandled exception %s", exc_info=ex
                         )
 

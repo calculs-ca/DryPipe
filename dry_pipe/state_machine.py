@@ -91,7 +91,11 @@ class StateMachine:
         if task_conf.executer_type == "process" and is_slurm_array_child:
             raise Exception(f"task {key} has is_slurm_array_child=True, and executer_type='process', should be 'slurm'")
 
-        return TaskBuilder(key, task_conf=task_conf, dsl=self, is_slurm_array_child=is_slurm_array_child)
+        tb = TaskBuilder(key, task_conf=task_conf, dsl=self, is_slurm_array_child=is_slurm_array_child)
+
+        self.instance_logger.debug(f"task {key} defined")
+
+        return tb
 
     def file(self, p):
         return Path(p)
@@ -133,6 +137,10 @@ class StateMachine:
                     match_all_impossible = True
 
         if query_all_matches_count == 0 or match_all_impossible:
+            self.instance_logger.debug(
+                f"query %s NOT satisfied match count: %s, impossible: %s",
+                glob_expression, query_all_matches_count, match_all_impossible
+            )
             return []
         elif query_all_matches_count == len(query_with_required_state_matches):
             self._pending_queries.pop(glob_expression, None)
@@ -148,11 +156,13 @@ class StateMachine:
                         for state_file in query_with_required_state_matches
                     ], key=lambda t: t.key)
 
+            self.instance_logger.debug(f"query %s satisfied", glob_expression)
             return Match(),
         else:
             prev_count = self._pending_queries.get(glob_expression)
             if prev_count is None:
                 self._pending_queries[glob_expression] = query_all_matches_count
+                self.instance_logger.debug(f"query %s NOT satisfied, count: ", glob_expression, query_all_matches_count)
                 return []
             elif prev_count != query_all_matches_count:
                 raise InvalidQueryInTaskGenerator(
@@ -160,6 +170,7 @@ class StateMachine:
                     " invocation of 'query_all_completed'"
                 )
             else:
+                self.instance_logger.debug(f"query %s NOT satisfied, count: ", glob_expression, query_all_matches_count)
                 return []
 
     def prepare_for_run_without_generator(self):
