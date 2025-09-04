@@ -73,9 +73,29 @@ class CliMonitor(Monitor):
             print(f" - {task_group}: ({dump_counts})")
 
 
+def _cleanup_args(args):
+    """
+    Pycharm in debug mode prepends it's debugger, this function removes it
+    """
+    corrupt = False
+    idx = 0
+    for a in args:
+        if "pydevd.py" in a:
+            corrupt = True
+            idx = args.index("--file")
+            break
+
+    if corrupt:
+        return args[idx + 2:]
+    else:
+        return args
+
+
 class Cli:
 
     def __init__(self, args, invocation_script=None, env=None):
+
+        args = _cleanup_args(args)
 
         self._has_implicit_generator = False
         self._has_implicit_control_dir = False
