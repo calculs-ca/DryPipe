@@ -233,7 +233,7 @@ class PipelineRunner:
                                 as_subprocess=not self.run_tasks_in_process,
                                 wait_for_completion=self.run_sync
                             )
-                            instance_logger.info("will launch %", tp.task_key)
+                            instance_logger.info("will launch %s", tp.task_key)
                             tp.run(by_pipeline_runner=True)
                             work_done += 1
                             check_completed()
