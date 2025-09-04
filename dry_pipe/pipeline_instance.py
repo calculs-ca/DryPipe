@@ -35,6 +35,11 @@ class PipelineInstance:
         )
         self.instance_logger.addHandler(file_handler)
 
+        self.instance_logger.setLevel(logging_level)
+
+        self.instance_logger.info("log level: %s", logging.getLevelName(logging_level))
+
+
     def is_debug(self):
         if os.environ.get("DRYPIPE_DEBUG") == "True":
             return True
