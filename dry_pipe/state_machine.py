@@ -136,6 +136,8 @@ class StateMachine:
                     self._keys_of_tasks_waiting_for_external_events.discard(state_file.task_key)
                     match_all_impossible = True
 
+        query_with_required_state_matches_count = len(query_with_required_state_matches)
+
         if query_all_matches_count == 0 or match_all_impossible:
             self.instance_logger.debug(
                 f"query %s state=%s NOT satisfied match count: %s, impossible: %s",
@@ -163,8 +165,8 @@ class StateMachine:
             if prev_count is None:
                 self._pending_queries[glob_expression] = query_all_matches_count
                 self.instance_logger.debug(
-                    f"query %s state=%s NOT satisfied, count: ",
-                    glob_expression, state, query_all_matches_count
+                    f"query %s state=%s NOT satisfied, count: %s / %s",
+                    glob_expression, state, query_with_required_state_matches_count, query_all_matches_count
                 )
                 return []
             elif prev_count != query_all_matches_count:
@@ -174,8 +176,8 @@ class StateMachine:
                 )
             else:
                 self.instance_logger.debug(
-                    f"query %s state=%s NOT satisfied, count: ",
-                    glob_expression, state, query_all_matches_count
+                    f"query %s state=%s NOT satisfied, count: %s / %s",
+                    glob_expression, state, query_with_required_state_matches_count, query_all_matches_count
                 )
                 return []
 
