@@ -21,7 +21,7 @@ class PipelineInstance:
         self.instance_logger = logging.getLogger(f"pipeline-instance-logger-{os.path.basename(pipeline_instance_dir)}")
 
         file_handler = logging.FileHandler(
-            filename=os.path.join(self.state_file_tracker.pipeline_work_dir, "pipeline-instance.log")
+            filename=os.path.join(self.state_file_tracker.pipeline_work_dir, "instance.log")
         )
 
         if self.is_debug():
@@ -70,7 +70,8 @@ class PipelineInstance:
         state_machine = StateMachine(
             self.state_file_tracker,
             self.pipeline.task_generator,
-            until_patterns=until_patterns
+            until_patterns=until_patterns,
+            instance_logger=self.instance_logger
         )
 
         def iterate_work_rounds(restart_failed, reset_failed):
