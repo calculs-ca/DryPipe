@@ -2,6 +2,7 @@ import logging
 import os
 import time
 from itertools import groupby
+from logging.handlers import RotatingFileHandler
 
 from dry_pipe.state_machine import StateMachine, AllRunnableTasksCompletedOrInError
 from dry_pipe.state_file_tracker import StateFileTracker
@@ -20,8 +21,9 @@ class PipelineInstance:
 
         self.instance_logger = logging.getLogger(f"pipeline-instance-logger-{os.path.basename(pipeline_instance_dir)}")
 
-        file_handler = logging.FileHandler(
-            filename=os.path.join(self.state_file_tracker.pipeline_work_dir, "instance.log")
+        file_handler = RotatingFileHandler(
+            filename=os.path.join(self.state_file_tracker.pipeline_work_dir, "instance.log"),
+            maxBytes=1024 * 1024 * 10, backupCount=3
         )
 
         if self.is_debug():
