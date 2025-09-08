@@ -34,9 +34,9 @@ class TestPipeline:
         self.base_pipeline_test = base_pipeline_test
         self.pipeline_instance = None
 
-    def create_pipeline_instance(self, pipeline_instance_dir):
+    def create_pipeline_instance(self, pipeline_instance_dir, logger=None):
         p = Pipeline(lambda dsl: self.base_pipeline_test.dag_gen(dsl))
-        self.pipeline_instance = p.create_pipeline_instance(pipeline_instance_dir)
+        self.pipeline_instance = p.create_pipeline_instance(pipeline_instance_dir, logger)
         return self.pipeline_instance
 
 
