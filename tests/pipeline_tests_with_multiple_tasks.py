@@ -106,6 +106,59 @@ class PipelineWithTwoBashTasks(BasePipelineTest):
         self.assert_file_content_equals(str(t2.outputs.f_magic2), "magic")
 
 
+
+class PipelineWithTwoBashTasksPreRun(PipelineWithTwoBashTasks):
+
+    def test_run_pipeline(self):
+
+        pipeline_instance = self.create_pipeline_instance()
+        pipeline_instance.monitor=self.create_monitor()
+
+        pipeline_instance.run_sync(
+            run_tasks_in_process=True,
+            filters=["t1"]
+        )
+
+        tasks_by_keys = {
+            task.key: task
+            for task in pipeline_instance.query("*")
+        }
+
+        self.assertNotIn("t2", tasks_by_keys)
+        self.assertIn("t1", tasks_by_keys)
+
+
+        t = list(pipeline_instance.query("t1"))
+
+
+
+        self.run_pipeline()
+
+
+class PipelineWithVariablePassingWithPreRun(PipelineWithVariablePassing):
+
+    def test_run_pipeline(self):
+
+        pipeline_instance = self.create_pipeline_instance()
+        pipeline_instance.monitor=self.create_monitor()
+
+        pipeline_instance.run_sync(
+            run_tasks_in_process=True,
+            filters=["produce_a_var"]
+        )
+
+        tasks_by_keys = {
+            task.key: task
+            for task in pipeline_instance.query("*")
+        }
+
+        self.assertNotIn("consume_and_produce_a_var", tasks_by_keys)
+        self.assertIn("produce_a_var", tasks_by_keys)
+
+        self.run_pipeline()
+
+
+
 class PipelineWithTwoBashTasksWorkOnLocalCopy(PipelineWithTwoBashTasks):
 
     def task_conf(self):
@@ -118,5 +171,7 @@ def all_basic_tests():
     return [
         PipelineWithVariablePassing,
         PipelineWithTwoBashTasks,
-        PipelineWithTwoBashTasksWorkOnLocalCopy
+        PipelineWithTwoBashTasksWorkOnLocalCopy,
+        PipelineWithVariablePassingWithPreRun,
+        PipelineWithTwoBashTasksPreRun
     ]
