@@ -1,5 +1,4 @@
 import os
-import time
 from pathlib import Path
 
 from dry_pipe import DryPipe
@@ -10,7 +9,6 @@ from dry_pipe.state_file import StateFile
 @DryPipe.python_call()
 def run_array(__task_process):
     from dry_pipe.slurm_array_task import SlurmArrayParentTask
-
     SlurmArrayParentTask(__task_process).run_array(False, False, None)
 
 
@@ -83,6 +81,7 @@ def download_task_outputs(
     __pipeline_instance_dir,
     __remote_pipeline_specs
 ):
+    from dry_pipe.slurm_array_task import SlurmArrayParentTask
 
     #fetch states, and generate rsync list
     remote_cli = os.path.join(__remote_pipeline_specs.remote_instance_work_dir, "cli")
@@ -103,6 +102,21 @@ def download_task_outputs(
         __remote_pipeline_specs.gen_result_files(),
         "result-files.txt"
     )
+
+    if __task_process.is_slurm_array_parent():
+        sa = SlurmArrayParentTask(__task_process)
+        with open(result_file_txt, "a+") as f:
+            for k in sa.children_task_keys():
+                l1 = Path(f"{__pipeline_instance_dir}/.drypipe/{k}/drypipe.log")
+                l2 = Path(f"{__pipeline_instance_dir}/.drypipe/{k}/out.log")
+                if l1.exists():
+                    l1.unlink()
+                if l2.exists():
+                    l2.unlink()
+
+                f.write(f".drypipe/{k}/drypipe.log\n")
+                f.write(f".drypipe/{k}/out.log\n")
+
 
     pid = __pipeline_instance_dir
 
