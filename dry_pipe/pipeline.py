@@ -89,8 +89,8 @@ class Pipeline:
         }
 
 
-    def create_pipeline_instance(self, pipeline_instance_dir):
-        return PipelineInstance(self, pipeline_instance_dir)
+    def create_pipeline_instance(self, pipeline_instance_dir, logger=None):
+        return PipelineInstance(self, pipeline_instance_dir, logger)
 
 
 class PipelineType:

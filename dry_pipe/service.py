@@ -1,6 +1,7 @@
 import json
 import logging
 import os.path
+import shutil
 import time
 from pathlib import Path
 
@@ -22,10 +23,12 @@ def _pipeline_state_and_pid_from_pipeline_state_file(pipeline_state_file):
 
 class PipelineInstanceAccessor:
 
-    def __init__(self, pipeline_type, pipeline_state_file):
+    def __init__(self, pipeline_type, pipeline_state_file, logger=None):
         self.pipeline_type= pipeline_type
         self.pipeline_state_file = pipeline_state_file
-        self.pipeline_instance = pipeline_type.pipeline.create_pipeline_instance(Path(pipeline_state_file).parent.parent)
+        self.pipeline_instance = pipeline_type.pipeline.create_pipeline_instance(
+            Path(pipeline_state_file).parent.parent, logger
+        )
         self.state_machine = StateMachine(
             self.pipeline_instance.state_file_tracker,
             self.pipeline_instance.pipeline.task_generator,
@@ -35,6 +38,18 @@ class PipelineInstanceAccessor:
 
     def task_state_by_key(self, task_key):
         return self.state_machine.state_file_tracker.load_task_from_state_file(task_key)
+
+    def reset_task(self, task_key, preserve_output=False):
+        dirz = [
+            Path(self.state_machine.state_file_tracker.pipeline_work_dir, task_key)
+        ]
+
+        if not preserve_output:
+            dirz.append(Path(self.state_machine.state_file_tracker.pipeline_output_dir, task_key))
+
+        for d in dirz:
+            if d.exists():
+                shutil.rmtree(d)
 
     def instance_dir(self):
         return self.pipeline_instance.state_file_tracker.pipeline_instance_dir

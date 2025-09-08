@@ -12,34 +12,37 @@ logger = logging.getLogger(__name__)
 
 class PipelineInstance:
 
-    def __init__(self, pipeline, pipeline_instance_dir):
+    def __init__(self, pipeline, pipeline_instance_dir, logger=None):
         self.pipeline = pipeline
         self.state_file_tracker = StateFileTracker(pipeline_instance_dir)
         if not self.state_file_tracker.instance_exists():
             self.prepare_instance_dir()
         self.monitor = None
 
-        self.instance_logger = logging.getLogger(f"pipeline-instance-logger-{os.path.basename(pipeline_instance_dir)}")
-
-        file_handler = RotatingFileHandler(
-            filename=os.path.join(self.state_file_tracker.pipeline_work_dir, "instance.log"),
-            maxBytes=1024 * 1024 * 10, backupCount=3
-        )
-
-        if self.is_debug():
-            logging_level = logging.DEBUG
+        if logger is not None:
+            self.instance_logger = logger
         else:
-            logging_level = logging.INFO
+            self.instance_logger = logging.getLogger(f"pipeline-instance-logger-{os.path.basename(pipeline_instance_dir)}")
 
-        file_handler.setLevel(logging_level)
-        file_handler.setFormatter(
-            logging.Formatter("%(asctime)s - %(levelname)s - %(message)s", datefmt='%Y-%m-%d %H:%M:%S%z')
-        )
-        self.instance_logger.addHandler(file_handler)
+            file_handler = RotatingFileHandler(
+                filename=os.path.join(self.state_file_tracker.pipeline_work_dir, "instance.log"),
+                maxBytes=1024 * 1024 * 10, backupCount=3
+            )
 
-        self.instance_logger.setLevel(logging_level)
+            if self.is_debug():
+                logging_level = logging.DEBUG
+            else:
+                logging_level = logging.INFO
 
-        self.instance_logger.info("log level: %s", logging.getLevelName(logging_level))
+            file_handler.setLevel(logging_level)
+            file_handler.setFormatter(
+                logging.Formatter("%(asctime)s - %(levelname)s - %(message)s", datefmt='%Y-%m-%d %H:%M:%S%z')
+            )
+            self.instance_logger.addHandler(file_handler)
+
+            self.instance_logger.setLevel(logging_level)
+
+            self.instance_logger.info("log level: %s", logging.getLevelName(logging_level))
 
 
     def is_debug(self):
