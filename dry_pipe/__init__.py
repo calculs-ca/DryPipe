@@ -464,7 +464,8 @@ class RemotePipelineSpecs:
 
         yield f".drypipe/{self.task_process.task_key}/file-sets-rsync-list.txt"
 
-    def reconcile_local_array_states_with_remote_state(self, remote_exec_result, __pipeline_work_dir):
+    def reconcile_local_array_states_with_remote_state(self, remote_exec_result):
+
         for child_task_key_task_state in remote_exec_result.split("\n"):
             child_task_key_task_state = child_task_key_task_state.strip()
             if child_task_key_task_state == "":
@@ -472,7 +473,7 @@ class RemotePipelineSpecs:
             if child_task_key_task_state.startswith("implicit") and "=" in child_task_key_task_state:
                 continue
             child_task_key, child_task_state = child_task_key_task_state.split("/")
-            child_task_control_dir = os.path.join(__pipeline_work_dir, child_task_key)
+            child_task_control_dir = os.path.join(self.task_process.pipeline_work_dir, child_task_key)
             child_state_file_path = StateFileTracker.find_state_file_if_exists(child_task_control_dir)
             if child_state_file_path is not None:
                 actual_state = os.path.join(child_task_control_dir, child_task_state)

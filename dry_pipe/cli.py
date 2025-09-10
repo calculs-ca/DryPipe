@@ -332,7 +332,7 @@ class Cli:
 
             if task_process.task_conf.executer_type == "slurm":
                 if task_process.is_slurm_array_parent():
-                    task_process.wait_for_completion = True
+                    task_process.wait_for_completion = False
                     sa = SlurmArrayParentTask(task_process)
                     sa.prepare_and_launch_next_array(None)
                 else:

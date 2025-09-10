@@ -96,7 +96,7 @@ def download_task_outputs(
     __task_logger.debug("remote states:\n %s", remote_exec_result)
 
     if __task_process.is_slurm_array_parent():
-        __remote_pipeline_specs.reconcile_local_array_states_with_remote_state(remote_exec_result, __pipeline_work_dir)
+        __remote_pipeline_specs.reconcile_local_array_states_with_remote_state(remote_exec_result)
 
     result_file_txt = __remote_pipeline_specs.dump_unique_files_in_file(
         __remote_pipeline_specs.gen_result_files(),
@@ -147,7 +147,7 @@ def _remote_exec(
     remote_task_control_dir = os.path.join(__remote_pipeline_specs.remote_instance_work_dir, __task_key)
 
     cmd = [
-        "python3", remote_cli, cmd, remote_task_control_dir
+        "python3", remote_cli, f"--pipeline-instance-dir={__remote_pipeline_specs.remote_pid}", cmd, remote_task_control_dir
     ]
 
     if __remote_pipeline_specs.task_conf.run_as_group is not None:
@@ -181,10 +181,27 @@ def poll_remote_task(
     __remote_pipeline_specs
 ):
 
-    with SleepySpinner([1, 5, 5, 10, 30, 30, 30, 120]) as ss:
+    max_sleep = 5 * 60
+
+    with SleepySpinner([1, 5, 5, 10, 30, 30, 30, 120, 120, 120, 121, max_sleep]) as ss:
 
         while True:
             res = _remote_exec("poll-task", __task_key, __remote_pipeline_specs)
+
+            if __remote_pipeline_specs.task_process.is_slurm_array_parent():
+
+                if ss in [1, 11, 121, max_sleep]:
+
+                    remote_cli = os.path.join(__remote_pipeline_specs.remote_instance_work_dir, "cli")
+                    remote_exec_result = exec_remote(__remote_pipeline_specs.user_at_host, [
+                        "python3",
+                        remote_cli,
+                        "list-states",
+                        f"--task-key={__task_key}"
+                    ])
+
+                    __remote_pipeline_specs.task_process.task_logger.debug("remote states:\n %s", remote_exec_result)
+                    __remote_pipeline_specs.reconcile_local_array_states_with_remote_state(remote_exec_result)
 
             for remote_state_file_absolute_path in res.split("\n"):
 

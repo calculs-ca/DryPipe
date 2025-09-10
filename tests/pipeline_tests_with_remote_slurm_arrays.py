@@ -106,6 +106,12 @@ class RemoteArrayTaskFullyAutomatedRun(PipelineWithSlurmArray):
                 )
 
 
+class RemoteArrayTaskFullyAutomatedRun2Steps2Sbatches(RemoteArrayTaskFullyAutomatedRun):
+
+    def sbatch_step2(self, dsl):
+        return ["--time=30:00", "-p", "c-gh"]
+
+
 class CliTestsPipelineWithSlurmArrayRemote(PipelineWithSlurmArray):
 
     def create_prepare_and_run_pipeline(self, d, until_patterns=["*"]):

@@ -266,7 +266,7 @@ def download_task_outputs_globus(
     __task_logger.debug("remote states:\n %s", remote_exec_result)
 
     if __task_process.is_slurm_array_parent():
-        __remote_pipeline_specs.reconcile_local_array_states_with_remote_state(remote_exec_result, __pipeline_work_dir)
+        __remote_pipeline_specs.reconcile_local_array_states_with_remote_state(remote_exec_result)
 
 
     __task_logger.info("will generate file list for upload")

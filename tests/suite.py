@@ -12,7 +12,7 @@ from test_state_machine import StateMachineTests, StateFileTrackerTest, MockupSt
 from tests.pipeline_tests_with_local_slurm import all_with_local_slurm
 from tests import pipeline_tests_with_slurm_arrays
 from tests.pipeline_tests_with_remote_slurm_arrays import CliTestsPipelineWithSlurmArrayRemote, \
-    RemoteArrayTaskFullyAutomatedRun
+    RemoteArrayTaskFullyAutomatedRun, RemoteArrayTaskFullyAutomatedRun2Steps2Sbatches
 from tests.pipeline_tests_with_remote_tasks import RemoteTestFileSet, RemoteTestFileSetWithDataDirVar, \
     RemoteTestFileSetWithGlobus
 from tests.service_runner_tests import ServiceRunnerTest1
@@ -52,7 +52,8 @@ def array_tests():
 def array_remote_tests():
     return [
         CliTestsPipelineWithSlurmArrayRemote,
-        RemoteArrayTaskFullyAutomatedRun
+        RemoteArrayTaskFullyAutomatedRun,
+        RemoteArrayTaskFullyAutomatedRun2Steps2Sbatches
     ]
 
 def remote_task_tests():
@@ -115,6 +116,7 @@ if __name__ == '__main__':
         "ad_hoc": ad_hoc,
         "array_tests": array_tests,
         "all_local_tests": all_local_tests,
+        "remote_task_tests": remote_task_tests,
         "exhaustive_test_suite": exhaustive_test_suite,
         "remote_array_tests": array_remote_tests,
         "all_remote_tests": all_remote_tests,

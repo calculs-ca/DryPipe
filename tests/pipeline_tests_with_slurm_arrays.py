@@ -93,6 +93,9 @@ class PipelineWithSlurmArray(BasePipelineTest):
 
         return M()
 
+    def sbatch_step2(self, dsl):
+        return None
+
     def dag_gen(self, dsl):
 
         t0 = dsl.task(
@@ -118,7 +121,10 @@ class PipelineWithSlurmArray(BasePipelineTest):
                 yield dsl.task(
                     key=f"t_{c}_{i}",
                     is_slurm_array_child=True,
-                    task_conf=self.task_conf()
+                    task_conf=TaskConf(
+                        python_bin="python3",
+                        extra_env=self.task_conf().extra_env
+                    )
                 ).inputs(
                     r=t0.outputs.r,
                     i=i,
@@ -145,7 +151,8 @@ class PipelineWithSlurmArray(BasePipelineTest):
                     echo "123" > $__task_output_dir/sub2/a/b.txt                    
                     echo "123" > $__task_output_dir/a.txt
                 """).calls(
-                    test_func
+                    test_func,
+                    sbatch_options=self.sbatch_step2(dsl)
                 )()
 
         for match in dsl.query_all_or_nothing("t_*", state="ready"):
@@ -190,6 +197,16 @@ class PipelineWithSlurmArray(BasePipelineTest):
             int(tasks_by_keys["t_b_2"].outputs.slurm_result),
             12+25
         )
+
+
+class PipelineWithSlurmArray2StepsWith2Sbatch(PipelineWithSlurmArray):
+
+    def launches_tasks_in_process(self):
+        return True
+
+    def sbatch_step2(self, dsl):
+        return ["--time=30:00"]
+
 
 class PipelineWithSlurmArrayWithUntil(PipelineWithSlurmArray):
 
@@ -337,5 +354,6 @@ class PipelineWithSlurmArrayForRestarts(BasePipelineTest):
 
 all_tests = [
     PipelineWithMultiCallSlurmArrayForRealSlurmTest,
-    PipelineWithSlurmArrayWithUntil
+    PipelineWithSlurmArrayWithUntil,
+    PipelineWithSlurmArray2StepsWith2Sbatch
 ]
