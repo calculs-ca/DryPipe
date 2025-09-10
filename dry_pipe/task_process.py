@@ -922,13 +922,16 @@ class TaskProcess:
         return next_state_file, next_step_number
 
 
-    def transition_to_step_started(self, state_file, step_number, previous_state_name=None):
+    def transition_to_step_started(self, state_file, step_number, previous_state_name=None, is_pre_launch=False):
 
         if previous_state_name == "failed":
             with open(self.env['__out_log'], 'a') as out:
                 out.write(f"\n================ step {step_number} restarted after failure =====================\n\n")
 
-        return self._transition_state_file(state_file, "step-started", step_number)
+
+        pre_launch_flag = "_" if is_pre_launch else ""
+
+        return self._transition_state_file(state_file, f"{pre_launch_flag}step-started", step_number)
 
 
     def transition_to_step_completed(self, state_file, step_number):
@@ -1162,6 +1165,30 @@ class TaskProcess:
         else:
             yield from self.task_conf.step_invocations
 
+
+    def _launch_next_step_on_new_sbatch_if_required(self, step_invocation, state_file, step_number):
+
+        if "sbatch_options" not in step_invocation:
+            return False
+        else:
+
+            state_file_bn = os.path.basename(state_file)
+
+            if state_file_bn.startswith("state._step-started"):
+                return False
+
+            self.transition_to_step_started(state_file, step_number, is_pre_launch=True)
+            try:
+                cmd = list(self.sbatch_cmd_lines(step_invocation["sbatch_options"]))
+                self.task_logger.info("will launch next step: %s", " ".join(cmd))
+                p = PortablePopen(cmd)
+                p.popen.wait()
+                return True
+            except Exception as ex:
+                self.task_logger.error("fail task launch", exc_info=ex)
+                raise TaskFailedException()
+
+
     def _run_steps(self):
 
         step_number, control_dir, state_file, state_name = self.read_task_state(non_existant_ok=True)
@@ -1171,11 +1198,18 @@ class TaskProcess:
         if self._is_work_on_local_copy():
             self._create_local_scratch_and_rsync_inputs()
 
+        skip_transition_to_completed = False
+
         try:
 
             for i in range(step_number, len(step_invocations)):
 
                 step_invocation = step_invocations[i]
+
+                if self._launch_next_step_on_new_sbatch_if_required(step_invocation, state_file, step_number):
+                    skip_transition_to_completed = True
+                    break
+
                 state_file, step_number = self.transition_to_step_started(
                     state_file, step_number, previous_state_name=state_name
                 )
@@ -1202,14 +1236,15 @@ class TaskProcess:
             if self._is_work_on_local_copy():
                 self._rsync_outputs_from_scratch()
 
-            self.transition_to_completed(state_file)
+            if not skip_transition_to_completed:
+                self.transition_to_completed(state_file)
         except TaskFailedException as tfe:
             self._transition_state_file(state_file, "failed", step_number)
 
-    def sbatch_cmd_lines(self):
+    def sbatch_cmd_lines(self, override_options=None):
 
-        if self.task_conf.executer_type != "slurm":
-            raise Exception(f"not a slurm task")
+        #if self.task_conf.executer_type != "slurm":
+        #    raise Exception(f"not a slurm task")
 
         yield "sbatch"
 
@@ -1220,7 +1255,10 @@ class TaskProcess:
         if sacc is not None:
             yield f"--account={sacc}"
 
-        yield from self.task_conf.sbatch_options
+        if override_options is not None:
+            yield from override_options
+        else:
+            yield from self.task_conf.sbatch_options
 
         yield f"--output={self.control_dir}/out.log"
 
@@ -1243,7 +1281,7 @@ class TaskProcess:
             print(l)
 
     def is_array_child_task(self):
-        return self.slurm_array_task_id is not None
+        return self.slurm_array_task_id is not None and "DRYPIPE_TASK_KEY_FILE_BASENAME" in os.environ
 
     def _control_dir_from_env(self):
         return os.environ.get("DRYPIPE_TASK_CONTROL_DIR")

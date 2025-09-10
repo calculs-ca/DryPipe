@@ -304,6 +304,21 @@ class TaskBuilder:
                 f"invalid args, task.calls(...) can take a single a single positional argument, was given: {args}"
             )
 
+        if "sbatch_options" in kwargs:
+            sbo = kwargs["sbatch_options"]
+            if sbo is not None:
+                def raiz(s):
+                    raise Exception(
+                        f"sbatch_options must be a list of strings or ints or floats, was given: {s}"
+                    )
+                if not isinstance(sbo, list):
+                    raiz(sbo)
+                bad_args = Utils.filter_non_str_int_float_arg(sbo)
+                if bad_args is None:
+                    task_step.sbatch_options = sbo
+                else:
+                    raiz(bad_args)
+
         return TaskBuilder(** {
             ** vars(self),
             "task_steps": self.task_steps + [task_step]
@@ -728,3 +743,22 @@ class PythonCall:
         func_name = self.func.__name__
         importable_module_name = f"{mod.__package__}.{file_name[:-3]}:{func_name}"
         return importable_module_name
+
+
+
+class Utils:
+
+
+    @staticmethod
+    def filter_non_str_int_float_arg(it):
+
+        def g():
+            for i in it:
+                if not (isinstance(i, str) or isinstance(i, int) or isinstance(i, float)):
+                    yield i
+
+        l = list(g())
+        if len(l) == 0:
+            return None
+        else:
+            return ",".join(g())

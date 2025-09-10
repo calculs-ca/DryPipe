@@ -105,8 +105,6 @@ class StateMachine:
         if task_conf is None:
             task_conf = TaskConf.default()
 
-        if task_conf.executer_type == "process" and is_slurm_array_child:
-            raise Exception(f"task {key} has is_slurm_array_child=True, and executer_type='process', should be 'slurm'")
 
         tb = TaskBuilder(key, task_conf=task_conf, dsl=self, is_slurm_array_child=is_slurm_array_child)
 

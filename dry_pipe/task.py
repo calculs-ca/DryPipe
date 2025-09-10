@@ -151,6 +151,8 @@ class TaskStep:
         self.shell_script = shell_script
         self.python_call = python_call
         self.shell_snippet = shell_snippet
+        self.sbatch_options = None
+        self.container = None
 
     def hash_values(self):
         if self.shell_script is not None:
@@ -193,6 +195,9 @@ class TaskStep:
 
         if container is not None:
             call["container"] = container
+
+        if self.sbatch_options is not None:
+            call["sbatch_options"] = self.sbatch_options
 
         return call
 
