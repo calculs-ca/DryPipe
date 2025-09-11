@@ -1,3 +1,4 @@
+import json
 import os
 from pathlib import Path
 
@@ -6,7 +7,8 @@ from base_pipeline_test import BasePipelineTest
 from dry_pipe import TaskConf
 from dry_pipe.pipeline_instance import Monitor
 from dry_pipe.state_machine import AllRunnableTasksCompletedOrInError
-from tests.exportable_funcs import test_func
+from slurm_array_task import SlurmArrayParentTask
+from tests.exportable_funcs import test_func, test_step0, test_step1, test_step2, test_step3
 
 python_path_for_tests = str(Path(__file__).resolve().parent.parent)
 
@@ -74,6 +76,11 @@ def array_test_1(r):
     pass
 
 
+exportable_funcs_file = os.path.join(
+    os.path.dirname(os.path.realpath(__file__)),
+    "exportable_funcs.py"
+)
+
 
 class PipelineWithSlurmArray(BasePipelineTest):
 
@@ -110,11 +117,6 @@ class PipelineWithSlurmArray(BasePipelineTest):
         """)()
 
         yield t0
-
-        exportable_funcs_file = os.path.join(
-            os.path.dirname(os.path.realpath(__file__)),
-            "exportable_funcs.py"
-        )
 
         for i in [1, 2]:
             for c in ["a", "b"]:
@@ -350,6 +352,118 @@ class PipelineWithSlurmArrayForRestarts(BasePipelineTest):
 
         self.assertEqual(int(t2.outputs.r), 3)
         self.assertEqual(int(t2.outputs.r2), 5)
+
+
+class PipelineWithMultiStepSlurmArrayWithMultiSbatchOptionsWithCrashAndRestarts(BasePipelineTest):
+
+    def task_conf(self):
+        return TaskConf(
+            executer_type="slurm",
+            # slurm_account="dummy",
+            extra_env={"DRYPIPE_TASK_DEBUG": "True", "PYTHONPATH": os.environ.get("PYTHONPATH")}
+        )
+
+    def create_monitor(self):
+
+        class M(Monitor):
+            def on_task_fail(self, state_file):
+                if state_file.task_key == "array_parent":
+                    raise AllRunnableTasksCompletedOrInError()
+
+        return M()
+
+    def dag_gen(self, dsl):
+
+        for i in [0, 1, 2 ,3, 4]:
+            yield dsl.task(
+                key=f"t_{i}",
+                is_slurm_array_child=True,
+                task_conf=TaskConf(
+                    python_bin="python3",
+                    extra_env=self.task_conf().extra_env
+                )
+            ).inputs(
+                i=i,
+                code_dep=dsl.file(exportable_funcs_file)
+            ).outputs(
+                slurm_result=int
+            ).calls(
+                test_step0
+            ).calls(
+                test_step1,
+                sbatch_options=["--time=30:00"]
+            ).calls(
+                test_step2
+            ).calls(
+                test_step3
+            )()
+
+        for match in dsl.query_all_or_nothing("t_*", state="ready"):
+            yield dsl.task(
+                key=f"array_parent",
+                task_conf=self.task_conf()
+            ).slurm_array_parent(
+                children_tasks=match.tasks
+            )()
+
+    def test_run_pipeline(self):
+
+        pipeline_instance = self.create_pipeline_instance()
+
+        crash_plan = [
+        # i: 0  1  2  3  4
+            [1, 0, 0, 0, 0], # step 0
+            [0, 1, 1, 0, 0], # step 1
+            [0, 0, 2, 0, 0], # step 2
+            [0, 0, 0, 1, 0]  # step 3
+        ]
+
+        with open(Path(self.pipeline_instance_dir, "crash-plan.json"), "w") as f:
+            f.write(json.dumps(crash_plan))
+
+        pipeline_instance.monitor=self.create_monitor()
+
+        pipeline_instance.run_sync()
+
+        tasks_by_keys = {
+            t.key: t
+            for t in pipeline_instance.query("*", include_incomplete_tasks=True)
+        }
+
+        t_0 = tasks_by_keys["t_0"]
+        t_1 = tasks_by_keys["t_1"]
+        t_2 = tasks_by_keys["t_2"]
+        t_3 = tasks_by_keys["t_3"]
+        t_4 = tasks_by_keys["t_4"]
+
+        self.assertTrue(t_0.is_failed())
+        self.assertTrue(t_1.is_failed())
+        self.assertTrue(t_2.is_failed())
+        self.assertTrue(t_3.is_failed())
+        self.assertTrue(t_4.is_completed())
+
+        self.assertEqual(t_0.step_idx(), 0)
+        self.assertEqual(t_1.step_idx(), 1)
+        self.assertEqual(t_2.step_idx(), 1)
+        self.assertEqual(t_3.step_idx(), 3)
+
+        sapt = SlurmArrayParentTask(tasks_by_keys["array_parent"].task_process)
+
+        next_task_key_file, next_array_number = sapt.next_array_file_name_and_number()
+
+        next_task_state_files = list(sapt.iterate_next_task_state_files(None, True, False))
+
+        array_batches_for_restart =  list(sapt.split_into_steps_with_sbatch_options(next_task_state_files))
+
+        self.assertEqual(len(array_batches_for_restart), 2)
+
+        batch_with_no_sbatch_options = [
+            state_files
+            for sbo, state_files in array_batches_for_restart
+            if sbo is None
+        ]
+
+        return pipeline_instance
 
 
 all_tests = [

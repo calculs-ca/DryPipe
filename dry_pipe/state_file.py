@@ -41,7 +41,7 @@ class StateFile:
     def transition_to_pre_launch(self, reset_failed=False):
         _, _, s = self.key_state_step()
 
-        if reset_failed:
+        if s is None:
             s = 0
 
         self.path = os.path.join(self.tracker.pipeline_work_dir, self.task_key, f"state._step-started.{s}")
@@ -59,7 +59,7 @@ class StateFile:
 
         state = os.path.basename(self.path)[6:]
 
-        step = 0
+        step = None
 
         if "." in state:
             state_p, suffix = state.rsplit(".", 1)
@@ -68,6 +68,10 @@ class StateFile:
                 state = state_p
 
         return self.task_key, state, step
+
+    def step_idx(self):
+        task_key, state, step = self.key_state_step()
+        return step
 
     def is_completed(self):
         return self.path.endswith("state.completed")

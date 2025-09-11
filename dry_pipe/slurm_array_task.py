@@ -2,6 +2,7 @@ import glob
 import logging
 import os
 import time
+from itertools import groupby
 from pathlib import Path
 from typing import List, Iterator, Tuple
 
@@ -48,14 +49,17 @@ class SlurmArrayParentTask:
             if a is not None:
                 yield f"--account={a}"
 
-            if self.debug:
+            # stdout and stderr are handled by TaskProcess, slurm redirection is almost always empty
+            slurm_std_out_err_log = os.environ.get("DRYPIPE_SLURM_STD_OUT_ERR_LOG") == "True"
+
+            if slurm_std_out_err_log:
                 yield f"--output={self.control_dir()}/debug-%A_%a.log"
             else:
                 yield "--output=/dev/null"
 
             yield from self.task_process.task_conf.sbatch_options
 
-            if self.debug:
+            if slurm_std_out_err_log:
                 yield f"--error={self.control_dir()}/debug-%A_%a.log"
 
             yield "--export={0}".format(",".join([
@@ -325,7 +329,7 @@ class SlurmArrayParentTask:
     def i_th_submitted_array_file(self, array_number, job_id):
         return os.path.join(self.control_dir(), f"array.{array_number}.job.{job_id}")
 
-    def _iterate_next_task_state_files(self, start_next_n, restart_failed, include_pre_launch):
+    def iterate_next_task_state_files(self, start_next_n, restart_failed, include_pre_launch):
         i = 0
         for k in self.children_task_keys():
             state_file = self.tracker.load_state_file(k)
@@ -347,8 +351,48 @@ class SlurmArrayParentTask:
             if start_next_n is not None and i >= start_next_n:
                 break
 
-    def prepare_and_launch_next_array(self, limit=None, restart_failed=False, call_sbatch_mockup=None, include_pre_launch=False):
+    def split_into_steps_with_sbatch_options(self, next_task_state_files):
 
+        def g():
+            for sf in next_task_state_files:
+
+                step_number, i1, i2, i3 = self.task_process.read_task_state(sf.control_dir())
+
+                if step_number == 0:
+                    yield "", sf, None
+                else:
+                    tc = TaskConf.from_json_file(sf.control_dir())
+
+                    def last_sbatch_option():
+                        for i in range(step_number, 0, -1):
+                            step = tc.step_invocations[i]
+                            if "sbatch_options" in step:
+                                sbo =  step["sbatch_options"]
+                                if sbo is not None:
+                                    return " ".join(map(str,sbo)), sbo
+                        return "", None
+
+                    sbos, sbo = last_sbatch_option()
+
+                    yield sbos, sf, sbo
+
+        def key(t):
+            return t[0]
+
+        g0 = list(g())
+        for sbo, gr in groupby(sorted(g0, key=key), key=key):
+
+            gr = list(gr)
+            sfs = [sf for _, sf, _ in gr]
+            sbos = [sbo for _, _, sbo in gr]
+
+            if sbo == "":
+                yield None, sfs
+            else:
+                yield sbos[0], sfs
+
+
+    def next_array_file_name_and_number(self):
         arrays_files = list(self.arrays_files())
 
         if len(arrays_files) == 0:
@@ -357,11 +401,16 @@ class SlurmArrayParentTask:
             last_array_file_idx = arrays_files[-1][0]
             next_array_number = last_array_file_idx + 1
 
-        next_task_key_file = os.path.join(self.control_dir(), f"array.{next_array_number}.tsv")
+        return os.path.join(self.control_dir(), f"array.{next_array_number}.tsv"), next_array_number
+
+
+    def prepare_and_launch_next_array(self, limit=None, restart_failed=False, call_sbatch_mockup=None, include_pre_launch=False):
+
+        next_task_key_file, next_array_number = self.next_array_file_name_and_number()
 
         logger.info("next array task keys in %s", next_task_key_file)
 
-        next_task_state_files = list(self._iterate_next_task_state_files(limit, restart_failed, include_pre_launch))
+        next_task_state_files = list(self.iterate_next_task_state_files(limit, restart_failed, include_pre_launch))
 
         if len(next_task_state_files) == 0:
             logger.info("no tasks to relaunch")

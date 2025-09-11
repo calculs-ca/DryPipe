@@ -548,6 +548,7 @@ class TaskProcess:
 
         class ResolvedTask:
             def __init__(self, tp):
+                self.task_process = tp
                 self.key = state_file.task_key
                 self.inputs = tp.inputs
                 self.outputs = tp.outputs
@@ -576,6 +577,9 @@ class TaskProcess:
 
             def glob_output(self, pattern):
                 return Path(state_file.output_dir()).glob(pattern)
+
+            def step_idx(self):
+                return state_file.step_idx()
 
         return ResolvedTask(self)
 

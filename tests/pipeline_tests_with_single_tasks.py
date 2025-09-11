@@ -678,6 +678,43 @@ class TestPythonPathInExtraEnv2(TestPythonPathInExtraEnv):
             }
         )
 
+
+@DryPipe.python_call()
+def step0(x):
+
+    print(f"step0: {x}")
+    return {
+        "result": x * 2
+    }
+
+@DryPipe.python_call()
+def step1(result):
+    print(f"step1: {result}")
+    return {
+        "result": result * 2
+    }
+
+class PipelineWithMultiStepVarPassTrough(BasePipelineTest):
+
+    def dag_gen(self, dsl):
+
+        yield dsl.task(
+            key="t",
+            task_conf=self.task_conf()
+        ).inputs(
+            x=3
+        ).outputs(
+            result=int
+        ).calls(
+            step0
+        ).calls(
+            step1
+        )()
+
+    def validate(self, tasks_by_keys):
+        self.assertEqual(int(tasks_by_keys["t"].outputs.result), 12)
+
+
 def all_basic_tests():
     return [
         TestExtraEnvResolution,
@@ -694,7 +731,8 @@ def all_basic_tests():
         PipelineWith4MixedStepsPythonCrash,
         TestPythonPathInExtraEnv,
         TestPythonPathInExtraEnv2,
-        PipelineWithCrashOnFirstRun
+        PipelineWithCrashOnFirstRun,
+        PipelineWithMultiStepVarPassTrough
     ]
 
 def all_tests_in_containers():

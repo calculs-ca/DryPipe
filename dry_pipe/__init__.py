@@ -305,6 +305,13 @@ class TaskBuilder:
             )
 
         if "sbatch_options" in kwargs:
+
+            if len(self.task_steps) == 0:
+                raise Exception(
+                    f"declaring sbatch_options on the first step serves no purpose, "+
+                    "please declare sbatch_options in task_conf"
+                )
+
             sbo = kwargs["sbatch_options"]
             if sbo is not None:
                 def raiz(s):
