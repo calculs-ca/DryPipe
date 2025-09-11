@@ -1,10 +1,12 @@
 import json
 import os
+import time
 from pathlib import Path
 
 import dry_pipe
 from base_pipeline_test import BasePipelineTest
-from dry_pipe import TaskConf
+from core_lib import SleepySpinner
+from dry_pipe import TaskConf, PortablePopen
 from dry_pipe.pipeline_instance import Monitor
 from dry_pipe.state_machine import AllRunnableTasksCompletedOrInError
 from slurm_array_task import SlurmArrayParentTask
@@ -447,13 +449,14 @@ class PipelineWithMultiStepSlurmArrayWithMultiSbatchOptionsWithCrashAndRestarts(
         self.assertEqual(t_2.step_idx(), 1)
         self.assertEqual(t_3.step_idx(), 3)
 
-        sapt = SlurmArrayParentTask(tasks_by_keys["array_parent"].task_process)
+        array_parent = tasks_by_keys["array_parent"]
+        sapt = SlurmArrayParentTask(array_parent.task_process)
 
-        next_task_key_file, next_array_number = sapt.next_array_file_name_and_number()
-
-        next_task_state_files = list(sapt.iterate_next_task_state_files(None, True, False))
+        next_task_state_files = list(sapt.iterate_next_task_state_files(None, True, False, dry_run=True))
 
         array_batches_for_restart =  list(sapt.split_into_steps_with_sbatch_options(next_task_state_files))
+
+        self.assertIsNone(array_batches_for_restart[0][0])
 
         self.assertEqual(len(array_batches_for_restart), 2)
 
@@ -461,13 +464,64 @@ class PipelineWithMultiStepSlurmArrayWithMultiSbatchOptionsWithCrashAndRestarts(
             state_files
             for sbo, state_files in array_batches_for_restart
             if sbo is None
-        ]
+        ][0]
 
-        return pipeline_instance
+        self.assertEqual(len(batch_with_no_sbatch_options), 1)
+
+        batch_with_sbatch_options = [
+            state_files
+            for sbo, state_files in array_batches_for_restart
+            if sbo is not None
+        ][0]
+
+        self.assertEqual(len(batch_with_sbatch_options), 3)
+
+        self.assertEqual(
+            {"/t_0/state.failed.0"},
+            {str(s) for s in batch_with_no_sbatch_options}
+        )
+
+        self.assertEqual(
+            {"/t_1/state.failed.1",
+             "/t_2/state.failed.1",
+             "/t_3/state.failed.3"},
+            {str(s) for s in batch_with_sbatch_options}
+        )
+
+        n_submitted = sapt.prepare_and_launch_next_array(None, restart_failed=True)
+
+        self.assertEqual(n_submitted, 4)
+
+        self.spin_until_no_running_jobs()
+
+        self.assertEqual(
+            set([k for k, _ in sapt.task_keys_in_i_th_array_file(1)]),
+            {"t_0"}
+        )
+
+        self.assertEqual(
+            set([k for k, _ in sapt.task_keys_in_i_th_array_file(2)]),
+            {"t_1", "t_2", "t_3"}
+        )
+
+        def refresh_state_files():
+            for t in [t_0, t_1, t_2, t_3, t_4]:
+                t.refresh_state()
+
+        refresh_state_files()
+
+        self.assertTrue(t_0.is_completed())
+        self.assertTrue(t_1.is_completed())
+        self.assertTrue(t_2.is_failed())
+        self.assertTrue(t_3.is_completed())
+        self.assertTrue(t_4.is_completed())
+
+        self.assertEqual(t_2.step_idx(), 2)
 
 
 all_tests = [
     PipelineWithMultiCallSlurmArrayForRealSlurmTest,
     PipelineWithSlurmArrayWithUntil,
-    PipelineWithSlurmArray2StepsWith2Sbatch
+    PipelineWithSlurmArray2StepsWith2Sbatch,
+    PipelineWithMultiStepSlurmArrayWithMultiSbatchOptionsWithCrashAndRestarts
 ]

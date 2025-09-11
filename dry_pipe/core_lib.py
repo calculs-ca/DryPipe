@@ -231,8 +231,8 @@ class SleepySpinner:
 
     def __init__(self, sleep_schedule):
 
-        if not isinstance(sleep_schedule, list):
-            raise Exception(f"expected list, got {type(sleep_schedule)}")
+        if not isinstance(sleep_schedule, (list, tuple)):
+            raise Exception(f"expected list or tuple, got {type(sleep_schedule)}")
 
         if len(sleep_schedule) == 0:
             raise Exception(f"sleep_schedule is empty")

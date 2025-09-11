@@ -38,6 +38,11 @@ class StateFile:
             self.outputs = None
             self.inputs = None
 
+    def reload(self):
+        from dry_pipe import StateFileTracker
+        p = StateFileTracker.find_state_file_if_exists(self.control_dir())
+        self.path = p.path
+
     def transition_to_pre_launch(self, reset_failed=False):
         _, _, s = self.key_state_step()
 

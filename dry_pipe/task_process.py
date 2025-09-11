@@ -557,6 +557,9 @@ class TaskProcess:
             def __str__(self):
                 return f"Task(key={self.key})"
 
+            def refresh_state(self):
+                self.state_file.reload()
+
             def is_completed(self):
                 return state_file.is_completed()
 

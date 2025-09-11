@@ -33,7 +33,7 @@ class SlurmArrayParentTask:
             for line in f:
                 yield line.strip()
 
-    def prepare_sbatch_command(self, task_key_file, array_size):
+    def prepare_sbatch_command(self, task_key_file, array_size, sbatch_options_override=None):
 
         if array_size == 0:
             raise Exception(f"should not start an empty array")
@@ -57,7 +57,10 @@ class SlurmArrayParentTask:
             else:
                 yield "--output=/dev/null"
 
-            yield from self.task_process.task_conf.sbatch_options
+            if sbatch_options_override is not None:
+                yield from sbatch_options_override
+            else:
+                yield from self.task_process.task_conf.sbatch_options
 
             if slurm_std_out_err_log:
                 yield f"--error={self.control_dir()}/debug-%A_%a.log"
@@ -329,7 +332,7 @@ class SlurmArrayParentTask:
     def i_th_submitted_array_file(self, array_number, job_id):
         return os.path.join(self.control_dir(), f"array.{array_number}.job.{job_id}")
 
-    def iterate_next_task_state_files(self, start_next_n, restart_failed, include_pre_launch):
+    def iterate_next_task_state_files(self, start_next_n, restart_failed, include_pre_launch, dry_run=False):
         i = 0
         for k in self.children_task_keys():
             state_file = self.tracker.load_state_file(k)
@@ -345,7 +348,8 @@ class SlurmArrayParentTask:
                 i += 1
             elif restart_failed and (state_file.is_failed() or state_file.is_timed_out() or state_file.is_killed()):
                 logger.debug("will launch %s", state_file.task_key)
-                self.tracker.register_pre_launch(state_file, restart_failed)
+                if not dry_run:
+                    self.tracker.register_pre_launch(state_file, restart_failed)
                 yield state_file
                 i += 1
             if start_next_n is not None and i >= start_next_n:
@@ -380,16 +384,22 @@ class SlurmArrayParentTask:
             return t[0]
 
         g0 = list(g())
-        for sbo, gr in groupby(sorted(g0, key=key), key=key):
 
-            gr = list(gr)
-            sfs = [sf for _, sf, _ in gr]
-            sbos = [sbo for _, _, sbo in gr]
+        def g1():
+            for sbo, gr in groupby(sorted(g0, key=key), key=key):
 
-            if sbo == "":
-                yield None, sfs
-            else:
-                yield sbos[0], sfs
+                gr = list(gr)
+                sfs = [sf for _, sf, _ in gr]
+                sbos = [sbo for _, _, sbo in gr]
+
+                if sbo == "":
+                    yield None, sfs
+                else:
+                    yield sbos[0], sfs
+
+        res = sorted(g1(), key=lambda t: 0 if t[0] is None else 10)
+
+        return res
 
 
     def next_array_file_name_and_number(self):
@@ -404,40 +414,45 @@ class SlurmArrayParentTask:
         return os.path.join(self.control_dir(), f"array.{next_array_number}.tsv"), next_array_number
 
 
-    def prepare_and_launch_next_array(self, limit=None, restart_failed=False, call_sbatch_mockup=None, include_pre_launch=False):
+    def prepare_and_launch_next_array(self, limit=None, restart_failed=False, call_sbatch_mockup=None, include_pre_launch=False, dry_run=False):
 
-        next_task_key_file, next_array_number = self.next_array_file_name_and_number()
-
-        logger.info("next array task keys in %s", next_task_key_file)
-
-        next_task_state_files = list(self.iterate_next_task_state_files(limit, restart_failed, include_pre_launch))
+        next_task_state_files = list(self.iterate_next_task_state_files(limit, restart_failed, include_pre_launch, dry_run))
 
         if len(next_task_state_files) == 0:
             logger.info("no tasks to relaunch")
             return 0
         else:
-            with open(next_task_key_file, "w") as _next_task_key_file:
-                for state_file in next_task_state_files:
-                    _next_task_key_file.write(f"{state_file.task_key}\n")
-                    self.tracker.register_pre_launch(state_file)
 
-            command_args = self.prepare_sbatch_command(next_task_key_file, len(next_task_state_files))
+            for sbatch_options, state_files_in_batch in self.split_into_steps_with_sbatch_options(next_task_state_files):
 
-            if call_sbatch_mockup is not None:
-                call_sbatch_func = call_sbatch_mockup
-                self.task_process.task_logger.info("Will use SBATCH MOCKUP")
-            elif self.mockup_run_launch_local_processes:
-                self.task_process.task_logger.info("Will fake SBATCH as local process")
-                call_sbatch_func = lambda: self._sbatch_mockup_launch_as_local_proceses()
-            else:
-                self.task_process.task_logger.info("will submit array: %s", " ".join(command_args))
-                call_sbatch_func = lambda: self.call_sbatch(command_args)
+                next_task_key_file, next_array_number = self.next_array_file_name_and_number()
 
-            job_id = call_sbatch_func()
-            if job_id is None:
-                raise Exception(f"sbatch returned None:\n {command_args}")
-            with open(self.i_th_submitted_array_file(next_array_number, job_id), "w") as f:
-                f.write(" ".join(command_args))
+                logger.info("next array task keys in %s", next_task_key_file)
+
+                with open(next_task_key_file, "w") as _next_task_key_file:
+                    for state_file in state_files_in_batch:
+                        _next_task_key_file.write(f"{state_file.task_key}\n")
+                        self.tracker.register_pre_launch(state_file)
+
+                command_args = self.prepare_sbatch_command(
+                    next_task_key_file, len(state_files_in_batch), sbatch_options
+                )
+
+                if call_sbatch_mockup is not None:
+                    call_sbatch_func = call_sbatch_mockup
+                    self.task_process.task_logger.info("Will use SBATCH MOCKUP")
+                elif self.mockup_run_launch_local_processes:
+                    self.task_process.task_logger.info("Will fake SBATCH as local process")
+                    call_sbatch_func = lambda: self._sbatch_mockup_launch_as_local_proceses()
+                else:
+                    self.task_process.task_logger.info("will submit array: %s", " ".join(command_args))
+                    call_sbatch_func = lambda: self.call_sbatch(command_args)
+
+                job_id = call_sbatch_func()
+                if job_id is None:
+                    raise Exception(f"sbatch returned None:\n {command_args}")
+                with open(self.i_th_submitted_array_file(next_array_number, job_id), "w") as f:
+                    f.write(" ".join(command_args))
 
             return len(next_task_state_files)
 

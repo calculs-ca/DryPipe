@@ -3,9 +3,9 @@ import shutil
 import unittest
 from pathlib import Path
 
+from dry_pipe.core_lib import SleepySpinner, PortablePopen
 from dry_pipe import TaskConf
 from dry_pipe.pipeline import Pipeline
-from dry_pipe.task_process import TaskProcess
 
 
 class TestWithDirectorySandbox(unittest.TestCase):
@@ -38,6 +38,16 @@ class BasePipelineTest(TestWithDirectorySandbox):
 
     def init_pipeline_instance(self, pipeline_instance):
         pass
+
+    def spin_until_no_running_jobs(self, sleep_schedule=(2, 1)):
+        with SleepySpinner(sleep_schedule) as ss:
+            while True:
+                with PortablePopen("squeue --noheader -o %j", shell=True) as p:
+                    p.wait_and_raise_if_non_zero()
+                    res = p.stdout_as_string().strip()
+                    if res == "":
+                        return
+                    ss.sleep()
 
     def create_pipeline_instance(self, other_pipeline_instance_dir=None):
         pipeline = Pipeline(lambda dsl: self.dag_gen(dsl), pipeline_code_dir=self.pipeline_code_dir)

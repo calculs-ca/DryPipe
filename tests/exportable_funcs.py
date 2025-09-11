@@ -1,4 +1,5 @@
 import json
+import time
 from pathlib import Path
 
 import dry_pipe
@@ -15,10 +16,10 @@ def test_func(r, i, f):
         }
 
 
-def load_crash_plan_and_crash_count(pipeline_instance_dir, i, step_idx):
+def load_crash_plan_and_crash_count(pipeline_instance_dir, i):
     with open(Path(pipeline_instance_dir, "crash-plan.json")) as f:
         crash_plan = json.load(f)
-        cc = Path(pipeline_instance_dir, f"crash_count_{i}_{step_idx}")
+        cc = Path(pipeline_instance_dir, f"crash_count_{i}")
         if not cc.exists():
             return crash_plan, 0
         else:
@@ -31,11 +32,12 @@ def save_crash_count(pipeline_instance_dir, i, c):
         f.write(str(c))
 
 def crash_if(i, pipeline_instance_dir, step_idx):
-    cp, c = load_crash_plan_and_crash_count(pipeline_instance_dir, i, step_idx)
+    cp, c = load_crash_plan_and_crash_count(pipeline_instance_dir, i)
 
-    should_crash = cp[step_idx][i] - c
+    planned_crashes = cp[step_idx][i]
+    should_crash = planned_crashes - c
 
-    print(f"i: {i}, step_idx: {step_idx}, c: {c},  should_crash {should_crash}")
+    print(f"i: {i}, step_idx: {step_idx}, planned_crashes: {planned_crashes}, c: {c},  should_crash {should_crash}")
 
     if should_crash > 0:
         save_crash_count(pipeline_instance_dir, i, c + 1)
