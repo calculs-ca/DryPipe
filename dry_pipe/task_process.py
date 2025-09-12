@@ -81,7 +81,7 @@ class TaskProcess:
             raise ex
 
         if no_logger:
-            self.task_logger = logging.getLogger('dummy')
+            self.task_logger = module_logger
         else:
             self.task_logger = self._create_task_logger()
 

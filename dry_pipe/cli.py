@@ -191,12 +191,12 @@ class Cli:
         self._add_pipeline_instance_dir_arg(self.parser)
 
         self.parser.add_argument(
-            '--v',
+            '--v', '-v',
             action='store_true', default=False, help="verbose (logging_level.INFO)"
         )
 
         self.parser.add_argument(
-            '--vv',
+            '--vv', '-vv',
             action='store_true', default=False, help="very verbose (logging_level.DEBUG)"
         )
 
