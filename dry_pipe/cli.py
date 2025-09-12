@@ -1,6 +1,8 @@
 import argparse
-import glob
+import time
+import json
 import logging
+import logging.config
 import os
 import sys
 import textwrap
@@ -13,6 +15,7 @@ from dry_pipe.task_process import TaskProcess
 from dry_pipe.slurm_array_task import SlurmArrayParentTask
 from dry_pipe.reports import timers_for_tasks
 from dry_pipe.state_machine import StateFileTracker
+from dry_pipe.service import PipelineRunner
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +25,65 @@ def call(mod_func):
     control_dir = os.environ["__control_dir"]
     task_process = TaskProcess(control_dir, is_python_call=True)
     task_process.call_python(mod_func, python_task)
+
+
+def init_logging(logging_conf, verbose=False):
+
+    if logging_conf is not None:
+
+        if not Path(logging_conf).exists():
+            raise Exception(f"logging config file '{logging_conf}' refered by env var LOGGING_CONF does not exist")
+
+        with open(logging_conf, "r") as f:
+            log_conf_json = json.load(f)
+
+            handlers = log_conf_json["handlers"]
+
+            for k, handler in handlers.items():
+                handler_class = handler["class"]
+                if handler_class == "logging.FileHandler":
+                    filename = handler.get("filename")
+                    if filename is None or filename == "":
+                        raise Exception(f"logging.FileHandler '{k}' has no filename attribute in {logging_conf}")
+                    if "$" in filename:
+                        filename = os.path.expandvars(filename)
+                        handler["filename"] = os.path.expandvars(filename)
+
+        logger = logging.getLogger(__name__)
+        logger.info("using logging config file '%s'", logging_conf)
+
+    else:
+
+        default_level = "DEBUG" if verbose else "INFO"
+
+        log_conf_json = {
+          "version": 1,
+          "formatters": {
+            "simple": {
+              "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+            }
+          },
+          "handlers": {
+            "console": {
+                "class": "logging.StreamHandler",
+
+                "formatter": "simple",
+                "stream": "ext://sys.stdout"
+            }
+          },
+          "root": {
+            "level": default_level,
+            "handlers": ["console"]
+          },
+          "dry_pipe": {
+              "level": default_level,
+              "handlers": ["console"],
+              "propagate": 0
+          }
+        }
+
+    logging.config.dictConfig(log_conf_json)
+
 
 def setup_cli_logging(logging_level):
 
@@ -54,6 +116,19 @@ def setup_verbose1():
 def setup_verbose2():
     setup_cli_logging(logging.DEBUG)
 
+
+class EnvDefault(argparse.Action):
+    def __init__(self, envvar, required=True, default=None, **kwargs):
+        if envvar:
+            if envvar in os.environ:
+                default = os.environ[envvar]
+        if required and default:
+            required = False
+        super(EnvDefault, self).__init__(default=default, required=required,
+                                         **kwargs)
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        setattr(namespace, self.dest, values)
 
 class CliMonitor(Monitor):
 
@@ -286,6 +361,33 @@ class Cli:
                 restart_failed=self.parsed_args.restart_failed,
                 reset_failed=self.parsed_args.reset_failed
             )
+        elif self.parsed_args.command == 'service':
+
+
+            init_logging(self.parsed_args.log_conf, verbose=self.parsed_args.v)
+
+            cg = self.parsed_args.config_generator
+
+            logging.info("will load config %s", cg)
+
+            logging.debug("sleep schedule: %s", self.parsed_args.sleep_schedule)
+
+            g = list(func_from_mod_func(cg)())
+
+            pipeline_runner = PipelineRunner(
+                g,
+                run_sync=False,
+                run_tasks_in_process=False,
+                sleep_schedule=[int(i) for i in self.parsed_args.sleep_schedule.split(",")]
+            )
+
+            logging.info("starting drypipe service")
+
+            for suggested_sleep in pipeline_runner.iterate_work():
+                if suggested_sleep > 0:
+                    logging.debug("will sleep for %s", suggested_sleep)
+                    time.sleep(suggested_sleep)
+
         elif self.parsed_args.command == 'prepare':
             pipeline_instance = pipeline_instance_from_args()
             pipeline_instance.prepare_instance_dir()
@@ -463,6 +565,7 @@ class Cli:
 
         self.subparsers = self.parser.add_subparsers(required=True, dest='command')
         self.add_run_args(self.subparsers.add_parser('run'))
+        self.add_service_args(self.subparsers.add_parser('service'))
         self.add_report_args(self.subparsers.add_parser('report-perf'))
         self.add_generator_arg(self.subparsers.add_parser('prepare'))
         self.add_call_args(self.subparsers.add_parser('call'))
@@ -536,6 +639,31 @@ class Cli:
         self._add_task_key_parser_arg(run_parser)
 
         self._add_restart_failed_args(run_parser)
+
+    def add_service_args(self, service_parser):
+        service_parser.add_argument(
+            "--config-generator",
+            action=EnvDefault,
+            envvar="DRYPIPE_SERVICE_CONFIG_GENERATOR",
+            help="""a function that yields instances of dry_pipe.pipeline.PipelineType, 
+                    can also be set with environment var DRYPIPE_SERVICE_CONFIG_GENERATOR""",
+        )
+
+        service_parser.add_argument(
+            "--sleep-schedule",
+            action=EnvDefault,
+            envvar="DRYPIPE_SERVICE_SLEEP_SCHEDULE",
+            help="a list of sleep times in seconds, for the main loop of the service, can also be set with environment var DRYPIPE_SERVICE_SLEEP_SCHEDULE",
+            default="0,1,3,5,10,15,20"
+        )
+
+        service_parser.add_argument(
+            "--log-conf",
+            action=EnvDefault,
+            envvar="DRYPIPE_LOGGING_CONF",
+            help="the path to a logging configuration file, can also be set with environment var DRYPIPE_LOGGING_CONF",
+            required=False
+        )
 
     def add_upload_download_array_args(self, upload_array_parser):
 

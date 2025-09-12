@@ -134,7 +134,7 @@ class PipelineInstanceAccessor:
 
 class PipelineRunner:
 
-    def __init__(self, config_generator, run_sync=False, run_tasks_in_process=False, sleep_schedule = [0, 0, 0, 1, 5]):
+    def __init__(self, config_generator, run_sync=False, run_tasks_in_process=False, sleep_schedule = (0, 0, 0, 1, 5)):
 
 
         self.instances_dir_to_pipeline_types = {
@@ -221,8 +221,9 @@ class PipelineRunner:
 
                     rpi = PipelineInstanceAccessor(pipeline_type, state_file_path)
                     self.pipeline_instances[pid] = rpi
-                    rpi.set_running()
+                    logging.info("discovered pipeline instance %s, will prepare and run", Path(pid).name)
 
+                    rpi.set_running()
                     rpi.pipeline_instance.prepare_instance_dir()
                     work_done += 1
 

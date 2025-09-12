@@ -179,6 +179,7 @@ class TaskProcess:
             logging_level = logging.INFO
 
         logger = logging.getLogger(f"task-logger-{os.path.basename(self.control_dir)}")
+        logger.propagate = False
         logger.setLevel(logging_level)
 
         if len(logger.handlers) == 0:
