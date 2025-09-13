@@ -190,7 +190,7 @@ def poll_remote_task(
 
             if __remote_pipeline_specs.task_process.is_slurm_array_parent():
 
-                if ss.self.next_sleep() in [1, 11, 121, max_sleep]:
+                if ss.next_sleep() in [1, 11, 121, max_sleep]:
 
                     remote_cli = os.path.join(__remote_pipeline_specs.remote_instance_work_dir, "cli")
                     remote_exec_result = exec_remote(__remote_pipeline_specs.user_at_host, [
