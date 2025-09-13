@@ -180,13 +180,24 @@ def poll_remote_task(
     __task_key,
     __remote_pipeline_specs
 ):
+    task_logger = __remote_pipeline_specs.task_process.task_logger
+
+    def fetch_remote_state():
+        res = _remote_exec("poll-task", __task_key, __remote_pipeline_specs)
+        for remote_state_file_absolute_path in res.split("\n"):
+
+            if not "/state." in remote_state_file_absolute_path:
+                continue
+
+            return StateFile.create_from_path(__task_key, remote_state_file_absolute_path)
 
     max_sleep = 5 * 60
 
     with SleepySpinner([1, 5, 5, 10, 30, 30, 30, 120, 120, 120, 121, max_sleep]) as ss:
 
         while True:
-            res = _remote_exec("poll-task", __task_key, __remote_pipeline_specs)
+
+            remote_state_file = fetch_remote_state()
 
             if __remote_pipeline_specs.task_process.is_slurm_array_parent():
 
@@ -200,29 +211,21 @@ def poll_remote_task(
                         f"--task-key={__task_key}"
                     ])
 
-                    __remote_pipeline_specs.task_process.task_logger.debug("remote states:\n %s", remote_exec_result)
+                    task_logger.debug("remote states:\n %s", remote_exec_result)
                     __remote_pipeline_specs.reconcile_local_array_states_with_remote_state(remote_exec_result)
 
                     #TODO : reconcile logs
 
-            for remote_state_file_absolute_path in res.split("\n"):
+            if remote_state_file.did_not_succeed():
+                raise Exception(f"remote task {remote_state_file.path} did not succeed")
 
-                if not "/state." in remote_state_file_absolute_path:
-                    continue
+            if remote_state_file.is_completed():
+                task_logger.info("remote task completed")
+                return
 
-                remote_state_file = StateFile.create_from_path(__task_key, remote_state_file_absolute_path)
+            ns = ss.next_sleep()
+            task_logger.debug(
+                "remote state is %s, will sleep for %s", remote_state_file.state_as_string(), ns
+            )
 
-                if (remote_state_file.is_failed() or remote_state_file.is_crashed()
-                    or remote_state_file.is_killed() or remote_state_file.is_timed_out()
-                ):
-                    raise Exception(f"remote state file {remote_state_file_absolute_path} did not succeed")
-
-                if remote_state_file.is_completed():
-                    return
-
-                ns = ss.next_sleep()
-                __remote_pipeline_specs.task_logger.debug(
-                    "remote state is %s, will sleep for %s", remote_state_file.state_as_string(), ns
-                )
-
-                ss.sleep()
+            ss.sleep()

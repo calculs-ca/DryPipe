@@ -82,22 +82,30 @@ class StateFile:
         return self.path.endswith("state.completed")
 
     def is_failed(self):
-        return fnmatch.fnmatch(self.path, "*/state.failed.*")
+        return fnmatch.fnmatch(self.path, "*/state.failed*")
 
     def is_crashed(self):
-        return fnmatch.fnmatch(self.path, "*/state.crashed.*")
+        """
+        "crashed" is for task processes that die before they have a chance to rename the state file.
+
+        It is an abnormal state that can result from a power shut down, or a bug in DryPipe itself.
+        """
+        return fnmatch.fnmatch(self.path, "*/state.crashed*")
 
     def is_killed(self):
-        return fnmatch.fnmatch(self.path, "*/state.killed.*")
+        return fnmatch.fnmatch(self.path, "*/state.killed*")
 
     def is_timed_out(self):
-        return fnmatch.fnmatch(self.path, "*/state.timed-out.*")
+        return fnmatch.fnmatch(self.path, "*/state.timed-out*")
 
     def is_waiting(self):
         return self.path.endswith("state.waiting")
 
     def has_ended(self):
         return self.is_completed() or self.is_timed_out() or self.is_failed() or self.is_crashed()
+
+    def did_not_succeed(self):
+        return self.is_failed() or self.is_crashed() or self.is_killed() or self.is_timed_out()
 
     def is_ready(self):
         return self.path.endswith("state.ready")
