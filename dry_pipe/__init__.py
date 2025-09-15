@@ -408,35 +408,29 @@ class RemotePipelineSpecs:
     def __str__(self, *args, **kwargs):
         return f"RemotePipelineSpecs({self.user_at_host},...)"
 
-    def _write_override_file_into(self, f):
-        f.write(json.dumps(
-            {
-                "is_on_remote_site": True,
-                "external_files_root": f"{self.remote_pid}/external-file-deps"
-            },
-            indent=2
-        ))
+    def _write_site_args_into(self, f):
+        f.write(f"DRYPIPE_EXTERNAL_FILES_ROOT={self.remote_pid}/external-file-deps\n")
 
-    def gen_override_file(self):
-        overrides_file = os.path.join(self.task_process.control_dir, f"task-conf-overrides-{self.user_at_host}.json")
+    def gen_remote_site_env_file(self):
+        overrides_file = os.path.join(self.task_process.control_dir, f"site.env")
         with open(overrides_file, "w") as f:
-            self._write_override_file_into(f)
+            self._write_site_args_into(f)
 
         return overrides_file
 
     def gen_and_upload_task_conf_remote_overrides(self, upload_cmd):
-        overrides_basename = "task-conf-overrides.json"
+        overrides_basename = "site.env"
         with TemporaryDirectory(dir=self.task_process.control_dir) as tmp_dir:
             overrides_file = os.path.join(tmp_dir, overrides_basename)
             with open(overrides_file, "w") as tmp_overrides:
-                self._write_override_file_into(tmp_overrides)
+                self._write_site_args_into(tmp_overrides)
 
             # make a copy, just for transparency (self documenting)
             shutil.copy(
                 overrides_file,
-                os.path.join(self.task_process.control_dir, f"task-conf-overrides-{self.user_at_host}.json")
+                os.path.join(self.task_process.control_dir, f"site-{self.user_at_host}.env")
             )
-            dst = f"{self.user_at_host}:{self.remote_pid}/.drypipe/{self.task_process.task_key}/"
+            dst = f"{self.user_at_host}:{self.remote_pid}/.drypipe/site.env"
 
             upload_cmd(overrides_file, dst)
 

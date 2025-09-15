@@ -208,33 +208,28 @@ class TaskProcess:
         return f"{self.task_key}"
 
     def _override_task_confs_if_applicable(self):
-        self._override_task_conf_from_json(os.path.join(self.control_dir, "task-conf-overrides.json"))
+        self._override_task_conf_from_site_env()
         if self.is_array_child_task():
             array_parent_dir = self._array_parent_control_dir()
             self.task_logger.debug(f"task is array child task of parent task %s", array_parent_dir)
-            self._override_task_conf_from_json(os.path.join(array_parent_dir, "task-conf-overrides.json"))
 
-    def _override_task_conf_from_json(self, overrides_file):
-        if not os.path.exists(overrides_file):
-            self.task_logger.debug("no overrides in %s", overrides_file)
-            return
+    def _override_task_conf_from_site_env(self):
+
+        site_env_file = Path(self.pipeline_work_dir, "site.env")
+
+        if not site_env_file.exists():
+            self.task_logger.debug("non remote site")
         else:
-            self.task_logger.debug("will apply overrides from %s", overrides_file)
-            with open(overrides_file) as f:
-                o = json.load(f)
-                external_files_root = o.get("external_files_root")
-                if external_files_root is not None:
-                    self.task_conf.external_files_root = external_files_root
-                    self.task_logger.debug(
-                        "task_conf.external_files_root overriden %s", self.task_conf.external_files_root
-                    )
-                is_on_remote_site = o.get("is_on_remote_site")
-                if is_on_remote_site is not None and is_on_remote_site:
-                    self.task_conf.is_on_remote_site = True
-                    self.task_logger.debug(
-                        "task_conf.is_on_remote_site overriden %s", self.task_conf.is_on_remote_site
-                    )
-
+            with open(site_env_file) as f:
+                for l in f.readlines():
+                    l = l.strip()
+                    if l.startswith("#"):
+                        continue
+                    if "=" in l:
+                        k, v = [s.strip() for s in l.split("=")]
+                        if k == "DRYPIPE_EXTERNAL_FILES_ROOT":
+                            self.task_logger.debug("external files root: %s", v)
+                            self.task_conf.external_files_root = v
 
     def run(self, array_limit=None, by_pipeline_runner=False):
 

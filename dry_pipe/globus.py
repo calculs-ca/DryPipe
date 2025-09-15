@@ -211,9 +211,9 @@ def upload_task_inputs_globus(
         for f in external_file_deps:
             yield f, str(Path(__remote_pipeline_specs.remote_pid, "external-file-deps", f))
 
-        o_src = __remote_pipeline_specs.gen_override_file()
+        o_src = __remote_pipeline_specs.gen_remote_site_env_file()
 
-        yield o_src, str(Path(__remote_pipeline_specs.remote_control_dir, "task-conf-overrides.json"))
+        yield o_src, str(Path(__remote_pipeline_specs.remote_instance_work_dir, "site.env"))
 
     transfer_response = transfer.submit_file_transfer(
         rewrite_if(g()),
