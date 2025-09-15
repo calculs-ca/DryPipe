@@ -50,11 +50,16 @@ class TestPipeline:
         self.base_pipeline_test.validate(tasks_by_keys)
 
 
+def test_conf_generator():
+    s = ServiceRunnerTest1()
+    yield from s.create_runner_conf(dif_suffix="_service")
+
 
 class ServiceRunnerTest1(TestWithDirectorySandbox2):
 
 
-    def create_runner_conf(self):
+    def create_runner_conf(self, dif_suffix=""):
+        self.dir = self.dir + dif_suffix
         def prepare(parent_dir, instance_name):
             instance_dir = Path(self.dir, parent_dir, instance_name)
             instance_dir.mkdir(parents=True, exist_ok=True)
