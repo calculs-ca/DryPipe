@@ -67,6 +67,7 @@ class TaskProcess:
         self.no_dynamic_steps = from_remote
         self.slurm_array_task_id = os.environ.get("SLURM_ARRAY_TASK_ID")
         self.command_before_task_has_run = False
+        self.is_on_remote_site = False
 
         if not is_python_call:
             # override causes problems for python_call
@@ -218,8 +219,10 @@ class TaskProcess:
         site_env_file = Path(self.pipeline_work_dir, "site.env")
 
         if not site_env_file.exists():
-            self.task_logger.debug("non remote site")
+            self.task_logger.debug("NOT on remote site")
         else:
+            self.task_logger.debug("is on remote site")
+            self.is_on_remote_site = True
             with open(site_env_file) as f:
                 for l in f.readlines():
                     l = l.strip()
@@ -642,7 +645,7 @@ class TaskProcess:
             #else:
             #    yield "__is_remote", "False"
 
-            yield "__is_on_remote_site", self.task_conf.is_on_remote_site
+            yield "__is_on_remote_site", self.is_on_remote_site
 
             container = self.task_conf.container
             if container is not None and container != "":
@@ -1146,10 +1149,10 @@ class TaskProcess:
         )
 
     def _is_remote_execution_from_local_site(self):
-        return self.task_conf.ssh_remote_dest is not None and not self.task_conf.is_on_remote_site
+        return self.task_conf.ssh_remote_dest is not None and not self.is_on_remote_site
 
     def _is_remote_execution_on_remote_site(self):
-        return self.task_conf.ssh_remote_dest is not None and self.task_conf.is_on_remote_site
+        return self.task_conf.ssh_remote_dest is not None and self.is_on_remote_site
 
     def _resolve_steps(self):
         if self._is_remote_execution_from_local_site():
