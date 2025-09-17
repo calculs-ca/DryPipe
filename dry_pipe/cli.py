@@ -353,8 +353,8 @@ class Cli:
         elif self.parsed_args.command == 'run':
             pipeline_instance = pipeline_instance_from_args()
             pipeline_instance.prepare_instance_dir()
-            #if not test_mode:
-            pipeline_instance.monitor = CliMonitor(pipeline_instance, self.parsed_args.generator)
+            if not test_mode:
+                pipeline_instance.monitor = CliMonitor(pipeline_instance, self.parsed_args.generator)
 
             pipeline_instance.run(
                 until_patterns=self.parsed_args.until,

@@ -48,6 +48,10 @@ class TaskProcess:
             from_remote=False
     ):
 
+        self.slurm_job_id = os.environ.get("SLURM_JOB_ID")
+        self.slurm_array_job_id = os.environ.get("SLURM_ARRAY_JOB_ID")
+        self.slurm_array_task_id = os.environ.get("SLURM_ARRAY_TASK_ID")
+
         self.wait_for_completion = wait_for_completion
         self.record_history = False
         self.tail = tail
@@ -57,21 +61,22 @@ class TaskProcess:
         self.test_mode = test_mode
         self.run_python_calls_in_process = run_python_calls_in_process
         self.env = {}
-        self.control_dir = control_dir
-        self.task_key = os.path.basename(control_dir)
-        self.pipeline_work_dir = os.path.dirname(control_dir)
+
+        if not is_python_call:
+            # override causes problems for python_call
+            self.control_dir = self._override_control_dir_if_child_task(control_dir)
+        else:
+            self.control_dir = control_dir
+
+        self.task_key = os.path.basename(self.control_dir)
+        self.pipeline_work_dir = os.path.dirname(self.control_dir)
         self.pipeline_instance_dir = os.path.dirname(self.pipeline_work_dir)
         self.pipeline_instance_name = os.path.basename(self.pipeline_instance_dir)
         self.pipeline_output_dir = os.path.join(self.pipeline_instance_dir, "output")
         self.task_output_dir = os.path.join(self.pipeline_output_dir, self.task_key)
-        self.no_dynamic_steps = from_remote
-        self.slurm_array_task_id = os.environ.get("SLURM_ARRAY_TASK_ID")
         self.command_before_task_has_run = False
         self.is_on_remote_site = False
 
-        if not is_python_call:
-            # override causes problems for python_call
-            self._override_control_dir_if_child_task()
 
         try:
             self.task_conf = None
@@ -343,11 +348,10 @@ class TaskProcess:
 
         if pythonpath_in_env is not None:
             for p in pythonpath_in_env.split(":"):
-                print(f"ls {p}")
                 if not os.path.exists(p):
-                    msg = f"WARNING: path {p} in PYTHONPATH does not exist, if running in apptainer, ensure proper mount"
-                    print(msg, file=sys.stderr)
-                    self.task_logger.warning(msg)
+                    self.task_logger.warning(
+                        f"WARNING: path {p} in PYTHONPATH does not exist, if running in apptainer, ensure proper mount"
+                    )
 
         inputs_by_name = {}
         file_outputs_by_name = {}
@@ -1299,11 +1303,12 @@ class TaskProcess:
 
         return self._control_dir_from_env()
 
-    def _override_control_dir_if_child_task(self):
-        if self.is_array_child_task():
+    def _override_control_dir_if_child_task(self, control_dir):
 
+        if not self.is_array_child_task():
+            return control_dir
+        else:
             self.no_dynamic_steps = True
-
             array_index_2_task_key = os.environ.get("DRYPIPE_TASK_KEY_FILE_BASENAME")
 
             control_dir_from_env = self._control_dir_from_env()
@@ -1322,21 +1327,23 @@ class TaskProcess:
 
             for task_key in children_task_keys():
                 if c == slurm_array_task_id:
-                    p = os.path.join(_drypipe_dir, task_key)
-                    self.control_dir = p
-                    self.task_output_dir = os.path.join(self.pipeline_output_dir, task_key)
-
-                    # rename job_name with task key
-                    slurm_array_job_id = os.environ.get("SLURM_ARRAY_JOB_ID")
-                    this_task_job_id = f"{slurm_array_job_id}_{self.slurm_array_task_id}"
-                    with PortablePopen(["scontrol", "update", f"JobId={this_task_job_id}", f"JobName={task_key}"]) as p:
-                        p.wait_and_raise_if_non_zero()
-
-                    return
+                    return os.path.join(_drypipe_dir, task_key)
                 else:
                     c += 1
 
             raise Exception(f"Error: no task_key for SLURM_ARRAY_TASK_ID={slurm_array_task_id}")
+
+    def _rename_slurm_job(self):
+
+        if self.is_array_child_task():
+            this_task_job_id = f"{self.slurm_array_job_id}_{self.slurm_array_task_id}"
+        else:
+            this_task_job_id = self.slurm_job_id
+
+        self.task_logger.info("Will rename slurm job %s to %s", this_task_job_id, self.task_key)
+
+        with PortablePopen(["scontrol", "update", f"JobId={this_task_job_id}", f"JobName={self.task_key}"]) as p:
+            p.wait_and_raise_if_non_zero()
 
     def _launch_and_tail(self, launch_func):
         def func():
@@ -1401,19 +1408,14 @@ class TaskProcess:
             else:
                 task_func_wrapper()
         else:
-            slurm_job_id = os.environ.get("SLURM_JOB_ID")
-            is_slurm = slurm_job_id is not None
+            is_slurm = self.slurm_job_id is not None
             if (not is_slurm) and os.fork() != 0:
                 # launching process, die to let the child run in the background
                 exit(0)
             else:
                 # forked child, or slurm job
-                #sloc = os.environ['DRYPIPE_TASK_CONTROL_DIR']
                 if is_slurm:
-                    self.task_logger.info("slurm job started, slurm_job_id=%s", slurm_job_id)
-                #else:
-                #    with open(os.path.join(sloc, "pid"), "w") as f:
-                #        f.write(str(os.getpid()))
+                    self._rename_slurm_job()
 
                 os.setpgrp()
                 self.register_signal_handlers()
