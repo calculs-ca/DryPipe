@@ -115,3 +115,6 @@ class PipelineType:
             "spartan_schema": self.spartan_schema,
             "default_args" : self.default_args
         }
+
+    def task_sort_key(self, state_file):
+        return state_file.task_key
