@@ -15,6 +15,7 @@ class StateFileTracker:
         self.pipeline_instance_dir = pipeline_instance_dir
         self.pipeline_work_dir = os.path.join(pipeline_instance_dir, ".drypipe")
         self.pipeline_output_dir = os.path.join(self.pipeline_instance_dir, "output")
+        self.pipeline_messages_dir = os.path.join(self.pipeline_work_dir, "messages")
         self.state_files_in_memory: dict[str, StateFile] = {}
         self.load_from_disk_count = 0
         self.resave_count = 0
@@ -41,6 +42,11 @@ class StateFileTracker:
             exist_ok=True, mode=FileCreationDefaultModes.pipeline_instance_directories)
         Path(self.pipeline_instance_dir, "output").mkdir(
             exist_ok=True, mode=FileCreationDefaultModes.pipeline_instance_directories)
+
+        Path(self.pipeline_messages_dir).mkdir(
+            exist_ok=True,
+            mode=FileCreationDefaultModes.pipeline_instance_directories
+        )
 
         latest_json_conf = json.dumps(conf_dict, indent=4)
 
@@ -203,6 +209,8 @@ class StateFileTracker:
                 if task_control_dir_entry.name == "__pycache__":
                     continue
                 if task_control_dir_entry.name == "dry_pipe":
+                    continue
+                if task_control_dir_entry.name == "messages":
                     continue
                 task_control_dir = task_control_dir_entry.path
                 task_key = os.path.basename(task_control_dir)

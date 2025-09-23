@@ -57,6 +57,18 @@ class PipelineInstanceAccessor:
     def state(self):
         return Path(self.pipeline_state_file).name.split(".")[1]
 
+    def grab_messages(self):
+
+        ms = list(Path(self.pipeline_instance.state_file_tracker.pipeline_messages_dir).glob("*"))
+
+        for f in ms:
+            os.remove(f)
+
+        return [
+            f.name
+            for f in ms
+        ]
+
     def latest_state(self):
 
         state, pid = _pipeline_state_and_pid_from_pipeline_state_file(
@@ -217,7 +229,15 @@ class PipelineRunner:
                 if state not in ["ready", "running"]: # "stopped", "not-ready", "completed"
                     continue
 
-                if pid not in self.pipeline_instances:
+                rpi = self.pipeline_instances.get(pid)
+
+                if rpi is not None:
+                    msgs = rpi.grab_messages()
+                    if "reload" in msgs:
+                        logging.info("will reload pipeline instance %s", Path(pid).name)
+                        rpi = None
+
+                if rpi is None:
 
                     rpi = PipelineInstanceAccessor(pipeline_type, state_file_path)
                     self.pipeline_instances[pid] = rpi
