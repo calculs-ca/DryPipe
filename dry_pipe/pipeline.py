@@ -119,5 +119,5 @@ class PipelineType:
     def task_sort_key(self, state_file):
         return state_file.task_key
 
-    def array_grouper(self, state_file):
+    def array_grouper(self, task_key):
         return None
