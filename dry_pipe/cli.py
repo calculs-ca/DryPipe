@@ -512,10 +512,12 @@ class Cli:
             )
         elif self.parsed_args.command == 'list-states':
             task_process = TaskProcess(
-                os.path.join(self.parsed_args.pipeline_instance_dir, ".drypipe", self.parsed_args.task_key)
+                os.path.join(self.parsed_args.pipeline_instance_dir, ".drypipe", self.parsed_args.task_key),
+                no_logger=True
             )
 
-            task_process.generate_rsync_list_for_file_sets()
+            if self.parsed_args.gen_rsync_list:
+                task_process.generate_rsync_list_for_file_sets()
 
             def p():
                 if task_process.is_slurm_array_parent():
@@ -578,8 +580,14 @@ class Cli:
         self.add_upload_download_array_args(self.subparsers.add_parser('array-upload'))
         self.add_upload_download_array_args(self.subparsers.add_parser('array-download'))
         self.add_create_array_parent_args(self.subparsers.add_parser('create-array-parent'))
-        self._add_task_key_parser_arg(
-            self.subparsers.add_parser('list-states')
+        list_state_parser = self.subparsers.add_parser('list-states')
+        self._add_task_key_parser_arg(list_state_parser)
+
+        list_state_parser.add_argument(
+            '--gen-rsync-list',
+            help='generate rsync list for file sets',
+            action='store_true',
+            default=False
         )
 
         restart_array = self.subparsers.add_parser('restart-failed-array-tasks')

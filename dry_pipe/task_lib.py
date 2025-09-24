@@ -90,6 +90,7 @@ def download_task_outputs(
         "python3",
         remote_cli,
         "list-states",
+        "--gen-rsync-list",
         f"--task-key={__task_key}"
     ])
 

@@ -1480,7 +1480,8 @@ class TaskProcess:
             for task_key in task_keys_iterator:
                 task_process = TaskProcess(
                     os.path.join(self.pipeline_work_dir, task_key),
-                    ensure_all_upstream_deps_complete=False
+                    ensure_all_upstream_deps_complete=False,
+                    no_logger=True
                 )
 
                 for f in task_process.outputs.rsync_filter_list(task_process.task_output_dir):
