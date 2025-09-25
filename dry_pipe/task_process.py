@@ -1152,14 +1152,14 @@ class TaskProcess:
             f"rsync -a --dirs {self._local_outputs_root()}/ {self.pipeline_output_dir}/{self.task_key}"
         )
 
-    def _is_remote_execution_from_local_site(self):
+    def is_remote_execution_from_local_site(self):
         return self.task_conf.ssh_remote_dest is not None and not self.is_on_remote_site
 
     def _is_remote_execution_on_remote_site(self):
         return self.task_conf.ssh_remote_dest is not None and self.is_on_remote_site
 
     def _resolve_steps(self):
-        if self._is_remote_execution_from_local_site():
+        if self.is_remote_execution_from_local_site():
             if self.task_conf.globus_transfer is not None:
                 yield {"call": "python", "module_function": "dry_pipe.globus:upload_task_inputs_globus"}
                 yield {"call": "python", "module_function": "dry_pipe.task_lib:execute_remote_task"}

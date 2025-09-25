@@ -9,6 +9,7 @@ import textwrap
 from os import environ
 from pathlib import Path
 
+from dry_pipe import RemotePipelineSpecs
 from dry_pipe.core_lib import func_from_mod_func, is_inside_slurm_job
 from dry_pipe.pipeline_instance import Monitor
 from dry_pipe.task_process import TaskProcess
@@ -343,7 +344,7 @@ class Cli:
 
         if self.parsed_args.command == 'array-submit':
             task_process = TaskProcess(
-                os.path.join(self.parsed_args.pipeline_instance_dir, ".drypipe", self.parsed_args.task_key),
+                self._control_dir(),
                 as_subprocess=not test_mode,
                 test_mode=test_mode
             )
@@ -417,7 +418,7 @@ class Cli:
             task_process.launch_task()
 
         elif self.parsed_args.command == 'remote-exec':
-            control_dir = self._complete_control_dir(self.parsed_args.control_dir)
+            control_dir = self._control_dir()
             task_process = TaskProcess(
                 control_dir,
                 wait_for_completion=False,
@@ -443,7 +444,7 @@ class Cli:
                 task_process.launch_task()
 
         elif self.parsed_args.command == 'poll-task':
-            control_dir = self._complete_control_dir(self.parsed_args.control_dir)
+            control_dir = self._control_dir()
             task_process = TaskProcess(control_dir)
 
             if task_process.task_conf.executer_type == "slurm" and task_process.is_slurm_array_parent():
@@ -474,9 +475,7 @@ class Cli:
 
         elif self.parsed_args.command == 'array-upload':
 
-            task_process = TaskProcess(
-                os.path.join(self.parsed_args.pipeline_instance_dir, ".drypipe", self.parsed_args.task_key)
-            )
+            task_process = TaskProcess(self._control_dir())
 
             if self.parsed_args.ssh_remote_dest is not None:
                 task_process.task_conf.ssh_remote_dest = self.parsed_args.ssh_remote_dest
@@ -512,7 +511,7 @@ class Cli:
             )
         elif self.parsed_args.command == 'list-states':
             task_process = TaskProcess(
-                os.path.join(self.parsed_args.pipeline_instance_dir, ".drypipe", self.parsed_args.task_key),
+                self._control_dir(),
                 no_logger=True
             )
 
@@ -533,6 +532,8 @@ class Cli:
             for task_key, state in p():
                 print(f"{task_key}/{state}")
 
+        elif self.parsed_args.command == 'restart':
+            self.restart_task()
         elif self.parsed_args.command == 'restart-failed-array-tasks':
             task_process = TaskProcess(
                 os.path.join(self.parsed_args.pipeline_instance_dir, ".drypipe", self.parsed_args.task_key)
@@ -572,6 +573,7 @@ class Cli:
         self.add_generator_arg(self.subparsers.add_parser('prepare'))
         self.add_call_args(self.subparsers.add_parser('call'))
         self.add_task_args(self.subparsers.add_parser('task'))
+        self.add_task_args(self.subparsers.add_parser('restart'))
         self.add_task_args(self.subparsers.add_parser('poll-task'))
         self.add_task_args(self.subparsers.add_parser('remote-exec'))
         self.add_sbatch_args(self.subparsers.add_parser('sbatch'))
@@ -785,6 +787,29 @@ class Cli:
     def add_call_args(self, parser):
         parser.add_argument('module_function', type=str)
         self._add_task_key_parser_arg(parser)
+
+    def restart_task(self, as_subprocess=True):
+
+        task_process = TaskProcess(
+            self._control_dir(),
+            as_subprocess=as_subprocess
+        )
+
+        if task_process.is_remote_execution_from_local_site():
+            step_number, control_dir, state_file, state_name = task_process.read_task_state()
+
+            if step_number in [0, 3]:
+                # upload or download stage
+                pass
+            elif step_number == 2:
+                # poll stage
+                rps = RemotePipelineSpecs(task_process)
+                res = rps.remote_exec("restart-failed-array-tasks")
+            else:
+                raise Exception(f"remote exec can't be restarted, investigate")
+
+        task_process.launch_task()
+
 
 def run_cli():
     handle_script_lib_main()

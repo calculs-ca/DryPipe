@@ -138,41 +138,12 @@ def download_task_outputs(
         rs(f"rsync -a --dirs --partial --files-from={file_set_list} {ssh_remote_dest} {pid}/")
 
 
-def _remote_exec(
-    cmd,
-    __task_key,
-    __remote_pipeline_specs
-):
-
-    remote_cli = os.path.join(__remote_pipeline_specs.remote_instance_work_dir, "cli")
-    remote_task_control_dir = os.path.join(__remote_pipeline_specs.remote_instance_work_dir, __task_key)
-
-    cmd = [
-        "python3", remote_cli, f"--pipeline-instance-dir={__remote_pipeline_specs.remote_pid}", cmd, remote_task_control_dir
-    ]
-
-    if __remote_pipeline_specs.task_conf.run_as_group is not None:
-        cmd = " ".join(cmd)
-        cmd = [
-            "newgrp", __remote_pipeline_specs.task_conf.run_as_group, "<<<", f"'{cmd}'"
-        ]
-
-    __remote_pipeline_specs.task_logger.info("remote execution: %s", ' '.join(cmd))
-
-
-    return exec_remote(
-        __remote_pipeline_specs.user_at_host,
-        cmd,
-        logger_func=__remote_pipeline_specs.task_logger.info
-    )
-
 @DryPipe.python_call()
 def execute_remote_task(
         __task_key,
         __remote_pipeline_specs
 ):
-
-    _remote_exec("remote-exec", __task_key, __remote_pipeline_specs)
+    __remote_pipeline_specs.remote_exec("remote-exec")
 
 
 
@@ -184,7 +155,7 @@ def poll_remote_task(
     task_logger = __remote_pipeline_specs.task_process.task_logger
 
     def fetch_remote_state():
-        res = _remote_exec("poll-task", __task_key, __remote_pipeline_specs)
+        res = __remote_pipeline_specs.remote_exec("poll-task")
         for remote_state_file_absolute_path in res.split("\n"):
 
             if not "/state." in remote_state_file_absolute_path:
@@ -192,9 +163,9 @@ def poll_remote_task(
 
             return StateFile.create_from_path(__task_key, remote_state_file_absolute_path)
 
-    max_sleep = 5 * 60
+    max_sleep = 180
 
-    with SleepySpinner([1, 5, 5, 10, 30, 30, 30, 120, 120, 120, 121, max_sleep]) as ss:
+    with SleepySpinner([1, 5, 6, 10, 30, 30, 30, 120, max_sleep]) as ss:
 
         while True:
 
@@ -202,7 +173,7 @@ def poll_remote_task(
 
             if __remote_pipeline_specs.task_process.is_slurm_array_parent():
 
-                if ss.next_sleep() in [1, 11, 121, max_sleep]:
+                if ss.next_sleep() in [1, 6, 120, max_sleep] or True:
 
                     remote_cli = os.path.join(__remote_pipeline_specs.remote_instance_work_dir, "cli")
                     remote_exec_result = exec_remote(__remote_pipeline_specs.user_at_host, [

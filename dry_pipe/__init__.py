@@ -10,7 +10,7 @@ import textwrap
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from dry_pipe.core_lib import PortablePopen
+from dry_pipe.core_lib import PortablePopen, exec_remote
 
 from dry_pipe.task import Task, TaskStep, TaskInput, TaskOutput, FileSet
 from dry_pipe.state_file_tracker import StateFileTracker
@@ -480,6 +480,34 @@ class RemotePipelineSpecs:
                 actual_state = os.path.join(child_task_control_dir, child_task_state)
                 os.rename(child_state_file_path.path, actual_state)
 
+
+    def remote_exec(self, cmd, args=()):
+
+        remote_cli = os.path.join(self.remote_instance_work_dir, "cli")
+
+        def g():
+            yield "python3"
+            yield remote_cli
+            yield f"--pipeline-instance-dir={self.remote_pid}"
+            yield cmd
+            yield f"--task-key={self.task_process.task_key}"
+            yield from args
+
+        cmd = list(g())
+
+        if self.task_conf.run_as_group is not None:
+            cmd = " ".join(cmd)
+            cmd = [
+                "newgrp", self.task_conf.run_as_group, "<<<", f"'{cmd}'"
+            ]
+
+        self.task_logger.info("remote execution: %s", ' '.join(cmd))
+
+        return exec_remote(
+            self.user_at_host,
+            cmd,
+            logger_func=self.task_logger.info
+        )
 
 class TaskConf:
     """
