@@ -248,7 +248,8 @@ class StateFileTracker:
             if state_file_path.endswith("state.completed") or include_non_completed:
                 from dry_pipe.task_process import TaskProcess
                 yield TaskProcess(
-                    task_control_dir, ensure_all_upstream_deps_complete= not include_non_completed
+                    task_control_dir, ensure_all_upstream_deps_complete= not include_non_completed,
+                    no_logger=True
                 ).resolve_task(
                     StateFile(task_key, None, self, path=state_file_path)
                 )
