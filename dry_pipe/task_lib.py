@@ -172,21 +172,9 @@ def poll_remote_task(
             remote_state_file = fetch_remote_state()
 
             if __remote_pipeline_specs.task_process.is_slurm_array_parent():
+                #if ss.next_sleep() in [1, 6, 120, max_sleep] or True:
+                __remote_pipeline_specs.fetch_remote_array_states_and_reconcile()
 
-                if ss.next_sleep() in [1, 6, 120, max_sleep] or True:
-
-                    remote_cli = os.path.join(__remote_pipeline_specs.remote_instance_work_dir, "cli")
-                    remote_exec_result = exec_remote(__remote_pipeline_specs.user_at_host, [
-                        "python3",
-                        remote_cli,
-                        "list-states",
-                        f"--task-key={__task_key}"
-                    ])
-
-                    task_logger.debug("remote states:\n %s", remote_exec_result)
-                    __remote_pipeline_specs.reconcile_local_array_states_with_remote_state(remote_exec_result)
-
-                    #TODO : reconcile logs
 
             if remote_state_file.did_not_succeed():
                 raise Exception(f"remote task {remote_state_file.path} did not succeed")

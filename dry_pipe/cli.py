@@ -9,7 +9,7 @@ import textwrap
 from os import environ
 from pathlib import Path
 
-from dry_pipe import RemotePipelineSpecs
+from dry_pipe import RemotePipelineSpecs, PortablePopen
 from dry_pipe.core_lib import func_from_mod_func, is_inside_slurm_job
 from dry_pipe.pipeline_instance import Monitor
 from dry_pipe.task_process import TaskProcess
@@ -788,12 +788,9 @@ class Cli:
         parser.add_argument('module_function', type=str)
         self._add_task_key_parser_arg(parser)
 
-    def restart_task(self, as_subprocess=True):
+    def restart_task(self):
 
-        task_process = TaskProcess(
-            self._control_dir(),
-            as_subprocess=as_subprocess
-        )
+        task_process = TaskProcess(self._control_dir())
 
         if task_process.is_remote_execution_from_local_site():
             step_number, control_dir, state_file, state_name = task_process.read_task_state()
@@ -805,6 +802,7 @@ class Cli:
                 # poll stage
                 rps = RemotePipelineSpecs(task_process)
                 res = rps.remote_exec("restart-failed-array-tasks")
+                rps.fetch_remote_array_states_and_reconcile()
             else:
                 raise Exception(f"remote exec can't be restarted, investigate")
 
@@ -820,6 +818,11 @@ def handle_script_lib_main():
         cli.invoke()
     finally:
         logging.shutdown()
+
+def cli_in_sub_process(args):
+    py_file = os.path.abspath(__file__)
+    cmd = [sys.executable, py_file] + args
+    return PortablePopen(cmd)
 
 
 if __name__ == '__main__':

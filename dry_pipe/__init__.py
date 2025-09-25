@@ -480,6 +480,18 @@ class RemotePipelineSpecs:
                 actual_state = os.path.join(child_task_control_dir, child_task_state)
                 os.rename(child_state_file_path.path, actual_state)
 
+    def fetch_remote_array_states_and_reconcile(self):
+        remote_cli = os.path.join(self.remote_instance_work_dir, "cli")
+        remote_exec_result = exec_remote(self.user_at_host, [
+            "python3",
+            remote_cli,
+            "list-states",
+            f"--task-key={self.task_process.task_key}"
+        ])
+
+        self.task_logger.debug("remote states:\n %s", remote_exec_result)
+        self.reconcile_local_array_states_with_remote_state(remote_exec_result)
+        # TODO : reconcile logs
 
     def remote_exec(self, cmd, args=()):
 
