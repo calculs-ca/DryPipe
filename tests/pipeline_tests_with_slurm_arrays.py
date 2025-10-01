@@ -6,7 +6,7 @@ from base_pipeline_test import BasePipelineTest
 from dry_pipe import TaskConf
 from dry_pipe.pipeline_instance import Monitor
 from dry_pipe.state_machine import AllRunnableTasksCompletedOrInError
-from slurm_array_task import SlurmArrayParentTask
+from dry_pipe.slurm_array_task import SlurmArrayParentTask
 from tests.exportable_funcs import test_func, test_step0, test_step1, test_step2, test_step3, digest_all
 
 python_path_for_tests = str(Path(__file__).resolve().parent.parent)
