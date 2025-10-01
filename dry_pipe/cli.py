@@ -1,4 +1,5 @@
 import argparse
+import shutil
 import time
 import json
 import logging
@@ -573,7 +574,21 @@ class Cli:
         self.add_generator_arg(self.subparsers.add_parser('prepare'))
         self.add_call_args(self.subparsers.add_parser('call'))
         self.add_task_args(self.subparsers.add_parser('task'))
-        self.add_task_args(self.subparsers.add_parser('restart'))
+        restart_cmd = self.subparsers.add_parser('restart')
+        self.add_task_args(restart_cmd)
+        restart_cmd.add_argument(
+            '--reset',
+            help='restart the task from the first step, clears the results directory if exists',
+            action='store_true'
+        )
+        restart_cmd.add_argument(
+            '--at-step',
+            type=int,
+            help='restarts the task at the specified step (zero based).',
+            default=None
+        )
+
+
         self.add_task_args(self.subparsers.add_parser('poll-task'))
         self.add_task_args(self.subparsers.add_parser('remote-exec'))
         self.add_sbatch_args(self.subparsers.add_parser('sbatch'))
@@ -790,7 +805,10 @@ class Cli:
 
     def restart_task(self):
 
-        task_process = TaskProcess(self._control_dir())
+        task_process = TaskProcess(
+            self._control_dir(),
+            wait_for_completion=self.parsed_args.wait
+        )
 
         if task_process.is_remote_execution_from_local_site():
             step_number, control_dir, state_file, state_name = task_process.read_task_state()
@@ -801,10 +819,22 @@ class Cli:
             elif step_number == 2:
                 # poll stage
                 rps = RemotePipelineSpecs(task_process)
-                res = rps.remote_exec("restart-failed-array-tasks")
-                rps.fetch_remote_array_states_and_reconcile()
+
+                if task_process.is_slurm_array_parent():
+                    res = rps.remote_exec("restart-failed-array-tasks")
+                    rps.fetch_remote_array_states_and_reconcile()
+                else:
+                    raise Exception("remote restart for non array not implemented.")
             else:
                 raise Exception(f"remote exec can't be restarted, investigate")
+
+
+        if self.parsed_args.reset:
+            shutil.rmtree(task_process.task_output_dir)
+            task_process.rewind_to_step(0)
+
+        if self.parsed_args.at_step:
+            task_process.rewind_to_step(self.parsed_args.at_step)
 
         task_process.launch_task()
 

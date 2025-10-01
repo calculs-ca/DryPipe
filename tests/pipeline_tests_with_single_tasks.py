@@ -2,8 +2,9 @@ import os.path
 from pathlib import Path
 
 from base_pipeline_test import BasePipelineTest
-from dry_pipe.cli import Cli
+from dry_pipe.cli import Cli, cli_in_sub_process
 from dry_pipe import DryPipe, TaskConf
+import exportable_funcs
 
 
 @DryPipe.python_call()
@@ -713,6 +714,129 @@ class PipelineWithMultiStepVarPassTrough(BasePipelineTest):
 
     def validate(self, tasks_by_keys):
         self.assertEqual(int(tasks_by_keys["t"].outputs.result), 12)
+
+
+class PipelineWithMultiStepsForRestartTests(BasePipelineTest):
+
+    def dag_gen(self, dsl):
+
+        yield dsl.task(
+            key="t"
+        ).inputs(
+            i=0
+        ).outputs(
+            results_file=dsl.file("results.txt")
+        ).calls(
+            exportable_funcs.test_step0_append_to_file
+        ).calls(
+            exportable_funcs.test_step1_append_to_file
+        ).calls(
+            exportable_funcs.test_step2_append_to_file
+        )()
+
+    def launches_tasks_in_process(self):
+        return False
+
+    def initial_run(self, pipeline_instance):
+
+        pipeline_instance.monitor=self.create_monitor()
+        pipeline_instance.run_sync(until_patterns=None, run_tasks_in_process=self.launches_tasks_in_process())
+
+        tasks_by_keys = {
+            t.key: t
+            for t in pipeline_instance.query("*", include_incomplete_tasks=True)
+        }
+
+        return tasks_by_keys["t"]
+
+    def validate(self, tasks_by_keys):
+        pass
+
+
+class RestartTest(PipelineWithMultiStepsForRestartTests):
+
+
+    def test_run_pipeline(self):
+        pipeline_instance = self.create_pipeline_instance()
+
+        self.save_crash_plan([
+         # i: 0
+             [0], # step 0
+             [1], # step 1
+             [0], # step 2
+        ])
+
+        t = self.initial_run(pipeline_instance)
+
+        self.assertTrue(t.is_failed())
+        self.assertEqual(t.step_idx(), 1)
+
+        def simple_restart():
+            with cli_in_sub_process([
+                '--pipeline-instance-dir', pipeline_instance.state_file_tracker.pipeline_instance_dir,
+                'restart',
+                '--task-key=t',
+                '--wait'
+            ]) as p:
+                p.wait_and_raise_if_non_zero()
+
+            t.refresh_state()
+
+        simple_restart()
+
+        self.assertTrue(t.is_completed())
+
+        self.save_crash_plan([
+         # i: 0
+             [1], # step 0
+             [0], # step 1
+             [1], # step 2
+        ])
+
+        with cli_in_sub_process([
+            '--pipeline-instance-dir', pipeline_instance.state_file_tracker.pipeline_instance_dir,
+            'restart',
+            '--task-key=t',
+            '--reset',
+            '--wait'
+        ]) as p:
+            p.wait_and_raise_if_non_zero()
+
+        t.refresh_state()
+
+        self.assertTrue(t.is_failed())
+        self.assertEqual(t.step_idx(), 0)
+
+        simple_restart()
+
+        self.assertTrue(t.is_failed())
+        self.assertEqual(t.step_idx(), 2)
+
+        simple_restart()
+
+        self.assertTrue(t.is_completed())
+
+
+        self.save_crash_plan([
+         # i: 0
+             [1], # step 0
+             [0], # step 1
+             [1], # step 2
+        ])
+
+        with cli_in_sub_process([
+            '--pipeline-instance-dir', pipeline_instance.state_file_tracker.pipeline_instance_dir,
+            'restart',
+            '--task-key=t',
+            '--at-step=1',
+            '--wait'
+        ]) as p:
+            p.wait_and_raise_if_non_zero()
+
+        t.refresh_state()
+
+        self.assertTrue(t.is_failed())
+        self.assertEqual(t.step_idx(), 2)
 
 
 def all_basic_tests():

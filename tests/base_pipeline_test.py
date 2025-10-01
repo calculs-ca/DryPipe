@@ -107,3 +107,6 @@ class BasePipelineTest(TestWithDirectorySandbox):
     def save_crash_plan(self, crash_plan):
         with open(Path(self.pipeline_instance_dir, "crash-plan.json"), "w") as f:
             f.write(json.dumps(crash_plan))
+
+        for f in Path(self.pipeline_instance_dir).glob("crash_count*"):
+            f.unlink()

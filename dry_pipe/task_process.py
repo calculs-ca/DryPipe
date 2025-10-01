@@ -903,6 +903,12 @@ class TaskProcess:
             f.write("\n")
 
 
+    def rewind_to_step(self, i):
+        step_number, control_dir, state_file, state_name = self.read_task_state()
+        self.task_logger.info("rewind to step %d", i)
+        self._transition_state_file(state_file, "waiting", i)
+
+
     def _transition_state_file(self, state_file, next_state_name, step_number=None):
 
         self.task_logger.debug("_transition_state_file: %s", state_file)
