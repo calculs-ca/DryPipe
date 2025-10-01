@@ -1,3 +1,4 @@
+import json
 import os
 import shutil
 import unittest
@@ -101,3 +102,8 @@ class BasePipelineTest(TestWithDirectorySandbox):
 
     def validate(self, tasks_by_keys):
         raise NotImplementedError()
+
+
+    def save_crash_plan(self, crash_plan):
+        with open(Path(self.pipeline_instance_dir, "crash-plan.json"), "w") as f:
+            f.write(json.dumps(crash_plan))

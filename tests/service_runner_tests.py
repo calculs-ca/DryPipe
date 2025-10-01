@@ -5,6 +5,7 @@ from pathlib import Path
 
 from dry_pipe.pipeline import Pipeline, PipelineType
 from dry_pipe.service import PipelineRunner
+from pipeline_tests_with_slurm_arrays import PipelineWithPartialArrayDep
 from tests.pipeline_tests_with_local_slurm import python_path_for_tests
 from tests.pipeline_tests_with_multiple_tasks import PipelineWithVariablePassing
 from tests.pipeline_tests_with_single_tasks import PipelineWithSingleBashTask, PipelineWithSinglePythonTask
@@ -55,48 +56,21 @@ def test_conf_generator():
     yield from s.create_runner_conf(dif_suffix="_service")
 
 
-class ServiceRunnerTest1(TestWithDirectorySandbox2):
+class BaseServiceRunnerTest(TestWithDirectorySandbox2):
 
+    def prepare(self, parent_dir, instance_name):
+        instance_dir = Path(self.dir, parent_dir, instance_name)
+        instance_dir.mkdir(parents=True, exist_ok=True)
+        pipeline_work_dir = instance_dir.joinpath(".drypipe")
+        pipeline_work_dir.mkdir(parents=True, exist_ok=True)
 
-    def create_runner_conf(self, dif_suffix=""):
-        self.dir = self.dir + dif_suffix
-        def prepare(parent_dir, instance_name):
-            instance_dir = Path(self.dir, parent_dir, instance_name)
-            instance_dir.mkdir(parents=True, exist_ok=True)
-            pipeline_work_dir = instance_dir.joinpath(".drypipe")
-            pipeline_work_dir.mkdir(parents=True, exist_ok=True)
+        sf = list(pipeline_work_dir.glob("state.*"))
 
-            sf = list(pipeline_work_dir.glob("state.*"))
+        if len(sf) == 0:
+            state_file = pipeline_work_dir.joinpath("state.ready")
+            state_file.touch()
 
-            if len(sf) == 0:
-                state_file = pipeline_work_dir.joinpath("state.ready")
-                state_file.touch()
-
-            return instance_dir
-
-        prepare("a", "a1")
-        prepare("a", "a2"),
-        prepare("b", "b1")
-        prepare("c", "c1")
-        prepare("c", "c2")
-
-        from dry_pipe import TaskConf
-
-        class C(PipelineWithSinglePythonTask):
-            def task_conf(self):
-                tc = TaskConf.default()
-                tc.extra_env = {"PYTHONPATH": python_path_for_tests}
-                return tc
-
-
-        a = TestPipeline(PipelineWithSingleBashTask())
-        b = TestPipeline(C())
-        c = TestPipeline(PipelineWithVariablePassing())
-
-        yield str(Path(self.dir, "a")), PipelineType("a", a, lambda : None, {}, {}, None, a.validate_pipeline_instance)
-        yield str(Path(self.dir, "b")), PipelineType("b", b, lambda : None, {}, {}, None, b.validate_pipeline_instance)
-        yield str(Path(self.dir, "c")), PipelineType("c", c, lambda : None, {}, {}, None, c.validate_pipeline_instance)
-
+        return instance_dir
 
 
     def test(self):
@@ -119,4 +93,48 @@ class ServiceRunnerTest1(TestWithDirectorySandbox2):
             pipeline_accessor.pipeline_type.post_run_validator(pipeline_accessor.pipeline_instance)
 
 
+class ServiceRunnerTest1(BaseServiceRunnerTest):
 
+
+    def create_runner_conf(self, dif_suffix=""):
+        self.dir = self.dir + dif_suffix
+        self.prepare("a", "a1")
+        self.prepare("a", "a2"),
+        self.prepare("b", "b1")
+        self.prepare("c", "c1")
+        self.prepare("c", "c2")
+
+        from dry_pipe import TaskConf
+
+        class C(PipelineWithSinglePythonTask):
+            def task_conf(self):
+                tc = TaskConf.default()
+                tc.extra_env = {"PYTHONPATH": python_path_for_tests}
+                return tc
+
+
+        a = TestPipeline(PipelineWithSingleBashTask())
+        b = TestPipeline(C())
+        c = TestPipeline(PipelineWithVariablePassing())
+
+        yield str(Path(self.dir, "a")), PipelineType("a", a, lambda : None, {}, {}, None, a.validate_pipeline_instance)
+        yield str(Path(self.dir, "b")), PipelineType("b", b, lambda : None, {}, {}, None, b.validate_pipeline_instance)
+        yield str(Path(self.dir, "c")), PipelineType("c", c, lambda : None, {}, {}, None, c.validate_pipeline_instance)
+
+
+
+
+class ServiceRunnerTest2(BaseServiceRunnerTest):
+
+    def create_runner_conf(self, dif_suffix=""):
+        self.dir = self.dir + dif_suffix
+
+
+        a = PipelineWithPartialArrayDep()
+        a.pipeline_instance_dir = self.prepare("a", "a1")
+        a.init_instance()
+
+        p = TestPipeline(a)
+
+
+        yield str(Path(self.dir, "a")), PipelineType("a", p, lambda : None, {}, {}, None, p.validate_pipeline_instance)

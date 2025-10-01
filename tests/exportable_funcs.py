@@ -1,3 +1,4 @@
+import glob
 import json
 import time
 from pathlib import Path
@@ -64,4 +65,16 @@ def test_step2(i, __pipeline_instance_dir):
 def test_step3(i, __pipeline_instance_dir):
     step_idx = 3
     crash_if(i, __pipeline_instance_dir, step_idx)
+
+
+@dry_pipe.DryPipe.python_call()
+def digest_all(__pipeline_work_dir):
+
+    c = 0
+
+    for t in glob.glob(str(Path(__pipeline_work_dir, "t_*", "state.completed"))):
+        c += 1
+
+    print(f"-->{c}")
+
 

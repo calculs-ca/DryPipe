@@ -127,7 +127,7 @@ class StateMachine:
     def pipeline_instance_dir(self):
         return self.state_file_tracker.pipeline_instance_dir
 
-    def query_all_or_nothing(self, glob_expression, state="completed"):
+    def query_all_or_nothing(self, glob_expression, state="completed", min_matches=None):
 
         def is_required_state(state_file):
             if state == "completed":
@@ -159,7 +159,10 @@ class StateMachine:
                 glob_expression, state, query_all_matches_count, match_all_impossible
             )
             return []
-        elif query_all_matches_count == len(query_with_required_state_matches):
+        elif (
+            query_all_matches_count == len(query_with_required_state_matches) or
+            min_matches is not None and query_with_required_state_matches_count >= min_matches
+        ):
             self._pending_queries.pop(glob_expression, None)
 
             class Match:

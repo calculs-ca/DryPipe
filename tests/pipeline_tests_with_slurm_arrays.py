@@ -1,16 +1,13 @@
-import json
 import os
-import time
 from pathlib import Path
 
 import dry_pipe
 from base_pipeline_test import BasePipelineTest
-from core_lib import SleepySpinner
-from dry_pipe import TaskConf, PortablePopen
+from dry_pipe import TaskConf
 from dry_pipe.pipeline_instance import Monitor
 from dry_pipe.state_machine import AllRunnableTasksCompletedOrInError
 from slurm_array_task import SlurmArrayParentTask
-from tests.exportable_funcs import test_func, test_step0, test_step1, test_step2, test_step3
+from tests.exportable_funcs import test_func, test_step0, test_step1, test_step2, test_step3, digest_all
 
 python_path_for_tests = str(Path(__file__).resolve().parent.parent)
 
@@ -408,6 +405,7 @@ class PipelineWithMultiStepSlurmArrayWithMultiSbatchOptionsWithCrashAndRestarts(
                 children_tasks=match.tasks
             )()
 
+
     def test_run_pipeline(self):
 
         pipeline_instance = self.create_pipeline_instance()
@@ -420,8 +418,7 @@ class PipelineWithMultiStepSlurmArrayWithMultiSbatchOptionsWithCrashAndRestarts(
             [0, 0, 0, 1, 0]  # step 3
         ]
 
-        with open(Path(self.pipeline_instance_dir, "crash-plan.json"), "w") as f:
-            f.write(json.dumps(crash_plan))
+        self.save_crash_plan(crash_plan)
 
         pipeline_instance.monitor=self.create_monitor()
 
@@ -517,6 +514,86 @@ class PipelineWithMultiStepSlurmArrayWithMultiSbatchOptionsWithCrashAndRestarts(
         self.assertTrue(t_4.is_completed())
 
         self.assertEqual(t_2.step_idx(), 2)
+
+
+class PipelineWithPartialArrayDep(BasePipelineTest):
+
+    def task_conf(self):
+        return TaskConf(
+            executer_type="slurm",
+            extra_env={"DRYPIPE_TASK_DEBUG": "True", "PYTHONPATH": os.environ.get("PYTHONPATH")}
+        )
+
+    def create_monitor(self):
+
+        class M(Monitor):
+            def on_task_fail(self, state_file):
+                if state_file.task_key == "array_parent":
+                    raise AllRunnableTasksCompletedOrInError()
+
+        return M()
+
+    def dag_gen(self, dsl):
+
+        for i in [0, 1, 2 ,3, 4]:
+            yield dsl.task(
+                key=f"t_{i}",
+                is_slurm_array_child=True,
+                task_conf=TaskConf(
+                    python_bin="python3",
+                    extra_env=self.task_conf().extra_env
+                )
+            ).inputs(
+                i=i,
+                code_dep=dsl.file(exportable_funcs_file)
+            ).outputs(
+                slurm_result=int
+            ).calls(
+                test_step0
+            ).calls(
+                test_step1
+            )()
+
+        for match in dsl.query_all_or_nothing("t_*", state="ready"):
+            yield dsl.task(
+                key=f"array_parent",
+                task_conf=self.task_conf()
+            ).slurm_array_parent(
+                children_tasks=match.tasks
+            )()
+
+        for match in dsl.query_all_or_nothing("t_*", state="completed", min_matches=3):
+            yield dsl.task(
+                key=f"digest",
+                task_conf=self.task_conf()
+            ).outputs(
+                slurm_result=int
+            ).calls(
+                digest_all
+            )()
+
+    def init_instance(self):
+        crash_plan = [
+        # i: 0  1  2  3  4
+            [0, 0, 0, 1, 0], # step 0
+            [0, 0, 0, 0, 2], # step 1
+        ]
+
+        self.save_crash_plan(crash_plan)
+
+    def test_run_pipeline(self):
+        pipeline_instance = self.create_pipeline_instance()
+
+        self.init_instance()
+        #pipeline_instance.monitor=self.create_monitor()
+
+        pipeline_instance.run_sync()
+
+        tasks_by_keys = {
+            t.key: t
+            for t in pipeline_instance.query("*", include_incomplete_tasks=True)
+        }
+
 
 
 all_tests = [

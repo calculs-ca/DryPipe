@@ -1,7 +1,7 @@
 import os
 from pathlib import Path
 
-from tests.pipeline_tests_with_remote_slurm_arrays import RemoteTestSite, remote_test_site_gh1301
+from tests.pipeline_tests_with_remote_slurm_arrays import RemoteTestSite, remote_test_site
 from tests.pipeline_tests_with_single_tasks import TestFileSet
 from dry_pipe import TaskConf
 
@@ -10,7 +10,7 @@ class RemoteTestFileSet(TestFileSet):
 
     def task_conf(self):
 
-        rts = remote_test_site_gh1301
+        rts = remote_test_site
 
         tc = TaskConf(
             executer_type="slurm",

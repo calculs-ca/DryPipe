@@ -37,8 +37,14 @@ class RemoteTestSite:
         return f"{self.user_at_host()}:{self.remote_base_dir()}"
 
 
-remote_test_site_gh1301 = RemoteTestSite("maxl@gh1301")
-remote_test_site_gh1301.sbatch_options = ["-p", "c-gh"]
+remote_test_site = RemoteTestSite("maxl@gh1301")
+remote_test_site.sbatch_options = ["-p", "c-gh"]
+
+#remote_test_site = RemoteTestSite("maxl@ip40.ccs.usherbrooke.ca")
+#remote_test_site.sbatch_options = ["--nodelist=cp41"]
+
+
+
 
 
 
@@ -51,18 +57,19 @@ class RemoteArrayTaskFullyAutomatedRun(PipelineWithSlurmArray):
 
         repo_dir = os.path.abspath(os.path.dirname(os.path.dirname(__file__)))
 
-        rts = remote_test_site_gh1301
+        rts = remote_test_site
 
         tc = TaskConf(
             executer_type="slurm",
-            sbatch_options=remote_test_site_gh1301.sbatch_options,
+            sbatch_options=remote_test_site.sbatch_options,
             #slurm_account="def-xroucou",
             ssh_remote_dest=rts.ssh_remote_dst(),
             extra_env={
                 "DRYPIPE_TASK_DEBUG": "True",
                 "PYTHONPATH": ":".join([
                     f"$__pipeline_instance_dir/external-file-deps{repo_dir}"
-                ])
+                ]),
+                "DRYPIPE_SLURM_STD_OUT_ERR_LOG": "True"
             }
             #run_as_group="def-xroucou"
         )
@@ -71,7 +78,7 @@ class RemoteArrayTaskFullyAutomatedRun(PipelineWithSlurmArray):
 
     def test_run_pipeline(self):
 
-        rts = remote_test_site_gh1301
+        rts = remote_test_site
         rts.reset(self.pipeline_instance_dir)
 
         pipeline_instance = self.create_pipeline_instance(self.pipeline_instance_dir)
@@ -135,12 +142,12 @@ class CliTestsPipelineWithSlurmArrayRemote(PipelineWithSlurmArray):
         tc = TaskConf(
             executer_type="slurm",
             #slurm_account="def-xroucou",
-            sbatch_options=remote_test_site_gh1301.sbatch_options,
+            sbatch_options=remote_test_site.sbatch_options,
             extra_env={
                 "DRYPIPE_TASK_DEBUG": "True",
                 "PYTHONPATH": ":".join([
-                    f"{remote_test_site_gh1301.remote_base_dir()}/CliTestsPipelineWithSlurmArrayRemote.test_array_upload_run_and_download/.drypipe",
-                    f"{remote_test_site_gh1301.remote_base_dir()}/CliTestsPipelineWithSlurmArrayRemote.test_array_upload_run_and_download/external-file-deps{repo_dir}"
+                    f"{remote_test_site.remote_base_dir()}/CliTestsPipelineWithSlurmArrayRemote.test_array_upload_run_and_download/.drypipe",
+                    f"{remote_test_site.remote_base_dir()}/CliTestsPipelineWithSlurmArrayRemote.test_array_upload_run_and_download/external-file-deps{repo_dir}"
                 ])
             }
         )
@@ -154,10 +161,10 @@ class CliTestsPipelineWithSlurmArrayRemote(PipelineWithSlurmArray):
 
         pid = pipeline_instance.state_file_tracker.pipeline_instance_dir
 
-        remote_test_site_gh1301.exec_remote(["rm", "-Rf", remote_test_site_gh1301.remote_base_dir()])
-        remote_test_site_gh1301.exec_remote(["mkdir", "-p", remote_test_site_gh1301.remote_base_dir()])
+        remote_test_site.exec_remote(["rm", "-Rf", remote_test_site.remote_base_dir()])
+        remote_test_site.exec_remote(["mkdir", "-p", remote_test_site.remote_base_dir()])
 
-        ssh_dest = f"{remote_test_site_gh1301.user_at_host()}:{remote_test_site_gh1301.remote_base_dir()}"
+        ssh_dest = f"{remote_test_site.user_at_host()}:{remote_test_site.remote_base_dir()}"
 
         test_cli(
             '--pipeline-instance-dir', pid,
