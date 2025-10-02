@@ -121,3 +121,6 @@ class PipelineType:
 
     def array_grouper(self, task_key):
         return None
+
+    def doc_root(self):
+        return None
