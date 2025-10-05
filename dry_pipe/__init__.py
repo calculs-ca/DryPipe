@@ -10,7 +10,7 @@ import textwrap
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from dry_pipe.core_lib import PortablePopen, exec_remote
+from dry_pipe.core_lib import PortablePopen, exec_remote, invoke_rsync
 
 from dry_pipe.task import Task, TaskStep, TaskInput, TaskOutput, FileSet
 from dry_pipe.state_file_tracker import StateFileTracker
@@ -492,6 +492,18 @@ class RemotePipelineSpecs:
         self.task_logger.debug("remote states:\n %s", remote_exec_result)
         self.reconcile_local_array_states_with_remote_state(remote_exec_result)
         # TODO : reconcile logs
+
+    def fetch_remote_logs(self):
+
+        remote_src = f"{self.user_at_host}:{self.remote_base_dir}/{self.pid_base_name}/.drypipe"
+
+        dst = f"{self.absolute_pid}/.drypipe"
+
+        cmd = f"rsync -a --update --include=*/*.log --exclude=*/* {remote_src}/ {dst}/"
+
+        self.task_logger.debug("rsync remote logs: %s", cmd)
+
+        invoke_rsync(cmd)
 
     def remote_exec(self, cmd, args=()):
 

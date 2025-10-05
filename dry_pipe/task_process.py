@@ -1468,6 +1468,9 @@ class TaskProcess:
     def pipeline_instance_base_dir(self):
         return os.path.basename(self.pipeline_instance_dir)
 
+    def auto_reconcile_logs(self):
+        return True
+
     def file_sets_rsync_list_file(self):
         return os.path.join(self.control_dir, "file-sets-rsync-list.txt")
 

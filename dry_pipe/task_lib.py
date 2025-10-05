@@ -175,6 +175,9 @@ def poll_remote_task(
                 #if ss.next_sleep() in [1, 6, 120, max_sleep] or True:
                 __remote_pipeline_specs.fetch_remote_array_states_and_reconcile()
 
+            if __remote_pipeline_specs.task_process.auto_reconcile_logs():
+                __remote_pipeline_specs.fetch_remote_logs()
+
 
             if remote_state_file.did_not_succeed():
                 raise Exception(f"remote task {remote_state_file.path} did not succeed")
