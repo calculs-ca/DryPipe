@@ -52,7 +52,12 @@ class StateFile:
         self.path = os.path.join(self.tracker.pipeline_work_dir, self.task_key, f"state._step-started.{s}")
 
     def transition_to_crashed(self):
-        self.path = os.path.join(self.tracker.pipeline_work_dir, self.task_key, "state.crashed")
+
+        step = self.step_idx()
+
+        step_ending = "" if step is None else f".{step}"
+
+        self.path = os.path.join(self.tracker.pipeline_work_dir, self.task_key, f"state.crashed{step_ending}")
 
     def transition_to_ready(self):
         self.path = os.path.join(self.tracker.pipeline_work_dir, self.task_key, "state.ready")

@@ -3,8 +3,8 @@ import os.path
 from pathlib import Path
 
 from dry_pipe import TaskConf, PortablePopen
-from tests.cli_tests import test_cli
-from tests.pipeline_tests_with_slurm_arrays import PipelineWithSlurmArray
+from tests.pipeline_tests_with_slurm_arrays import PipelineWithSlurmArray, PipelineWithAutoRestart1, \
+    PipelineWithAutoRestart2
 from tests.test_utils import TestSandboxDir
 
 
@@ -44,14 +44,16 @@ remote_test_site.sbatch_options = ["-p", "c-gh"]
 #remote_test_site.sbatch_options = ["--nodelist=cp41"]
 
 
-
-
-
-
 class RemoteArrayTaskFullyAutomatedRun(PipelineWithSlurmArray):
 
     def launches_tasks_in_process(self):
         return False
+
+    def is_log_level_debug(self):
+        return True
+
+    #def custom_sleep_schedule(self):
+    #    return "1"
 
     def task_conf(self):
 
@@ -62,14 +64,14 @@ class RemoteArrayTaskFullyAutomatedRun(PipelineWithSlurmArray):
         tc = TaskConf(
             executer_type="slurm",
             sbatch_options=remote_test_site.sbatch_options,
-            #slurm_account="def-xroucou",
             ssh_remote_dest=rts.ssh_remote_dst(),
             extra_env={
-                "DRYPIPE_TASK_DEBUG": "True",
                 "PYTHONPATH": ":".join([
                     f"$__pipeline_instance_dir/external-file-deps{repo_dir}"
                 ]),
-                "DRYPIPE_SLURM_STD_OUT_ERR_LOG": "True"
+                "DRYPIPE_SLURM_STD_OUT_ERR_LOG": "True",
+                "DRYPIPE_TASK_DEBUG": self.is_log_level_debug().__str__(),
+                "DRYPIPE_SLEEP_SCHEDULE": self.custom_sleep_schedule()
             }
             #run_as_group="def-xroucou"
         )
@@ -77,13 +79,12 @@ class RemoteArrayTaskFullyAutomatedRun(PipelineWithSlurmArray):
         return tc
 
     def test_run_pipeline(self):
-
-        rts = remote_test_site
-        rts.reset(self.pipeline_instance_dir)
+        d = TestSandboxDir(self)
+        self.pre_run(d.sandbox_dir)
 
         pipeline_instance = self.create_pipeline_instance(self.pipeline_instance_dir)
         pipeline_instance.monitor=self.create_monitor()
-        pipeline_instance.run_sync(run_tasks_in_process=True)
+        pipeline_instance.run_sync(run_tasks_in_process=False, sleep_schedule=self.custom_sleep_schedule_parsed())
 
         tasks_by_keys = {
             task.key: task
@@ -119,80 +120,30 @@ class RemoteArrayTaskFullyAutomatedRun2Steps2Sbatches(RemoteArrayTaskFullyAutoma
         return ["--time=30:00", "-p", "c-gh"]
 
 
-class CliTestsPipelineWithSlurmArrayRemote(PipelineWithSlurmArray):
 
-    def create_prepare_and_run_pipeline(self, d, until_patterns=["*"]):
-        pipeline_instance = self.create_pipeline_instance(d.sandbox_dir)
-        pipeline_instance.run_sync(until_patterns)
-        return pipeline_instance
+class RemotePipelineWithAutoRestart1(PipelineWithAutoRestart1):
 
-    def do_validate(self, pipeline_instance):
-        self.validate({
-            task.key: task
-            for task in pipeline_instance.query("*")
-        })
+    def remote_test_site(self):
+        return remote_test_site
+
+    def is_log_level_debug(self):
+        return True
 
     def test_run_pipeline(self):
-        pass
-
-    def task_conf(self):
-
-        repo_dir = os.path.abspath(os.path.dirname(os.path.dirname(__file__)))
-
-        tc = TaskConf(
-            executer_type="slurm",
-            #slurm_account="def-xroucou",
-            sbatch_options=remote_test_site.sbatch_options,
-            extra_env={
-                "DRYPIPE_TASK_DEBUG": "True",
-                "PYTHONPATH": ":".join([
-                    f"{remote_test_site.remote_base_dir()}/CliTestsPipelineWithSlurmArrayRemote.test_array_upload_run_and_download/.drypipe",
-                    f"{remote_test_site.remote_base_dir()}/CliTestsPipelineWithSlurmArrayRemote.test_array_upload_run_and_download/external-file-deps{repo_dir}"
-                ])
-            }
-        )
-        tc.python_bin = None
-        return tc
-
-    def test_array_upload_run_and_download(self):
         d = TestSandboxDir(self)
+        self.pre_run(d.sandbox_dir)
+        super().test_run_pipeline()
 
-        pipeline_instance = self.create_prepare_and_run_pipeline(d)
+    def sbatch_step2(self, dsl):
+        return ["--time=30:00", "-p", "c-gh"]
 
-        pid = pipeline_instance.state_file_tracker.pipeline_instance_dir
 
-        remote_test_site.exec_remote(["rm", "-Rf", remote_test_site.remote_base_dir()])
-        remote_test_site.exec_remote(["mkdir", "-p", remote_test_site.remote_base_dir()])
+class RemotePipelineWithAutoRestart2(PipelineWithAutoRestart2):
 
-        ssh_dest = f"{remote_test_site.user_at_host()}:{remote_test_site.remote_base_dir()}"
+    def remote_test_site(self):
+        return remote_test_site
 
-        test_cli(
-            '--pipeline-instance-dir', pid,
-            'task',
-            f'{pid}/.drypipe/z',
-            '--wait'
-        )
-
-        test_cli(
-            '--pipeline-instance-dir', pid,
-            'array-upload',
-            '--task-key=array_parent',
-            f'--ssh-remote-dest={ssh_dest}'
-        )
-
-        test_cli(
-            '--pipeline-instance-dir', pid,
-            'task',
-            f'{pid}/.drypipe/array_parent',
-            '--wait',
-            f'--ssh-remote-dest={ssh_dest}'
-        )
-
-        test_cli(
-            '--pipeline-instance-dir', pid,
-            'array-download',
-            '--task-key=array_parent',
-            f'--ssh-remote-dest={ssh_dest}'
-        )
-
-        self.do_validate(pipeline_instance)
+    def test_run_pipeline(self):
+        d = TestSandboxDir(self)
+        self.pre_run(d.sandbox_dir)
+        super().test_run_pipeline()

@@ -9,10 +9,13 @@ from cli_tests import CliArrayTests1, CliTestsPipelineWithSlurmArray, CliTestSce
 from dsl_tests import TaskChangeTrackingTests
 from pipeline_tests_with_slurm_mockup import all_low_level_tests_with_mockup_slurm
 from test_state_machine import StateMachineTests, StateFileTrackerTest, MockupStateFileTrackerTest
+from tests import pipeline_tests_with_local_slurm
+
 from tests.pipeline_tests_with_local_slurm import all_with_local_slurm
 from tests import pipeline_tests_with_slurm_arrays
-from tests.pipeline_tests_with_remote_slurm_arrays import CliTestsPipelineWithSlurmArrayRemote, \
-    RemoteArrayTaskFullyAutomatedRun, RemoteArrayTaskFullyAutomatedRun2Steps2Sbatches
+from tests.pipeline_tests_with_remote_slurm_arrays import \
+    RemoteArrayTaskFullyAutomatedRun, RemoteArrayTaskFullyAutomatedRun2Steps2Sbatches, RemotePipelineWithAutoRestart1, \
+    RemotePipelineWithAutoRestart2
 from tests.pipeline_tests_with_remote_tasks import RemoteTestFileSet, RemoteTestFileSetWithDataDirVar, \
     RemoteTestFileSetWithGlobus
 from tests.service_runner_tests import ServiceRunnerTest1
@@ -49,11 +52,12 @@ def array_tests():
         pipeline_tests_with_slurm_arrays.all_tests
     ]
 
-def array_remote_tests():
+def remote_array_tests():
     return [
-        CliTestsPipelineWithSlurmArrayRemote,
         RemoteArrayTaskFullyAutomatedRun,
-        RemoteArrayTaskFullyAutomatedRun2Steps2Sbatches
+        RemoteArrayTaskFullyAutomatedRun2Steps2Sbatches,
+        RemotePipelineWithAutoRestart1,
+        RemotePipelineWithAutoRestart2
     ]
 
 def remote_task_tests():
@@ -70,7 +74,7 @@ def globus_tests():
     ]
 
 def all_remote_tests():
-    return remote_task_tests() + array_remote_tests() + globus_tests()
+    return remote_task_tests() + remote_array_tests() + globus_tests()
 
 def cli_tests():
     return [
@@ -118,7 +122,7 @@ if __name__ == '__main__':
         "all_local_tests": all_local_tests,
         "remote_task_tests": remote_task_tests,
         "exhaustive_test_suite": exhaustive_test_suite,
-        "remote_array_tests": array_remote_tests,
+        "remote_array_tests": remote_array_tests,
         "all_remote_tests": all_remote_tests,
         "cli_tests": cli_tests,
         "globus_tests": globus_tests
@@ -160,7 +164,7 @@ if __name__ == '__main__':
     if suite_to_test == "remote_tests":
         failfast = True
 
-    result = TextTestRunner(verbosity=2, failfast=failfast).run(
+    result = TextTestRunner(verbosity=2, failfast=failfast, durations=15).run(
         build_suite(chosen_suite_func)
     )
 

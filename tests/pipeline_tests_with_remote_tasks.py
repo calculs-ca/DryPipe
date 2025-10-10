@@ -1,6 +1,7 @@
 import os
 from pathlib import Path
 
+from test_utils import TestSandboxDir
 from tests.pipeline_tests_with_remote_slurm_arrays import RemoteTestSite, remote_test_site
 from tests.pipeline_tests_with_single_tasks import TestFileSet
 from dry_pipe import TaskConf
@@ -8,33 +9,16 @@ from dry_pipe import TaskConf
 
 class RemoteTestFileSet(TestFileSet):
 
-    def task_conf(self):
-
-        rts = remote_test_site
-
-        tc = TaskConf(
-            executer_type="slurm",
-            #slurm_account="def-xroucou",
-            sbatch_options=rts.sbatch_options,
-            ssh_remote_dest=rts.ssh_remote_dst(),
-            extra_env={
-                "DRYPIPE_TASK_DEBUG": "True"
-            }
-            #run_as_group="def-xroucou"
-        )
-        tc.python_bin = None
-        return tc
-
+    def remote_test_site(self):
+        return remote_test_site
 
     def test_run_pipeline(self):
-
-        rts = RemoteTestSite("maxl@gh1301")
-
-        rts.reset(self.pipeline_instance_dir)
+        d = TestSandboxDir(self)
+        self.pre_run(d.sandbox_dir)
 
         pipeline_instance = self.create_pipeline_instance(self.pipeline_instance_dir)
         pipeline_instance.monitor=self.create_monitor()
-        pipeline_instance.run_sync(run_tasks_in_process=True)
+        pipeline_instance.run_sync(run_tasks_in_process=True, sleep_schedule=self.custom_sleep_schedule_parsed())
 
         tasks_by_keys = {
             task.key: task
@@ -95,10 +79,11 @@ class RemoteTestFileSetWithGlobus(RemoteTestFileSetWithDataDirVar):
             globus_transfer=
                 f"3e9dcd5e-6274-11f0-be3d-0efa17cb03ab:29f94847-8c7b-4c7b-b102-b3f3d5351e83:{globus_tok}:{client_id}",
             extra_env={
-                "DRYPIPE_TASK_DEBUG": "True",
                 "PYTHONPATH": ":".join([
                     f"$__pipeline_instance_dir/external-file-deps{repo_dir}"
-                ])
+                ]),
+                "DRYPIPE_TASK_DEBUG": self.is_log_level_debug().__str__(),
+                "DRYPIPE_SLEEP_SCHEDULE": self.custom_sleep_schedule()
             }
             #run_as_group="def-xroucou"
         )

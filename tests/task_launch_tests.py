@@ -41,7 +41,8 @@ class EnsureFailOfLaunchWhenUnsatisfiedUpstreamDependencyTest(pipeline_tests_wit
 
         pipeline_instance.run_sync(
             until_patterns=["*"],
-            run_tasks_in_process=self.launches_tasks_in_process()
+            run_tasks_in_process=self.launches_tasks_in_process(),
+            sleep_schedule=self.custom_sleep_schedule_parsed()
         )
 
         consume_and_produce_a_var = pipeline_instance.lookup_single_task(

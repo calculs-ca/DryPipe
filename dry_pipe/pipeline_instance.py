@@ -4,6 +4,7 @@ import time
 from itertools import groupby
 from logging.handlers import RotatingFileHandler
 
+from dry_pipe.core_lib import TimeLogger
 from dry_pipe.state_machine import StateMachine, AllRunnableTasksCompletedOrInError
 from dry_pipe.state_file_tracker import StateFileTracker
 from dry_pipe.task_process import TaskProcess
@@ -12,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 class PipelineInstance:
 
-    def __init__(self, pipeline, pipeline_instance_dir, logger=None):
+    def __init__(self, pipeline, pipeline_instance_dir, logger=None, instance_log_is_debug=False):
         self.pipeline = pipeline
         self.state_file_tracker = StateFileTracker(pipeline_instance_dir)
         if not self.state_file_tracker.instance_exists():
@@ -30,7 +31,7 @@ class PipelineInstance:
                 maxBytes=1024 * 1024 * 10, backupCount=3
             )
 
-            if self.is_debug():
+            if instance_log_is_debug:
                 logging_level = logging.DEBUG
             else:
                 logging_level = logging.INFO
@@ -46,12 +47,6 @@ class PipelineInstance:
             self.instance_logger.info("log level: %s", logging.getLevelName(logging_level))
 
 
-    def is_debug(self):
-        if os.environ.get("DRYPIPE_DEBUG") == "True":
-            return True
-        return False
-
-
     def pipeline_instance_dir(self):
         return self.state_file_tracker.pipeline_instance_dir
 
@@ -61,19 +56,24 @@ class PipelineInstance:
             "__containers_dir": self.pipeline.containers_dir
         })
 
-    def run_sync(self, until_patterns=None, run_tasks_in_process=True, filters=[]):
-        self._run(until_patterns, run_tasks_in_process, True, [0, 0, 0, 1], filters=filters)
+    def run_sync(self, until_patterns=None, run_tasks_in_process=True, filters=(), sleep_schedule=None):
+        self._run(until_patterns, run_tasks_in_process, True, sleep_schedule, filters=filters)
 
-    def run(self, until_patterns=None, restart_failed=False, reset_failed=False):
+    def run(self, until_patterns=None, restart_failed=False, reset_failed=False, sleep_schedule=None):
         self._run(
             until_patterns, False, False,
-            [0, 1, 5, 10], restart_failed, reset_failed
+            sleep_schedule, restart_failed, reset_failed
         )
 
     def _run(
         self, until_patterns, run_tasks_in_process, run_tasks_sync, sleep_schedule,
-        restart_failed=False, reset_failed=False, filters=[]
+        restart_failed=False, reset_failed=False, filters=()
     ):
+
+        if sleep_schedule is None:
+            sleep_schedule = [0, 1, 5, 10]
+
+        self.instance_logger.info("sleep schedule: %s", sleep_schedule)
 
         if until_patterns is not None and not isinstance(until_patterns, list):
             raise Exception(f"invalid type for until_patterns: {type(until_patterns).__name__}, must be List[str]")
@@ -98,9 +98,15 @@ class PipelineInstance:
                         control_dir = state_file.control_dir()
                         as_subprocess = not run_tasks_in_process
                         wait_for_completion = run_tasks_sync
-                        tp = TaskProcess(control_dir, as_subprocess=as_subprocess,
-                                         wait_for_completion=wait_for_completion)
-                        yield lambda: tp.run(by_pipeline_runner=True), None
+                        tp = TaskProcess(
+                            control_dir, as_subprocess=as_subprocess, wait_for_completion=wait_for_completion
+                        )
+
+                        def r():
+                            with TimeLogger(tp.task_key, self.instance_logger.debug):
+                                tp.run(by_pipeline_runner=True)
+
+                        yield r, None
                         c += 1
                         sleep_idx = 0
 
@@ -135,8 +141,8 @@ class PipelineInstance:
                 func()
                 mon()
             elif suggested_sleep is not None:
-                time.sleep(suggested_sleep)
                 self.instance_logger.debug("will sleep %s", suggested_sleep)
+                time.sleep(suggested_sleep)
                 mon()
             else:
                 mon()

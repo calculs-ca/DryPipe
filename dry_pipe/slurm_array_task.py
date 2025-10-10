@@ -1,6 +1,10 @@
+import contextlib
 import glob
+import json
 import logging
+import mmap
 import os
+import re
 import time
 from itertools import groupby
 from pathlib import Path
@@ -8,7 +12,7 @@ from typing import List, Iterator, Tuple
 
 from dry_pipe import PortablePopen, TaskConf, RemotePipelineSpecs
 from dry_pipe.state_file_tracker import StateFileTracker
-from dry_pipe.task_lib import upload_task_inputs, download_task_outputs
+from dry_pipe.task_lib import upload_task_inputs_rsync, download_task_outputs_rsync
 from dry_pipe.task_process import TaskProcess
 
 logger = logging.getLogger(__name__)
@@ -51,6 +55,7 @@ class SlurmArrayParentTask:
 
             # stdout and stderr are handled by TaskProcess, slurm redirection is almost always empty
             slurm_std_out_err_log = os.environ.get("DRYPIPE_SLURM_STD_OUT_ERR_LOG") == "True"
+            #slurm_std_out_err_log = self.task_process.is_debug()
 
             if slurm_std_out_err_log:
                 yield f"--output={self.control_dir()}/debug-%A_%a.log"
@@ -82,21 +87,27 @@ class SlurmArrayParentTask:
 
     def call_sbatch(self, command_args):
         cmd = " ".join(command_args)
-        with PortablePopen(cmd, shell=True) as p:
-            p.wait_and_raise_if_non_zero()
-            return p.stdout_as_string().strip()
+        with self.task_process.create_time_logger("sbatch invocation", self.task_process.task_logger.debug):
+            with PortablePopen(cmd, shell=True) as p:
+                p.wait_and_raise_if_non_zero()
+                return p.stdout_as_string().strip()
 
-    def call_squeue(self, submitted_job_ids):
+    def call_squeue(self, submitted_job_ids, only_active):
         job_ids_as_str = ",".join(list(submitted_job_ids))
         # see JOB STATE CODES: https://slurm.schedmd.com/squeue.html
-        squeue_cmd = f'squeue -r --noheader --format="%i %t" --states=all --jobs={job_ids_as_str}'
+
+        states = "" if only_active else "--states=all"
+
+        squeue_cmd = f'squeue -r --noheader --format="%i %t" {states} --jobs={job_ids_as_str}'
         self.task_process.task_logger.debug(squeue_cmd)
         with PortablePopen(squeue_cmd, shell=True) as p:
-            #p.wait()
-            # "stderr: slurm_load_jobs error: Invalid job id specified"
-            #if self.popen.returncode != 0:
-            #    p.safe_stderr_as_string()
-            p.wait_and_raise_if_non_zero()
+            p.wait()
+            if p.popen.returncode != 0 and only_active:
+                if "Invalid job id specified" in p.safe_stderr_as_string():
+                    self.task_process.task_logger.info("job_id %s no longer active" % job_ids_as_str)
+                    return
+                    #raise InvalidSlurmJobIdException()
+            p.raise_if_non_zero()
             for line in p.iterate_stdout_lines():
                 yield line
 
@@ -113,12 +124,62 @@ class SlurmArrayParentTask:
 
         return job_id_array_idx_to_task_key
 
-    def compare_and_reconcile_squeue_with_state_files(self, mockup_squeue_call=None):
+    def submitted_job_ids(self):
+        return [
+            job_id
+            for array_n, job_id, f in self.submitted_arrays_files()
+        ]
+
+    def number_of_active_sbatch_submissions(self):
+        #try:
+        res = self.call_squeue_and_index_response(self.submitted_job_ids(), only_active=True)
+        return len(res)
+        #except InvalidSlurmJobIdException:
+        #    return 0
+
+    def submitted_arrays_files_with_job_is_running_status(self) -> Iterator[Tuple[int, str, str, bool]]:
+        def _array_ended_completely(file):
+            with open(file) as _file:
+                for line in _file:
+                    if line.strip() == "BATCH_ENDED":
+                        return True
+            return False
+
+        for array_n, job_id, f in self.submitted_arrays_files():
+            array_ended_completely = _array_ended_completely(f)
+            yield array_n, job_id, f, array_ended_completely
+
+    def manage_auto_restarts_from_remote(self):
+
+        if self.task_process.task_conf.auto_restart_condition_regexp_per_log_file is not None:
+            arm = AutoRestartManager(self.task_process.task_conf.auto_restart_condition_regexp_per_log_file)
+        else:
+            arm = None
+
+        self.compare_and_reconcile_squeue_with_state_files()
+
+        if arm is not None:
+            relaunch_count = self.prepare_and_launch_next_array(auto_restart_manager=arm)
+        else:
+            relaunch_count = 0
+
+        report = self.inspect_child_tasks()
+
+        number_of_active_sbatch_submissions = \
+            self.number_of_active_sbatch_submissions()
+
+        report["active_sbatch_submissions"] = number_of_active_sbatch_submissions
+        report["relaunch_count"] = relaunch_count
+
+        return report
+
+
+    def compare_and_reconcile_squeue_with_state_files(self, mockup_squeue_call=None, alternate_logger=None):
         """
-        Returns None when job has ended (completed or crashed, timed out, etc)
+        Returns empty dict when job has ended (completed or crashed, timed out, etc)
         or a dictionary:
             task_key -> (drypipe_state_as_string expected_squeue_state, actual_queue_state), ...}
-        when the tasks state file has is not expected according to the task status returned by squeue.
+        when the tasks StateFile is unexpected, i.e. not coherent with information from squeue
 
         For example, the following response {'t1': ('_step-started', 'R,PD', None)}, means:
 
@@ -126,17 +187,24 @@ class SlurmArrayParentTask:
         the expected squeue state should be 'PD' (pending).
         """
 
+        if alternate_logger is not None:
+            this_logger = alternate_logger
+        else:
+            this_logger = self.task_process.task_logger
+
+
         submitted_arrays_files = list(self.submitted_arrays_files_with_job_is_running_status())
 
         assumed_active_job_ids = {
             job_id: array_n
-            for array_n, job_id, file, is_terminated in submitted_arrays_files
-            if not is_terminated
-        }
+            for array_n, job_id, file, array_ended_completely in submitted_arrays_files
+            if not array_ended_completely
+        }.keys()
         # 363:
 
         if len(assumed_active_job_ids) == 0:
-            return None
+            this_logger.info("no active array running")
+            return dict([])
 
         job_ids_to_array_idx_to_squeue_state = self.call_squeue_and_index_response(assumed_active_job_ids, mockup_squeue_call)
         # {'363': {3: 'CD', 2: 'CD', 1: 'CD', 0: 'CD'}}
@@ -149,7 +217,7 @@ class SlurmArrayParentTask:
                     return True
                 elif slurm_code in {"F", "CD", "TO", "ST", "PR", "RV", "SE", "BF", "CA", "DL", "OOM", "NF"}:
                     return False
-                self.task_process.task_logger.warning("rare code: %s", slurm_code)
+                this_logger.warning("rare code: %s", slurm_code)
                 return False
 
             is_running_or_will_run_count = 0
@@ -166,20 +234,21 @@ class SlurmArrayParentTask:
                     # validate state_file
 
             if is_running_or_will_run_count == 0:
-                for _, job_id_, job_submission_file, is_assumed_terminated in submitted_arrays_files:
+                for array_n, job_id_, job_submission_file, array_ended_completely in submitted_arrays_files:
                     if job_id_ == job_id:
-                        if not is_assumed_terminated:
+                        if not array_ended_completely:
+                            this_logger.info("array %s will be flagged as ended", job_submission_file)
                             with open(job_submission_file, "a") as f:
                                 f.write("\nBATCH_ENDED\n")
                             break
                         else:
-                            self.task_process.task_logger.warning("submission %s already ended")
+                            this_logger.warning("submission %s already ended", job_submission_file)
 
-        u_states = self._validate_squeue_states_and_state_files(
+        unexpected_states = self._validate_squeue_states_and_state_files(
             submitted_arrays_files, job_ids_to_array_idx_to_squeue_state
         )
 
-        return u_states
+        return unexpected_states
 
 
     def _validate_squeue_states_and_state_files(self, submitted_arrays_files, job_ids_to_array_idx_to_squeue_state):
@@ -209,7 +278,7 @@ class SlurmArrayParentTask:
         return dict_unexpected_states
 
 
-    def call_squeue_and_index_response(self, submitted_job_ids, mockup_squeue_call=None):
+    def call_squeue_and_index_response(self, submitted_job_ids, mockup_squeue_call=None, only_active=False):
         """
           job_id -> (array_idx, job_state_code)
         """
@@ -218,7 +287,7 @@ class SlurmArrayParentTask:
         if self.mockup_run_launch_local_processes:
             squeue_func = lambda: []
         elif mockup_squeue_call is None:
-            squeue_func = lambda: self.call_squeue(submitted_job_ids)
+            squeue_func = lambda: self.call_squeue(submitted_job_ids, only_active)
         else:
             squeue_func = lambda: mockup_squeue_call(submitted_job_ids)
 
@@ -317,37 +386,35 @@ class SlurmArrayParentTask:
 
         yield from sorted(gen(), key=lambda t: t[0])
 
-    def submitted_arrays_files_with_job_is_running_status(self) -> Iterator[Tuple[int, str, str, bool]]:
-        def s(file):
-            with open(file) as _file:
-                for line in _file:
-                    if line.strip() == "BATCH_ENDED":
-                        return True
-            return False
-
-        for array_n, job_id, f in self.submitted_arrays_files():
-            status = s(f)
-            yield array_n, job_id, f, status
 
     def i_th_submitted_array_file(self, array_number, job_id):
         return os.path.join(self.control_dir(), f"array.{array_number}.job.{job_id}")
 
-    def iterate_next_task_state_files(self, start_next_n, restart_failed, include_pre_launch, dry_run=False):
+    def iterate_next_task_state_files(
+        self, start_next_n, restart_failed, include_pre_launch, dry_run=False, auto_restart_manager=None
+    ):
         i = 0
         for k in self.children_task_keys():
             state_file = self.tracker.load_state_file(k)
             if state_file.is_in_pre_launch():
                 if include_pre_launch:
-                    #self.tracker.register_pre_launch(state_file, restart_failed)
-                    logger.debug("will launch %s", state_file.task_key)
+                    self.task_process.task_logger.debug("will launch %s", state_file.task_key)
                     yield state_file
                     i += 1
             elif state_file.is_ready():
-                logger.debug("will launch %s", state_file.task_key)
+                self.task_process.task_logger.debug("will launch %s", state_file.task_key)
                 yield state_file
                 i += 1
+            elif not restart_failed and auto_restart_manager is not None and state_file.is_failed():
+                should_restart, line_in_log, restart_count = auto_restart_manager.should_restart(
+                    state_file,
+                    alternate_logger=self.task_process.task_logger
+                )
+                if should_restart:
+                    yield state_file
+                    i += 1
             elif restart_failed and (state_file.is_failed() or state_file.is_timed_out() or state_file.is_killed()):
-                logger.debug("will launch %s", state_file.task_key)
+                self.task_process.task_logger.debug("will launch %s", state_file.task_key)
                 if not dry_run:
                     self.tracker.register_pre_launch(state_file, restart_failed)
                 yield state_file
@@ -414,12 +481,27 @@ class SlurmArrayParentTask:
         return os.path.join(self.control_dir(), f"array.{next_array_number}.tsv"), next_array_number
 
 
-    def prepare_and_launch_next_array(self, limit=None, restart_failed=False, call_sbatch_mockup=None, include_pre_launch=False, dry_run=False):
+    def prepare_and_launch_next_array(
+        self,
+        limit=None,
+        restart_failed=False, call_sbatch_mockup=None, include_pre_launch=False, dry_run=False,
+        auto_restart_manager=None,
+        alternate_logger=None,
+    ):
 
-        next_task_state_files = list(self.iterate_next_task_state_files(limit, restart_failed, include_pre_launch, dry_run))
+        if alternate_logger is not None:
+            this_logger = alternate_logger
+        else:
+            this_logger = self.task_process.task_logger
+
+        next_task_state_files = list(
+            self.iterate_next_task_state_files(
+                limit, restart_failed, include_pre_launch, dry_run, auto_restart_manager
+            )
+        )
 
         if len(next_task_state_files) == 0:
-            logger.info("no tasks to relaunch")
+            this_logger.info("no tasks to launch")
             return 0
         else:
 
@@ -427,7 +509,7 @@ class SlurmArrayParentTask:
 
                 next_task_key_file, next_array_number = self.next_array_file_name_and_number()
 
-                logger.info("next array task keys in %s", next_task_key_file)
+                this_logger.info("next array task keys in %s", next_task_key_file)
 
                 with open(next_task_key_file, "w") as _next_task_key_file:
                     for state_file in state_files_in_batch:
@@ -440,17 +522,18 @@ class SlurmArrayParentTask:
 
                 if call_sbatch_mockup is not None:
                     call_sbatch_func = call_sbatch_mockup
-                    self.task_process.task_logger.info("Will use SBATCH MOCKUP")
+                    this_logger.info("Will use SBATCH MOCKUP")
                 elif self.mockup_run_launch_local_processes:
-                    self.task_process.task_logger.info("Will fake SBATCH as local process")
+                    this_logger.info("Will fake SBATCH as local process")
                     call_sbatch_func = lambda: self._sbatch_mockup_launch_as_local_proceses()
                 else:
-                    self.task_process.task_logger.info("will submit array: %s", " ".join(command_args))
+                    this_logger.info("will submit array: %s", " ".join(command_args))
                     call_sbatch_func = lambda: self.call_sbatch(command_args)
 
                 job_id = call_sbatch_func()
                 if job_id is None:
                     raise Exception(f"sbatch returned None:\n {command_args}")
+                this_logger.info("array job id: %s", job_id)
                 with open(self.i_th_submitted_array_file(next_array_number, job_id), "w") as f:
                     f.write(" ".join(command_args))
 
@@ -477,7 +560,7 @@ class SlurmArrayParentTask:
 
         return f"123400{launch_idx}"
 
-    def run_array(self, restart_failed, reset_failed, limit):
+    def obsolete_run_array(self, restart_failed, reset_failed, limit):
 
         self.prepare_and_launch_next_array(limit)
 
@@ -533,33 +616,28 @@ class SlurmArrayParentTask:
         return False
 
     def inspect_child_tasks(self):
+
         total_children_tasks = 0
         ended_tasks = 0
         completed_tasks = 0
-        failed_tasks = []
+        failed_task_keys = []
         for task_key in self.children_task_keys():
             total_children_tasks += 1
             state_file = self.tracker.load_state_file(task_key)
-            self.task_process.task_logger.debug(f"%s -> %s", task_key, state_file)
             if state_file.has_ended():
                 ended_tasks += 1
             if state_file.is_completed():
                 completed_tasks += 1
 
             if state_file.is_failed():
-                failed_tasks.append(state_file.task_key)
+                failed_task_keys.append(state_file.task_key)
 
-        def z(state_name):
-            return str(Path(self.control_dir(), state_name))
-
-        if len(failed_tasks) > 0:
-            return z("state.failed")
-
-        if completed_tasks == total_children_tasks:
-            return z("state.completed")
-
-        return z("state.step-started.0")
-
+        return {
+            "total_children_tasks": total_children_tasks,
+            "ended_tasks": ended_tasks,
+            "completed_tasks": completed_tasks,
+            "failed_task_keys": failed_task_keys
+        }
 
 
     def _upload_array(self):
@@ -572,7 +650,7 @@ class SlurmArrayParentTask:
                 f"requires ssh_remote_dest in TaskConf OR --ssh-remote-dest argument to be set"
             )
 
-        upload_task_inputs.func(
+        upload_task_inputs_rsync.func(
             __task_key=self.task_process.task_key,
             __task_control_dir=self.task_process.control_dir,
             __remote_pipeline_specs=RemotePipelineSpecs(self.task_process),
@@ -584,7 +662,7 @@ class SlurmArrayParentTask:
 
     def _download_array(self):
 
-        download_task_outputs.func(
+        download_task_outputs_rsync.func(
             __task_key=self.task_process.task_key,
             __task_control_dir=self.task_process.control_dir,
             __task_logger=self.task_process.task_logger,
@@ -595,7 +673,7 @@ class SlurmArrayParentTask:
         )
 
     @staticmethod
-    def create_array_parent(pipeline_instance_dir, new_task_key, matcher, slurm_account, split_into):
+    def create_array_parent(pipeline_instance_dir, new_task_key, matcher, slurm_account, split_into, extra_env):
 
         state_file_tracker = StateFileTracker(pipeline_instance_dir)
 
@@ -607,7 +685,8 @@ class SlurmArrayParentTask:
 
         tc = TaskConf(
             executer_type="slurm",
-            slurm_account=slurm_account
+            slurm_account=slurm_account,
+            extra_env=extra_env
         )
         tc.is_slurm_parent = True
         tc.inputs.append({
@@ -648,3 +727,125 @@ class SlurmArrayParentTask:
             state_file_path = StateFileTracker.find_state_file_if_exists(child_task_control_dir)
             if state_file_path is not None:
                 yield child_task_key, state_file_path.name
+
+
+class AutoRestartManager:
+
+    def __init__(self, auto_restart_condition_regexp_per_log_file, max_restart=3):
+
+        self.max_restart = max_restart
+
+        if auto_restart_condition_regexp_per_log_file is None:
+            self.auto_restart_condition_regexp_per_log_file = None
+        else:
+            def compile_regexp(f, pattern):
+                try:
+                    return re.compile(pattern)
+                except Exception as ex:
+                    raise Exception(f"Failed to compile regex pattern '{pattern}', for file '{f}'")
+
+            self.auto_restart_condition_regexp_per_log_file = {
+                f: [
+                    None if r is None else compile_regexp(f, r)
+                    for r in regexen
+                ]
+                for f, regexen in auto_restart_condition_regexp_per_log_file.items()
+            }
+
+    def restart_file(self, state_file):
+        return Path(state_file.control_dir(), "restarts.tsv")
+
+
+    def _last_line_of_prev_restarts_per_file_and_restart_count(self, state_file):
+
+        restarts = self.restart_file(state_file)
+        restart_counter = [0]
+
+        if restarts.exists():
+            def g():
+                with open(restarts, "r") as f:
+                    for line in f:
+                        line = line.strip()
+                        if line == "":
+                            continue
+                        row = [
+                            l.strip() for l in line.split("\t", maxsplit=3)
+                        ]
+                        log_name, line_in_log, ignore = row
+                        restart_counter[0] = restart_counter[0] + 1
+                        yield log_name, int(line_in_log)
+
+            last_line_of_prev_restarts_per_file = dict(g())
+        else:
+            last_line_of_prev_restarts_per_file = {
+                f: None
+                for f in self.auto_restart_condition_regexp_per_log_file.keys()
+            }
+
+        return  last_line_of_prev_restarts_per_file, restart_counter[0]
+
+    def _record_restart(self, state_file, log_file_name, line_number, matching_line):
+        with open(self.restart_file(state_file), "a") as f:
+            f.write(f"{log_file_name}\t{line_number}\t{matching_line.strip()}\n")
+
+    def should_restart(self, state_file, alternate_logger=None):
+
+        if alternate_logger is None:
+            alternate_logger = logger
+
+        last_line_of_prev_restarts_per_file, restart_count = \
+            self._last_line_of_prev_restarts_per_file_and_restart_count(state_file)
+
+        if restart_count >= self.max_restart:
+            alternate_logger.info("%s has reached max relaunch %s", state_file.task_key, restart_count)
+            return False, 0, restart_count
+
+        for f, regexen in self.auto_restart_condition_regexp_per_log_file.items():
+            for r in regexen:
+                log_file = Path(state_file.control_dir(), f)
+
+                if r is None:
+                    # a task without a log is abnormal, None means we want auto restart in this case,
+                    # but we restart it at most once
+                    if not log_file.exists() and restart_count == 0:
+                        self._record_restart(state_file, f, 0, "MISSING_FILE")
+                        alternate_logger.info(
+                            "%s has no log %s, will relaunch", state_file.task_key, log_file
+                        )
+                        return True, 0, restart_count
+                    else:
+                        continue
+                else:
+                    if not log_file.exists():
+                        continue
+
+                match_starting_at_line = last_line_of_prev_restarts_per_file[f]
+
+                with open(log_file) as log_file_h:
+                    c = 0
+
+                    last_line_of_match_occurrence = None
+
+                    for line in log_file_h:
+                        c += 1
+                        if match_starting_at_line is not None and c <= match_starting_at_line:
+                            continue
+
+                        if r.match(line):
+                            last_line_of_match_occurrence = c
+
+                    if last_line_of_match_occurrence is not None:
+                        alternate_logger.info(
+                            "will relaunch %s, relaunches so far: %s", state_file.task_key, restart_count
+                        )
+                        self._record_restart(state_file, f, last_line_of_match_occurrence, line)
+                        return True, c, restart_count
+
+        alternate_logger.debug("will NOT relaunch %s", state_file.task_key)
+
+        return False, None, restart_count
+
+
+
+class InvalidSlurmJobIdException(Exception):
+    pass

@@ -139,6 +139,11 @@ class TaskBuilder:
                  task_conf=None, pipeline_instance=None, is_slurm_array_child=None,
                  is_slurm_parent=None, max_simultaneous_jobs_in_slurm_array=None, children_tasks=None):
 
+
+        for illegal_char in ['"', "'", "{", "}", " "]:
+            if illegal_char in key:
+                raise Exception(f"illegal character {illegal_char} in task key {key}")
+
         self.key = key
         self.dsl = dsl
         self._consumes = _consumes
@@ -525,13 +530,22 @@ class RemotePipelineSpecs:
                 "newgrp", self.task_conf.run_as_group, "<<<", f"'{cmd}'"
             ]
 
-        self.task_logger.info("remote execution: %s", ' '.join(cmd))
-
         return exec_remote(
             self.user_at_host,
             cmd,
             logger_func=self.task_logger.info
         )
+
+    def remote_exec_json_results(self, cmd, args=()):
+        res = self.remote_exec(cmd, args)
+        res = res.strip()
+        for line in res.split("\n"):
+            if not line.startswith("{"):
+                continue
+            return json.loads(line)
+
+        raise Exception(f"Remote execution returned no JSON results {res}")
+
 
 class TaskConf:
     """
@@ -560,6 +574,15 @@ class TaskConf:
         the directory containing the container sif files
     :param python_interpreter_switches:
         extra switches to add to the python executable that will launch the python call (only applies to PythonCall)
+
+    :auto_restart_condition_regexp_per_log_file
+      Only implemented for array tasks.
+      Regexps used for deciding if a failed task should be auto restarted, ex:
+      { "drypipe.log": [".*BrokenPipeError.*"],
+        "out.log": ["Bus\\ error", None]
+      }
+      special value None means that the absence of the log file is sufficient reason for restart
+
     """
 
     @staticmethod
@@ -587,7 +610,8 @@ class TaskConf:
             run_as_group=None,
             apptainer_exec_args=None,
             globus_transfer=None,
-            globus_local_path_rewrite=None
+            globus_local_path_rewrite=None,
+            auto_restart_condition_regexp_per_log_file=None
     ):
 
         self.external_files_root = None
@@ -641,6 +665,7 @@ class TaskConf:
         self.apptainer_exec_args = apptainer_exec_args
         self.globus_transfer = globus_transfer
         self.globus_local_path_rewrite = globus_local_path_rewrite
+        self.auto_restart_condition_regexp_per_log_file = auto_restart_condition_regexp_per_log_file
 
         if extra_env is not None:
             if not isinstance(extra_env, dict):
@@ -707,6 +732,11 @@ class TaskConf:
             yield self.globus_local_path_rewrite
         if self.globus_transfer is not None:
             yield self.globus_transfer
+        if self.auto_restart_condition_regexp_per_log_file is not None:
+            for k, v in self.auto_restart_condition_regexp_per_log_file.items():
+                h1 = k
+                h2 = ",".join(v)
+                yield f"{h1}:{h2}"
 
 
     def as_json(self):

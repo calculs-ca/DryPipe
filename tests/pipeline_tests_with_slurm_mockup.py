@@ -335,8 +335,8 @@ class SlurmArrayCrashScenario(BaseSlurmArrayScenarioWithSlurmMockup):
         })
 
         self.assert_task_state_file_states({
-            "t1": "state.crashed",
-            "t2": "state.crashed"
+            "t1": "state.crashed.0",
+            "t2": "state.crashed.0"
         })
 
 

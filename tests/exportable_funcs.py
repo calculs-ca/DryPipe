@@ -42,7 +42,7 @@ def crash_if(i, pipeline_instance_dir, step_idx):
 
     if should_crash > 0:
         save_crash_count(pipeline_instance_dir, i, c + 1, step_idx)
-        raise Exception("!!!")
+        raise Exception("predicted_crash!!!")
 
 @dry_pipe.DryPipe.python_call()
 def test_step0(i, __pipeline_instance_dir):

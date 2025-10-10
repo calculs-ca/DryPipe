@@ -58,6 +58,12 @@ def test_conf_generator():
 
 class BaseServiceRunnerTest(TestWithDirectorySandbox2):
 
+    def is_log_level_debug(self):
+        return False
+
+    def custom_sleep_schedule(self):
+        return 0
+
     def prepare(self, parent_dir, instance_name):
         instance_dir = Path(self.dir, parent_dir, instance_name)
         instance_dir.mkdir(parents=True, exist_ok=True)
@@ -109,7 +115,11 @@ class ServiceRunnerTest1(BaseServiceRunnerTest):
         class C(PipelineWithSinglePythonTask):
             def task_conf(self):
                 tc = TaskConf.default()
-                tc.extra_env = {"PYTHONPATH": python_path_for_tests}
+                tc.extra_env = {
+                    "PYTHONPATH": python_path_for_tests,
+                    "DRYPIPE_TASK_DEBUG": self.is_log_level_debug().__str__(),
+                    "DRYPIPE_SLEEP_SCHEDULE": self.custom_sleep_schedule()
+                }
                 return tc
 
 

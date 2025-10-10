@@ -116,7 +116,8 @@ class PipelineWithTwoBashTasksPreRun(PipelineWithTwoBashTasks):
 
         pipeline_instance.run_sync(
             run_tasks_in_process=True,
-            filters=["t1"]
+            filters=["t1"],
+            sleep_schedule=self.custom_sleep_schedule_parsed()
         )
 
         tasks_by_keys = {
@@ -144,7 +145,8 @@ class PipelineWithVariablePassingWithPreRun(PipelineWithVariablePassing):
 
         pipeline_instance.run_sync(
             run_tasks_in_process=True,
-            filters=["produce_a_var"]
+            filters=["produce_a_var"],
+            sleep_schedule=self.custom_sleep_schedule_parsed()
         )
 
         tasks_by_keys = {

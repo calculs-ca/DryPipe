@@ -18,6 +18,7 @@ from dry_pipe.slurm_array_task import SlurmArrayParentTask
 from dry_pipe.reports import timers_for_tasks
 from dry_pipe.state_machine import StateFileTracker
 from dry_pipe.service import PipelineRunner
+from dry_pipe.task_lib import submit_local_array
 
 logger = logging.getLogger(__name__)
 
@@ -183,6 +184,11 @@ class Cli:
             self.env = os.environ
         else:
             self.env = env
+
+        custom_sleep_schedule = self.env.get("DRYPIPE_SLEEP_SCHEDULE")
+
+        if custom_sleep_schedule is not None:
+            self.sleep_schedule = [int(s) for s in custom_sleep_schedule.split(",")]
 
         self.is_dp_func = environ.get("__IS_DRYPIPE_DP_FUNC") == "True"
 
@@ -361,7 +367,8 @@ class Cli:
             pipeline_instance.run(
                 until_patterns=self.parsed_args.until,
                 restart_failed=self.parsed_args.restart_failed,
-                reset_failed=self.parsed_args.reset_failed
+                reset_failed=self.parsed_args.reset_failed,
+                sleep_schedule=self.sleep_schedule
             )
         elif self.parsed_args.command == 'service':
 
@@ -380,7 +387,7 @@ class Cli:
                 g,
                 run_sync=False,
                 run_tasks_in_process=False,
-                sleep_schedule=[int(i) for i in self.parsed_args.sleep_schedule.split(",")]
+                sleep_schedule=self.sleep_schedule
             )
 
             logging.info("starting drypipe service")
@@ -393,7 +400,7 @@ class Cli:
         elif self.parsed_args.command == 'prepare':
             pipeline_instance = pipeline_instance_from_args()
             pipeline_instance.prepare_instance_dir()
-            pipeline_instance.run_sync(["*"])
+            pipeline_instance.run_sync(["*"], sleep_schedule=self.sleep_schedule)
         elif self.parsed_args.command == 'call':
 
             call(self.parsed_args.module_function)
@@ -435,26 +442,25 @@ class Cli:
                 raise Exception(f"multiple state files in {control_dir}")
 
             if task_process.task_conf.executer_type == "slurm":
-                if task_process.is_slurm_array_parent():
-                    task_process.wait_for_completion = False
-                    sa = SlurmArrayParentTask(task_process)
-                    sa.prepare_and_launch_next_array(None)
-                else:
-                    task_process.submit_sbatch_task()
+                task_process.submit_sbatch_task()
             else:
                 task_process.launch_task()
 
+        elif self.parsed_args.command == 'submit-array-from-remote':
+            control_dir = self._control_dir()
+            task_process = TaskProcess(control_dir, use_remote_drypipe_log=True)
+            res = submit_local_array.func(task_process)
+            #task_process.task_logger.info("submitted array from remote %s", json.dumps(res))
+            print(json.dumps(res))
+        elif self.parsed_args.command == 'watch-array-from-remote':
+            control_dir = self._control_dir()
+            task_process = TaskProcess(control_dir, use_remote_drypipe_log=True)
+            sa = SlurmArrayParentTask(task_process)
+            report = sa.manage_auto_restarts_from_remote()
+            print(json.dumps(report))
         elif self.parsed_args.command == 'poll-task':
             control_dir = self._control_dir()
-            task_process = TaskProcess(control_dir)
-
-            if task_process.task_conf.executer_type == "slurm" and task_process.is_slurm_array_parent():
-                task_process.task_logger.info("will reconcile array")
-                sa = SlurmArrayParentTask(task_process)
-                a_state = sa.inspect_child_tasks()
-                task_process.task_logger.info(f"array state {a_state}")
-                print(a_state)
-                return
+            task_process = TaskProcess(control_dir, no_logger=True)
 
             s = list(Path(control_dir).glob("state.*"))
 
@@ -488,7 +494,8 @@ class Cli:
         elif self.parsed_args.command == 'array-download':
 
             task_process = TaskProcess(
-                os.path.join(self.parsed_args.pipeline_instance_dir, ".drypipe", self.parsed_args.task_key)
+                os.path.join(self.parsed_args.pipeline_instance_dir, ".drypipe", self.parsed_args.task_key),
+                alternate_logger=logger
             )
 
             if self.parsed_args.ssh_remote_dest is not None:
@@ -497,6 +504,19 @@ class Cli:
             array_parent_task = SlurmArrayParentTask(task_process)
 
             array_parent_task._download_array()
+
+        elif self.parsed_args.command == 'reconcile-with-squeue':
+
+            task_process = TaskProcess(
+                os.path.join(self.parsed_args.pipeline_instance_dir, ".drypipe", self.parsed_args.task_key),
+                alternate_logger=logger
+            )
+
+            array_parent_task = SlurmArrayParentTask(task_process)
+
+            for k, v in array_parent_task.compare_and_reconcile_squeue_with_state_files().items():
+                print(f"{k}: {v}")
+
 
         elif self.parsed_args.command == 'create-array-parent':
 
@@ -508,7 +528,8 @@ class Cli:
                 new_task_key,
                 matcher,
                 self.parsed_args.slurm_account,
-                split_into=self.parsed_args.split
+                split_into=self.parsed_args.split,
+                extra_env=self.env
             )
         elif self.parsed_args.command == 'list-states':
             task_process = TaskProcess(
@@ -537,7 +558,8 @@ class Cli:
             self.restart_task()
         elif self.parsed_args.command == 'restart-failed-array-tasks':
             task_process = TaskProcess(
-                os.path.join(self.parsed_args.pipeline_instance_dir, ".drypipe", self.parsed_args.task_key)
+                os.path.join(self.parsed_args.pipeline_instance_dir, ".drypipe", self.parsed_args.task_key),
+                alternate_logger=logger
             )
 
             if self._wait():
@@ -591,12 +613,15 @@ class Cli:
 
         self.add_task_args(self.subparsers.add_parser('poll-task'))
         self.add_task_args(self.subparsers.add_parser('remote-exec'))
+        self.add_task_args(self.subparsers.add_parser("submit-array-from-remote"))
+        self.add_task_args(self.subparsers.add_parser("watch-array-from-remote"))
         self.add_sbatch_args(self.subparsers.add_parser('sbatch'))
         self.add_sbatch_args(self.subparsers.add_parser('sbatch-gen'))
         self.add_array_args(self.subparsers.add_parser('array-submit'))
         self.add_upload_download_array_args(self.subparsers.add_parser('array-upload'))
         self.add_upload_download_array_args(self.subparsers.add_parser('array-download'))
         self.add_create_array_parent_args(self.subparsers.add_parser('create-array-parent'))
+        self.add_upload_download_array_args(self.subparsers.add_parser('array-zombies'))
         list_state_parser = self.subparsers.add_parser('list-states')
         self._add_task_key_parser_arg(list_state_parser)
 
@@ -810,8 +835,15 @@ class Cli:
             wait_for_completion=self.parsed_args.wait
         )
 
-        if task_process.is_remote_execution_from_local_site():
+        if task_process.is_remote_execution_on_master_site():
             step_number, control_dir, state_file, state_name = task_process.read_task_state()
+
+            """
+            0    yield {"call": "python", "module_function": "dry_pipe.task_lib:upload_task_inputs"}
+            1    yield {"call": "python", "module_function": "dry_pipe.task_lib:execute_remote_task"}
+            2    yield {"call": "python", "module_function": "dry_pipe.task_lib:poll_remote_task"}
+            3    yield {"call": "python", "module_function": "dry_pipe.task_lib:download_task_outputs"}
+            """
 
             if step_number in [0, 3]:
                 # upload or download stage
@@ -821,7 +853,7 @@ class Cli:
                 rps = RemotePipelineSpecs(task_process)
 
                 if task_process.is_slurm_array_parent():
-                    res = rps.remote_exec("restart-failed-array-tasks")
+                    res = rps.remote_exec("restart-failed-array-tasks", args=["--from-remote"])
                     rps.fetch_remote_array_states_and_reconcile()
                 else:
                     raise Exception("remote restart for non array not implemented.")

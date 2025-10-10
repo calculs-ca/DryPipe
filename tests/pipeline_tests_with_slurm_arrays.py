@@ -6,7 +6,7 @@ from base_pipeline_test import BasePipelineTest
 from dry_pipe import TaskConf
 from dry_pipe.pipeline_instance import Monitor
 from dry_pipe.state_machine import AllRunnableTasksCompletedOrInError
-from dry_pipe.slurm_array_task import SlurmArrayParentTask
+from test_utils import TestSandboxDir
 from tests.exportable_funcs import test_func, test_step0, test_step1, test_step2, test_step3, digest_all
 
 python_path_for_tests = str(Path(__file__).resolve().parent.parent)
@@ -86,8 +86,11 @@ class PipelineWithSlurmArray(BasePipelineTest):
     def task_conf(self):
         return TaskConf(
             executer_type="slurm",
-            #slurm_account="dummy",
-            extra_env={"DRYPIPE_TASK_DEBUG": "True", "PYTHONPATH": os.environ.get("PYTHONPATH")}
+            extra_env={
+                "PYTHONPATH": os.environ.get("PYTHONPATH"),
+                "DRYPIPE_TASK_DEBUG": self.is_log_level_debug().__str__(),
+                "DRYPIPE_SLEEP_SCHEDULE": self.custom_sleep_schedule()
+            }
         )
 
     def create_monitor(self):
@@ -227,7 +230,8 @@ class PipelineWithSlurmArrayWithUntil(PipelineWithSlurmArray):
         )
 
         pipeline_instance.run_sync(
-            run_tasks_in_process=True
+            run_tasks_in_process=True,
+            sleep_schedule=self.custom_sleep_schedule_parsed()
         )
 
         for task in pipeline_instance.query("*"):
@@ -242,13 +246,16 @@ class PipelineWithSlurmArrayForRealSlurmTest(BasePipelineTest):
 
     def dag_gen(self, dsl):
 
+        tc = self.task_conf()
+
         for i in range(1, 4):
             yield dsl.task(
                 key=f"t{i}",
                 is_slurm_array_child=True,
                 task_conf=TaskConf(
                     executer_type="slurm",
-                    slurm_account="dummy"
+                    slurm_account="dummy",
+                    extra_env=tc.extra_env
                 )
             ).inputs(
                 x=i
@@ -259,7 +266,7 @@ class PipelineWithSlurmArrayForRealSlurmTest(BasePipelineTest):
             export r=$(($x * $x))
             """)()
 
-        tc = self.task_conf()
+
 
         for match in dsl.query_all_or_nothing("t*", state="ready"):
             yield dsl.task(
@@ -309,7 +316,11 @@ class PipelineWithSlurmArrayForRestarts(BasePipelineTest):
     def task_conf(self):
         return TaskConf(
             executer_type="slurm", slurm_account="dummy",
-            extra_env={"DRYPIPE_TASK_DEBUG": "True", "PYTHONPATH": python_path_for_tests}
+            extra_env={
+                "PYTHONPATH": python_path_for_tests,
+                "DRYPIPE_TASK_DEBUG": self.is_log_level_debug().__str__(),
+                "DRYPIPE_SLEEP_SCHEDULE": self.custom_sleep_schedule()
+            }
         )
 
     def dag_gen(self, dsl):
@@ -359,7 +370,11 @@ class PipelineWithMultiStepSlurmArrayWithMultiSbatchOptionsWithCrashAndRestarts(
         return TaskConf(
             executer_type="slurm",
             # slurm_account="dummy",
-            extra_env={"DRYPIPE_TASK_DEBUG": "True", "PYTHONPATH": os.environ.get("PYTHONPATH")}
+            extra_env={
+                "PYTHONPATH": os.environ.get("PYTHONPATH"),
+                "DRYPIPE_TASK_DEBUG": self.is_log_level_debug().__str__(),
+                "DRYPIPE_SLEEP_SCHEDULE": self.custom_sleep_schedule()
+            }
         )
 
     def create_monitor(self):
@@ -390,7 +405,7 @@ class PipelineWithMultiStepSlurmArrayWithMultiSbatchOptionsWithCrashAndRestarts(
                 test_step0
             ).calls(
                 test_step1,
-                sbatch_options=["--time=30:00"]
+                sbatch_options=self.sbatch_options_for_step1()
             ).calls(
                 test_step2
             ).calls(
@@ -405,6 +420,12 @@ class PipelineWithMultiStepSlurmArrayWithMultiSbatchOptionsWithCrashAndRestarts(
                 children_tasks=match.tasks
             )()
 
+
+    def sbatch_options_for_step1(self):
+        return ["--time=30:00"]
+
+    def is_log_level_debug(self):
+        return False
 
     def test_run_pipeline(self):
 
@@ -422,7 +443,7 @@ class PipelineWithMultiStepSlurmArrayWithMultiSbatchOptionsWithCrashAndRestarts(
 
         pipeline_instance.monitor=self.create_monitor()
 
-        pipeline_instance.run_sync()
+        pipeline_instance.run_sync(sleep_schedule=self.custom_sleep_schedule_parsed())
 
         tasks_by_keys = {
             t.key: t
@@ -434,6 +455,14 @@ class PipelineWithMultiStepSlurmArrayWithMultiSbatchOptionsWithCrashAndRestarts(
         t_2 = tasks_by_keys["t_2"]
         t_3 = tasks_by_keys["t_3"]
         t_4 = tasks_by_keys["t_4"]
+        array_parent = tasks_by_keys["array_parent"]
+
+        def refresh_state_files():
+            for t in [t_0, t_1, t_2, t_3, t_4]:
+                t.refresh_state()
+            array_parent.refresh_state()
+
+        refresh_state_files()
 
         self.assertTrue(t_0.is_failed())
         self.assertTrue(t_1.is_failed())
@@ -446,7 +475,8 @@ class PipelineWithMultiStepSlurmArrayWithMultiSbatchOptionsWithCrashAndRestarts(
         self.assertEqual(t_2.step_idx(), 1)
         self.assertEqual(t_3.step_idx(), 3)
 
-        array_parent = tasks_by_keys["array_parent"]
+        from dry_pipe.slurm_array_task import SlurmArrayParentTask
+
         sapt = SlurmArrayParentTask(array_parent.task_process)
 
         next_task_state_files = list(sapt.iterate_next_task_state_files(None, True, False, dry_run=True))
@@ -501,10 +531,6 @@ class PipelineWithMultiStepSlurmArrayWithMultiSbatchOptionsWithCrashAndRestarts(
             {"t_1", "t_2", "t_3"}
         )
 
-        def refresh_state_files():
-            for t in [t_0, t_1, t_2, t_3, t_4]:
-                t.refresh_state()
-
         refresh_state_files()
 
         self.assertTrue(t_0.is_completed())
@@ -514,14 +540,156 @@ class PipelineWithMultiStepSlurmArrayWithMultiSbatchOptionsWithCrashAndRestarts(
         self.assertTrue(t_4.is_completed())
 
         self.assertEqual(t_2.step_idx(), 2)
+        self.assertTrue(array_parent.is_failed())
+
+
+
+
+
+class PipelineWithAutoRestart1(PipelineWithMultiStepSlurmArrayWithMultiSbatchOptionsWithCrashAndRestarts):
+
+    def task_conf_for_remote_tests(self):
+        rts = self.remote_test_site()
+        tc = TaskConf(
+            executer_type="slurm",
+            ssh_remote_dest=rts.ssh_remote_dst(),
+            sbatch_options=rts.sbatch_options,
+            extra_env={
+                "DRYPIPE_TASK_DEBUG": "True" if self.is_log_level_debug() else "False",
+                "PYTHONPATH": self.python_path_for_remote_site(),
+                "DRYPIPE_SLEEP_SCHEDULE": self.custom_sleep_schedule()
+            },
+            auto_restart_condition_regexp_per_log_file={
+                "out.log": [".*predicted_crash.*"]
+            }
+        )
+        tc.python_bin = None
+        return tc
+
+    def task_conf(self):
+        if self.remote_test_site() is not None:
+            return self.task_conf_for_remote_tests()
+        else:
+            return TaskConf(
+                executer_type="slurm",
+                extra_env={
+                    "PYTHONPATH": os.environ.get("PYTHONPATH"),
+                    "DRYPIPE_TASK_DEBUG": self.is_log_level_debug().__str__(),
+                    "DRYPIPE_SLEEP_SCHEDULE": self.custom_sleep_schedule()
+                },
+                auto_restart_condition_regexp_per_log_file={
+                    "out.log": [".*predicted_crash.*"]
+                }
+            )
+
+    def sbatch_options_for_step1(self):
+        return None
+
+    def test_run_pipeline(self):
+
+        pipeline_instance = self.create_pipeline_instance()
+
+        crash_plan = [
+        # i: 0  1  2  3  4
+            [1, 0, 0, 0, 0], # step 0
+            [0, 1, 1, 0, 0], # step 1
+            [0, 0, 2, 0, 0], # step 2
+            [0, 0, 0, 1, 0]  # step 3
+        ]
+
+        self.save_crash_plan(crash_plan)
+
+        pipeline_instance.monitor=self.create_monitor()
+
+        pipeline_instance.run_sync(sleep_schedule=self.custom_sleep_schedule_parsed())
+
+        tasks_by_keys = {
+            t.key: t
+            for t in pipeline_instance.query("*", include_incomplete_tasks=True)
+        }
+
+        t_0 = tasks_by_keys["t_0"]
+        t_1 = tasks_by_keys["t_1"]
+        t_2 = tasks_by_keys["t_2"]
+        t_3 = tasks_by_keys["t_3"]
+        t_4 = tasks_by_keys["t_4"]
+        t_parent = tasks_by_keys["array_parent"]
+
+        self.assertTrue(t_0.is_completed())
+        self.assertTrue(t_1.is_completed())
+        self.assertTrue(t_2.is_completed())
+        self.assertTrue(t_3.is_completed())
+        self.assertTrue(t_4.is_completed())
+        self.assertTrue(t_parent.is_completed())
+
+
+class PipelineWithAutoRestart2(PipelineWithAutoRestart1):
+
+    def test_run_pipeline(self):
+
+        pipeline_instance = self.create_pipeline_instance()
+
+        crash_plan = [
+        # i: 0  1  2  3  4
+            [1, 0, 0, 0, 4], # step 0
+            [0, 1, 1, 0, 0], # step 1
+            [0, 0, 2, 0, 0], # step 2
+            [3, 0, 0, 1, 0]  # step 3
+        ]
+
+        self.save_crash_plan(crash_plan)
+
+        pipeline_instance.monitor=self.create_monitor()
+
+        pipeline_instance.run_sync(sleep_schedule=self.custom_sleep_schedule_parsed())
+
+        tasks_by_keys = {
+            t.key: t
+            for t in pipeline_instance.query("*", include_incomplete_tasks=True)
+        }
+
+        t_0 = tasks_by_keys["t_0"]
+        t_1 = tasks_by_keys["t_1"]
+        t_2 = tasks_by_keys["t_2"]
+        t_3 = tasks_by_keys["t_3"]
+        t_4 = tasks_by_keys["t_4"]
+        t_parent = tasks_by_keys["array_parent"]
+
+        self.assertTrue(t_0.is_failed())
+        self.assertTrue(t_1.is_completed())
+        self.assertTrue(t_2.is_completed())
+        self.assertTrue(t_3.is_completed())
+        self.assertTrue(t_4.is_failed())
+        self.assertTrue(t_parent.is_failed())
+
+
+
+class PipelineWithAutoRestart1Funky(PipelineWithAutoRestart1):
+    """
+        causes almost twice as many sbatch array restarts, takes longer to run
+    """
+    def sbatch_options_for_step1(self):
+        return ["--time=30:00"]
+
+class PipelineWithAutoRestart2Funky(PipelineWithAutoRestart2):
+    def sbatch_options_for_step1(self):
+        return ["--time=30:00"]
+
 
 
 class PipelineWithPartialArrayDep(BasePipelineTest):
+    """
+      Tests for dsl.query_all_or_nothing( ... min_matches=N)
+    """
 
     def task_conf(self):
         return TaskConf(
             executer_type="slurm",
-            extra_env={"DRYPIPE_TASK_DEBUG": "True", "PYTHONPATH": os.environ.get("PYTHONPATH")}
+            extra_env={
+                "PYTHONPATH": os.environ.get("PYTHONPATH"),
+                "DRYPIPE_TASK_DEBUG": self.is_log_level_debug().__str__(),
+                "DRYPIPE_SLEEP_SCHEDULE": self.custom_sleep_schedule()
+            }
         )
 
     def create_monitor(self):
@@ -582,12 +750,16 @@ class PipelineWithPartialArrayDep(BasePipelineTest):
         self.save_crash_plan(crash_plan)
 
     def test_run_pipeline(self):
-        pipeline_instance = self.create_pipeline_instance()
+
+        d = TestSandboxDir(self)
+        self.pipeline_instance_dir = d.sandbox_dir
+
+        pipeline_instance = self.create_pipeline_instance(d.sandbox_dir)
 
         self.init_instance()
         #pipeline_instance.monitor=self.create_monitor()
 
-        pipeline_instance.run_sync()
+        pipeline_instance.run_sync(sleep_schedule=self.custom_sleep_schedule_parsed())
 
         tasks_by_keys = {
             t.key: t
@@ -600,5 +772,12 @@ all_tests = [
     PipelineWithMultiCallSlurmArrayForRealSlurmTest,
     PipelineWithSlurmArrayWithUntil,
     PipelineWithSlurmArray2StepsWith2Sbatch,
-    PipelineWithMultiStepSlurmArrayWithMultiSbatchOptionsWithCrashAndRestarts
+    PipelineWithMultiStepSlurmArrayWithMultiSbatchOptionsWithCrashAndRestarts,
+    PipelineWithAutoRestart1,
+    PipelineWithAutoRestart2
+]
+
+tests_with_funky_corner_cases = [
+    PipelineWithAutoRestart1Funky,
+    PipelineWithAutoRestart2Funky
 ]

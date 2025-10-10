@@ -229,7 +229,7 @@ def expandvars_from_dict(data, environ=os.environ):
 
 class SleepySpinner:
 
-    def __init__(self, sleep_schedule):
+    def __init__(self, sleep_schedule, logger=None):
 
         if not isinstance(sleep_schedule, (list, tuple)):
             raise Exception(f"expected list or tuple, got {type(sleep_schedule)}")
@@ -239,6 +239,7 @@ class SleepySpinner:
 
         self.sleep_schedule = sleep_schedule
         self.idx = 0
+        self.logger = logger
 
     def __enter__(self):
         return self
@@ -251,7 +252,37 @@ class SleepySpinner:
 
     def sleep(self):
 
+        if self.logger is not None:
+            self.logger.debug(f"will sleep {self.sleep_schedule[self.idx]}")
+
         time.sleep(self.next_sleep())
 
         if self.idx < len(self.sleep_schedule) - 1:
             self.idx += 1
+
+
+class TimeLogger:
+    def __init__(self, label, logger_func):
+        self.start_time = None
+        self.end_time = None
+        self.label = label
+        self.logger_func = logger_func
+
+    def __enter__(self):
+        self.logger_func(f"START_TIMER_FOR:{self.label}")
+        self.start_time = time.time()
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.end_time = time.time()
+        t = self.end_time - self.start_time
+
+        def format_seconds_to_hhmmss(seconds):
+            hours = seconds // (60 * 60)
+            seconds %= (60 * 60)
+            minutes = seconds // 60
+            seconds %= 60
+            return "%02i:%02i:%02i" % (hours, minutes, seconds)
+
+        td = format_seconds_to_hhmmss(round(t))
+
+        self.logger_func(f"TIME_ELAPSED_FOR:{self.label}: {td}, {round(t, 2)}")

@@ -241,7 +241,8 @@ class PipelineWithCrashOnFirstRun(BasePipelineTest):
 
         pipeline_instance.run_sync(
             until_patterns=until_patterns,
-            run_tasks_in_process=self.launches_tasks_in_process()
+            run_tasks_in_process=self.launches_tasks_in_process(),
+            sleep_schedule=self.custom_sleep_schedule_parsed()
         )
 
         tasks_by_keys = {
@@ -555,7 +556,7 @@ class TestFileSet(BasePipelineTest):
         pid = pipeline_instance.state_file_tracker.pipeline_instance_dir
 
         data_dir = Path(pid, "data-dir")
-        data_dir.mkdir(exist_ok=False)
+        data_dir.mkdir(exist_ok=True)
 
         def dump_in_file(file_name, str_content):
             with open(Path(data_dir, file_name), "w") as f:
@@ -740,7 +741,11 @@ class PipelineWithMultiStepsForRestartTests(BasePipelineTest):
     def initial_run(self, pipeline_instance):
 
         pipeline_instance.monitor=self.create_monitor()
-        pipeline_instance.run_sync(until_patterns=None, run_tasks_in_process=self.launches_tasks_in_process())
+        pipeline_instance.run_sync(
+            until_patterns=None,
+            run_tasks_in_process=self.launches_tasks_in_process(),
+            sleep_schedule=self.custom_sleep_schedule_parsed()
+        )
 
         tasks_by_keys = {
             t.key: t

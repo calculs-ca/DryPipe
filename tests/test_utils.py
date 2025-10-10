@@ -79,13 +79,14 @@ class TestSandboxDir:
             pipeline_instance_dir=self.sandbox_dir,
             env_vars=env_vars,
             containers_dir=test_containers_dir(),
-            task_conf=task_conf
+            task_conf=task_conf,
+            instance_log_is_debug = self.is_log_level_debug()
         )
 
         copy_pre_existing_file_deps_from_code_dir(pi)
 
         if completed:
-            pi.run_sync(fail_silently=fail_silently)
+            pi.run_sync(fail_silently=fail_silently,sleep_schedule=[0])
 
         return pi
 

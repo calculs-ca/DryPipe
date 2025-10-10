@@ -133,7 +133,7 @@ class StateFileTracker:
         return self.state_files_in_memory.values()
 
     def lookup_state_file_from_memory(self, task_key):
-        return self.state_files_in_memory[task_key]
+        return self.state_files_in_memory.get(task_key)
 
     @staticmethod
     def find_state_file_if_exists(control_dir):
@@ -164,6 +164,10 @@ class StateFileTracker:
 
     def fetch_true_state_and_update_memory_if_changed(self, task_key):
         state_file = self.lookup_state_file_from_memory(task_key)
+
+        if state_file is None:
+            return None, self.load_state_file(task_key)
+
         if os.path.exists(state_file.path):
             return None, state_file
         else:

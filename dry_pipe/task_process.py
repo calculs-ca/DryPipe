@@ -17,7 +17,7 @@ from threading import Thread
 
 from dry_pipe import TaskConf, RemotePipelineSpecs
 from dry_pipe.core_lib import UpstreamTasksNotCompleted, PortablePopen, func_from_mod_func, invoke_rsync, \
-    FileCreationDefaultModes, expandvars_from_dict
+    FileCreationDefaultModes, expandvars_from_dict, TimeLogger
 
 from dry_pipe.task import TaskOutput, TaskInputs, TaskOutputs, TaskInput
 
@@ -45,7 +45,9 @@ class TaskProcess:
             tail=False,
             tail_all=False,
             is_python_call=False,
-            from_remote=False
+            from_remote=False,
+            alternate_logger=None,
+            use_remote_drypipe_log=False
     ):
 
         self.slurm_job_id = os.environ.get("SLURM_JOB_ID")
@@ -76,6 +78,7 @@ class TaskProcess:
         self.task_output_dir = os.path.join(self.pipeline_output_dir, self.task_key)
         self.command_before_task_has_run = False
         self.is_on_remote_site = False
+        self.use_remote_drypipe_log = use_remote_drypipe_log
 
 
         try:
@@ -88,6 +91,8 @@ class TaskProcess:
 
         if no_logger:
             self.task_logger = module_logger
+        elif alternate_logger is not None:
+            self.task_logger = alternate_logger
         else:
             self.task_logger = self._create_task_logger()
 
@@ -113,14 +118,13 @@ class TaskProcess:
             self.inputs = TaskInputs(self.task_key, task_inputs)
             self.outputs = TaskOutputs(self.task_key, task_outputs)
 
-            self.task_logger.debug(f"will iterate env")
 
             for k, v in self.iterate_task_env():
                 v = str(v)
-                self.task_logger.debug("env var %s = %s", k, v)
+                # consider sub logger, activatable by env var
+                #self.task_logger.debug("env var %s = %s", k, v)
                 self.env[k] = v
 
-            self.task_logger.debug(f"done iterating env")
 
             self.task_logger.debug(f"normal TaskProcess constructor end")
         except Exception as ex:
@@ -134,11 +138,12 @@ class TaskProcess:
         return self.tail or self.tail_all
 
     def drypipe_log_file(self):
-        return os.path.join(self.control_dir, "drypipe.log")
+        if self.use_remote_drypipe_log:
+            return os.path.join(self.control_dir, "drypipe-remote.log")
+        else:
+            return os.path.join(self.control_dir, "drypipe.log")
 
     def is_debug(self):
-        if self.test_mode:
-            return True
         if os.environ.get("DRYPIPE_TASK_DEBUG") == "True":
             return True
         if self.task_conf is not None:
@@ -147,35 +152,8 @@ class TaskProcess:
                     return True
         return False
 
-
-    def _create_time_logger(self, label):
-
-        l = self.task_logger
-        class TimeLogger:
-            def __init__(self):
-                self.start_time = None
-                self.end_time = None
-
-            def __enter__(self):
-                self.start_time = time.time()
-
-            def __exit__(self, exc_type, exc_val, exc_tb):
-                self.end_time = time.time()
-                t = self.end_time - self.start_time
-
-                def format_seconds_to_hhmmss(seconds):
-                    hours = seconds // (60 * 60)
-                    seconds %= (60 * 60)
-                    minutes = seconds // 60
-                    seconds %= 60
-                    return "%02i:%02i:%02i" % (hours, minutes, seconds)
-
-                td = format_seconds_to_hhmmss(round(t))
-
-                l.info(f"TIME_ELAPSED_FOR:{label}: {td}, {round(t, 2)}")
-
-
-        return TimeLogger()
+    def create_time_logger(self, label, logger_func):
+        return TimeLogger(label, logger_func)
 
     def _create_task_logger(self):
 
@@ -1158,28 +1136,59 @@ class TaskProcess:
             f"rsync -a --dirs {self._local_outputs_root()}/ {self.pipeline_output_dir}/{self.task_key}"
         )
 
-    def is_remote_execution_from_local_site(self):
+    def sleep_schedule(self, value_when_absent):
+        custom_sleep_schedule = self.env.get("DRYPIPE_SLEEP_SCHEDULE")
+
+        if custom_sleep_schedule is not None:
+            res = [int(s) for s in custom_sleep_schedule.split(",")]
+        else:
+            res = value_when_absent
+
+        self.task_logger.info("sleep schedule: %s", res)
+
+        return res
+
+    def is_remote_execution_on_master_site(self):
         return self.task_conf.ssh_remote_dest is not None and not self.is_on_remote_site
 
     def _is_remote_execution_on_remote_site(self):
         return self.task_conf.ssh_remote_dest is not None and self.is_on_remote_site
 
     def _resolve_steps(self):
-        if self.is_remote_execution_from_local_site():
-            if self.task_conf.globus_transfer is not None:
-                yield {"call": "python", "module_function": "dry_pipe.globus:upload_task_inputs_globus"}
-                yield {"call": "python", "module_function": "dry_pipe.task_lib:execute_remote_task"}
-                yield {"call": "python", "module_function": "dry_pipe.task_lib:poll_remote_task"}
-                yield {"call": "python", "module_function": "dry_pipe.globus:download_task_outputs_globus"}
+
+        if (
+                self.task_conf.ssh_remote_dest is None
+            or
+                self.is_on_remote_site
+            or
+                not self.is_slurm_array_parent()
+        ):
+            if not self.is_slurm_array_parent():
+                yield from self.task_conf.step_invocations
+                return
+
+        def g():
+
+            rsync_or_globus = "globus" if self.task_conf.globus_transfer is not None else "rsync"
+
+            if self.is_remote_execution_on_master_site():
+                yield f"upload_task_inputs_{rsync_or_globus}"
+
+                if self.is_slurm_array_parent():
+                    yield "submit_remote_array"
+                    yield "watch_remote_array"
+                else:
+                    yield "execute_remote_task"
+                    yield "poll_remote_task"
+
+                yield f"download_task_outputs_{rsync_or_globus}"
             else:
-                yield {"call": "python", "module_function": "dry_pipe.task_lib:upload_task_inputs"}
-                yield {"call": "python", "module_function": "dry_pipe.task_lib:execute_remote_task"}
-                yield {"call": "python", "module_function": "dry_pipe.task_lib:poll_remote_task"}
-                yield {"call": "python", "module_function": "dry_pipe.task_lib:download_task_outputs"}
-        elif self.is_slurm_array_parent():
-            yield {"call": "python", "module_function": "dry_pipe.task_lib:run_array"}
-        else:
-            yield from self.task_conf.step_invocations
+                if self.is_slurm_array_parent():
+                    yield "submit_local_array"
+                    yield "watch_local_array"
+
+        for f in g():
+            yield {"call": "python", "module_function": f"dry_pipe.task_lib:{f}"}
 
 
     def _launch_next_step_on_new_sbatch_if_required(self, step_invocation, state_file, step_number):
@@ -1232,7 +1241,7 @@ class TaskProcess:
 
                 call = step_invocation["call"]
 
-                with self._create_time_logger(f"STEP-{i}"):
+                with self.create_time_logger(f"STEP-{i}", self.task_logger.info):
                     if call == "python":
                         module_function = step_invocation["module_function"]
                         self.task_logger.debug("step %s, %s %s", i, call, module_function)
@@ -1395,10 +1404,10 @@ class TaskProcess:
             try:
                 self.task_logger.debug("task func started")
 
-                with self._create_time_logger("TASK"):
+                with self.create_time_logger("TASK", self.task_logger.info):
                     self._run_steps()
 
-                self.task_logger.info("task completed")
+                self.task_logger.info("task ended")
             except Exception as ex:
                 if not exit_process_when_done:
                     raise ex
@@ -1467,9 +1476,6 @@ class TaskProcess:
 
     def pipeline_instance_base_dir(self):
         return os.path.basename(self.pipeline_instance_dir)
-
-    def auto_reconcile_logs(self):
-        return True
 
     def file_sets_rsync_list_file(self):
         return os.path.join(self.control_dir, "file-sets-rsync-list.txt")
