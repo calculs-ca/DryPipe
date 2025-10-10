@@ -25,6 +25,8 @@ class PipelineInstance:
         else:
             self.instance_logger = logging.getLogger(f"pipeline-instance-logger-{os.path.basename(pipeline_instance_dir)}")
             self.instance_logger.propagate = False
+            for h in self.instance_logger.handlers:
+                h.close()
             self.instance_logger.handlers.clear()
 
             file_handler = RotatingFileHandler(

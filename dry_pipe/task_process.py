@@ -172,6 +172,8 @@ class TaskProcess:
             logging.Formatter("%(asctime)s - %(levelname)s - %(message)s", datefmt='%Y-%m-%d %H:%M:%S%z')
         )
 
+        for h in logger.handlers:
+            h.close()
         logger.handlers.clear()
         logger.addHandler(file_handler)
 
