@@ -7,6 +7,7 @@ import pipeline_tests_with_multiple_tasks
 import task_launch_tests
 from cli_tests import CliArrayTests1, CliTestsPipelineWithSlurmArray, CliTestScenario2
 from dsl_tests import TaskChangeTrackingTests
+from pipeline_tests_with_slurm_arrays import PipelineWithSlurmArray2StepsWith2Sbatch
 from pipeline_tests_with_slurm_mockup import all_low_level_tests_with_mockup_slurm
 from test_state_machine import StateMachineTests, StateFileTrackerTest, MockupStateFileTrackerTest
 from tests import pipeline_tests_with_local_slurm
@@ -25,7 +26,10 @@ from tests.service_runner_tests import ServiceRunnerTest1
 
 
 def ad_hoc():
-    return all_low_level_tests_with_mockup_slurm()
+    return [
+        PipelineWithSlurmArray2StepsWith2Sbatch,
+        RemotePipelineWithAutoRestart1
+    ]
 
 
 def low_level_tests():
@@ -164,7 +168,7 @@ if __name__ == '__main__':
     if suite_to_test == "remote_tests":
         failfast = True
 
-    result = TextTestRunner(verbosity=2, failfast=failfast, durations=15).run(
+    result = TextTestRunner(verbosity=2, failfast=failfast, durations=25).run(
         build_suite(chosen_suite_func)
     )
 
