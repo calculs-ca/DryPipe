@@ -166,24 +166,26 @@ class TaskProcess:
         logger.propagate = False
         logger.setLevel(logging_level)
 
-        if len(logger.handlers) == 0:
-            file_handler = logging.FileHandler(filename=self.drypipe_log_file())
-            file_handler.setLevel(logging_level)
-            file_handler.setFormatter(
-                logging.Formatter("%(asctime)s - %(levelname)s - %(message)s", datefmt='%Y-%m-%d %H:%M:%S%z')
-            )
-            logger.addHandler(file_handler)
+        file_handler = logging.FileHandler(filename=self.drypipe_log_file())
+        file_handler.setLevel(logging_level)
+        file_handler.setFormatter(
+            logging.Formatter("%(asctime)s - %(levelname)s - %(message)s", datefmt='%Y-%m-%d %H:%M:%S%z')
+        )
 
-            if self.tail_all:
-                h = logging.StreamHandler(sys.stdout)
-                h.setLevel(logging_level)
-                h.setFormatter(
-                    logging.Formatter(
-                        "drypipe.log - %(asctime)s - %(levelname)s - %(message)s",
-                        datefmt='%H:%M:%S%z'
-                    )
+        logger.handlers.clear()
+        logger.addHandler(file_handler)
+
+        if self.tail_all:
+            h = logging.StreamHandler(sys.stdout)
+            h.setLevel(logging_level)
+            h.setFormatter(
+                logging.Formatter(
+                    "drypipe.log - %(asctime)s - %(levelname)s - %(message)s",
+                    datefmt='%H:%M:%S%z'
                 )
-                logger.addHandler(h)
+            )
+            logger.addHandler(h)
+
 
         logger.info("log level: %s", logging.getLevelName(logging_level))
         return logger
