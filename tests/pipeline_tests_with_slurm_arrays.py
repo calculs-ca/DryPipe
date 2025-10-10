@@ -462,6 +462,7 @@ class PipelineWithMultiStepSlurmArrayWithMultiSbatchOptionsWithCrashAndRestarts(
                 t.refresh_state()
             array_parent.refresh_state()
 
+        self.spin_until_no_running_jobs()
         refresh_state_files()
 
         self.assertTrue(t_0.is_failed())
@@ -677,7 +678,7 @@ class PipelineWithAutoRestart2Funky(PipelineWithAutoRestart2):
 
 
 
-class PipelineWithPartialArrayDep(BasePipelineTest):
+class PipelineWithPartialArrayMatch(BasePipelineTest):
     """
       Tests for dsl.query_all_or_nothing( ... min_matches=N)
     """

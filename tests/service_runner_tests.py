@@ -5,7 +5,7 @@ from pathlib import Path
 
 from dry_pipe.pipeline import Pipeline, PipelineType
 from dry_pipe.service import PipelineRunner
-from pipeline_tests_with_slurm_arrays import PipelineWithPartialArrayDep
+from pipeline_tests_with_slurm_arrays import PipelineWithPartialArrayMatch
 from tests.pipeline_tests_with_local_slurm import python_path_for_tests
 from tests.pipeline_tests_with_multiple_tasks import PipelineWithVariablePassing
 from tests.pipeline_tests_with_single_tasks import PipelineWithSingleBashTask, PipelineWithSinglePythonTask
@@ -140,7 +140,7 @@ class ServiceRunnerTest2(BaseServiceRunnerTest):
         self.dir = self.dir + dif_suffix
 
 
-        a = PipelineWithPartialArrayDep()
+        a = PipelineWithPartialArrayMatch()
         a.pipeline_instance_dir = self.prepare("a", "a1")
         a.init_instance()
 
