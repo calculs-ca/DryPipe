@@ -21,7 +21,7 @@ class DryPipe:
     annotated_python_task_by_name = {}
 
     @staticmethod
-    def python_call(tests=[]):
+    def python_call(tests=()):
         """
         annotation for methods that are called by Tasks, i.e. to go in a task's calls(...) clause
         :param tests: test cases
@@ -134,11 +134,13 @@ class DryPipeDsl:
 class TaskBuilder:
 
 
-    def __init__(self, key, _consumes={}, _produces={},
-                 dsl=None, task_steps=[],
-                 task_conf=None, pipeline_instance=None, is_slurm_array_child=None,
-                 is_slurm_parent=None, max_simultaneous_jobs_in_slurm_array=None, children_tasks=None):
-
+    def __init__(
+         self, key, _consumes={}, _produces={},
+         dsl=None, task_steps=[],
+         task_conf=None, pipeline_instance=None, is_slurm_array_child=None,
+         is_slurm_parent=None, max_simultaneous_jobs_in_slurm_array=None, children_tasks=None,
+         state_file_tracker=None
+    ):
 
         for illegal_char in ['"', "'", "{", "}", " "]:
             if illegal_char in key:
@@ -151,6 +153,7 @@ class TaskBuilder:
         self.task_steps = task_steps
         self.task_conf = task_conf
         self.pipeline_instance = pipeline_instance
+        self.state_file_tracker = state_file_tracker
         self.is_slurm_array_child = is_slurm_array_child
         self.is_slurm_parent = is_slurm_parent
         self.children_tasks = children_tasks
@@ -346,7 +349,8 @@ class TaskBuilder:
             self.task_conf,
             self.is_slurm_array_child,
             self.max_simultaneous_jobs_in_slurm_array,
-            self.is_slurm_parent
+            self.is_slurm_parent,
+            self.state_file_tracker
         )
 
 
@@ -480,7 +484,7 @@ class RemotePipelineSpecs:
                 continue
             child_task_key, child_task_state = child_task_key_task_state.split("/")
             child_task_control_dir = os.path.join(self.task_process.pipeline_work_dir, child_task_key)
-            child_state_file_path = StateFileTracker.find_state_file_if_exists(child_task_control_dir)
+            child_state_file_path = StateFileTracker.find_state_file_path_if_exists(child_task_control_dir)
             if child_state_file_path is not None:
                 actual_state = os.path.join(child_task_control_dir, child_task_state)
                 os.rename(child_state_file_path.path, actual_state)
@@ -813,10 +817,11 @@ class SubPipeline:
 
 class PythonCall:
 
-    def __init__(self, func, tests=[]):
+    def __init__(self, func, tests=()):
         self.func = func
         self.signature = inspect.signature(self.func)
         self.tests = tests
+        self.fixed_args = {}
 
     def signature_spec(self):
         raise Exception(f"implement me")

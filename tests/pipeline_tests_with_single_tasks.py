@@ -2,6 +2,7 @@ import os.path
 from pathlib import Path
 
 from base_pipeline_test import BasePipelineTest
+from tests.cli_tests import test_cli
 from dry_pipe.cli import Cli, cli_in_sub_process
 from dry_pipe import DryPipe, TaskConf
 import exportable_funcs
@@ -43,6 +44,32 @@ class PipelineWithSingleBashTask(BasePipelineTest):
         self.assertEqual(3, int(multiply_x_by_y_task.inputs.x))
         self.assertEqual(5, int(multiply_x_by_y_task.inputs.y))
         self.assertEqual(15, int(multiply_x_by_y_task.outputs.result))
+
+
+
+class PipelineWithSingleBashTaskExternalReset(PipelineWithSingleBashTask):
+
+    def test_run_pipeline(self):
+        self.run_pipeline()
+        tasks_by_keys = self.pipeline_instance.query_all_tasks_by_key()
+        self.validate(tasks_by_keys)
+
+        multiply_x_by_y_task = tasks_by_keys["multiply_x_by_y"]
+        self.assertTrue(multiply_x_by_y_task.is_completed())
+
+        test_cli(
+            self,
+            '--pipeline-instance-dir', self.pipeline_instance_dir,
+            'reset',
+            '--task-key', 'multiply_x_by_y'
+        )
+
+        self.pipeline_instance.run_sync(sleep_schedule=self.custom_sleep_schedule_parsed())
+
+        multiply_x_by_y_task = tasks_by_keys["multiply_x_by_y"]
+
+        self.assertTrue(multiply_x_by_y_task.is_waiting())
+
 
 
 
@@ -245,10 +272,7 @@ class PipelineWithCrashOnFirstRun(BasePipelineTest):
             sleep_schedule=self.custom_sleep_schedule_parsed()
         )
 
-        tasks_by_keys = {
-            t.key: t
-            for t in pipeline_instance.query("*", include_incomplete_tasks=True)
-        }
+        tasks_by_keys = pipeline_instance.query_all_tasks_by_key()
 
         self.assertTrue(tasks_by_keys["t"].is_failed())
 
@@ -523,7 +547,10 @@ class PipelineWithSinglePythonTaskInContainer(PipelineWithSinglePythonTask):
         return TaskConf(
             executer_type="process",
             container="singularity-test-container.sif",
-            apptainer_exec_args="--nv"
+            apptainer_exec_args="--nv",
+            extra_env={
+                "PYTHONPATH": Path(__file__).parent.parent.__str__()
+            }
         )
 
 class PipelineWithVarAndFileOutputInContainer(PipelineWithVarAndFileOutput):
@@ -642,11 +669,16 @@ class TestPythonPathInExtraEnv(BasePipelineTest):
 
 
     def task_conf(self):
+
+        pp = super().task_conf().extra_env["PYTHONPATH"]
         return TaskConf(
             executer_type="process",
             command_before_task="export PYTHONPATH=/x/y",
             extra_env={
-                "PYTHONPATH": os.path.join(self.pipeline_instance_dir, "tmp")
+                "PYTHONPATH": ":".join([
+                    os.path.join(self.pipeline_instance_dir, "tmp"),
+                    pp
+                ])
             }
         )
 
@@ -676,7 +708,7 @@ class TestPythonPathInExtraEnv2(TestPythonPathInExtraEnv):
             executer_type="process",
             command_before_task="export PYTHONPATH=",
             extra_env={
-                "PYTHONPATH": os.path.join(self.pipeline_instance_dir, "tmp")
+                "PYTHONPATH": super().task_conf().extra_env["PYTHONPATH"]
             }
         )
 
@@ -747,10 +779,7 @@ class PipelineWithMultiStepsForRestartTests(BasePipelineTest):
             sleep_schedule=self.custom_sleep_schedule_parsed()
         )
 
-        tasks_by_keys = {
-            t.key: t
-            for t in pipeline_instance.query("*", include_incomplete_tasks=True)
-        }
+        tasks_by_keys = pipeline_instance.query_all_tasks_by_key()
 
         return tasks_by_keys["t"]
 
@@ -861,7 +890,8 @@ def all_basic_tests():
         TestPythonPathInExtraEnv,
         TestPythonPathInExtraEnv2,
         PipelineWithCrashOnFirstRun,
-        PipelineWithMultiStepVarPassTrough
+        PipelineWithMultiStepVarPassTrough,
+        PipelineWithSingleBashTaskExternalReset
     ]
 
 def all_tests_in_containers():

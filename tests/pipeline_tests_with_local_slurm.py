@@ -62,6 +62,8 @@ class PipelineWithSinglePythonTaskWithSlurm(PipelineWithSinglePythonTask):
     def task_conf(self):
         return task_conf_with_local_slurm(self)
 
+    def is_log_level_debug(self):
+        return True
 
 class PipelineWithSingleBashTaskWithSlurm(PipelineWithSingleBashTask):
 
@@ -84,6 +86,8 @@ class PipelineWithVarSharingBetweenStepsLocalSlurm(PipelineWithVarSharingBetween
 class PipelineWithVarSharingBetweenStepsLocalSlurmInContainer(PipelineWithVarSharingBetweenSteps):
     def task_conf(self):
         return task_conf_with_test_container_in_local_slurm(self)
+    def is_log_level_debug(self):
+        return True
 
 
 class PipelineWith3StepsNoCrashSlurm(PipelineWith3StepsNoCrash):
@@ -103,6 +107,8 @@ class PipelineWith3StepsCrash3LocalSlurm(PipelineWith3StepsCrash3):
 class PipelineWith3StepsCrash3LocalSlurmInContainer(PipelineWith3StepsCrash3):
     def task_conf(self):
         return task_conf_with_test_container_in_local_slurm_in_container_crash(self)
+    def is_log_level_debug(self):
+        return True
 
 
 

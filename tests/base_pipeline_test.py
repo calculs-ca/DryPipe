@@ -19,6 +19,7 @@ class TestWithDirectorySandbox(unittest.TestCase):
         )
         self.pipeline_code_dir = os.path.dirname(__file__)
         self.pipeline_instance_dir = os.path.join(all_sandbox_dirs, self.__class__.__name__)
+        self.pipeline_instance = None
 
     def is_log_level_debug(self):
         return False
@@ -77,6 +78,7 @@ class BasePipelineTest(TestWithDirectorySandbox):
     def run_pipeline(self, until_patterns=None):
 
         pipeline_instance = self.create_pipeline_instance()
+        self.pipeline_instance = pipeline_instance
         pipeline_instance.monitor=self.create_monitor()
 
         pipeline_instance.run_sync(
@@ -105,7 +107,7 @@ class BasePipelineTest(TestWithDirectorySandbox):
         else:
             tc = TaskConf.default()
             tc.extra_env = {
-                "PYTHONPATH": os.path.dirname(__file__),
+                "PYTHONPATH": Path(__file__).parent.parent.__str__(),
                 "DRYPIPE_TASK_DEBUG": self.is_log_level_debug().__str__(),
                 "DRYPIPE_SLEEP_SCHEDULE": self.custom_sleep_schedule()
             }

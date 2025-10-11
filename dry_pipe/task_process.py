@@ -361,7 +361,8 @@ class TaskProcess:
             ** inputs_by_name,
             ** file_outputs_by_name,
             ** self._local_copy_adjusted_file_env_vars(),
-            ** var_outputs_by_name
+            ** var_outputs_by_name,
+            ** python_call.fixed_args
         }
 
         def get_arg(k):
@@ -606,7 +607,7 @@ class TaskProcess:
                         "__pipeline_code_dir"
                     )
 
-            if self._is_remote_execution_on_remote_site():
+            if self.is_remote_execution_on_remote_site():
                 if self.task_conf.remote_pipeline_code_dir is not None:
                     yield "__pipeline_code_dir", self.task_conf.remote_pipeline_code_dir
 
@@ -1155,7 +1156,7 @@ class TaskProcess:
     def is_remote_execution_on_master_site(self):
         return self.task_conf.ssh_remote_dest is not None and not self.is_on_remote_site
 
-    def _is_remote_execution_on_remote_site(self):
+    def is_remote_execution_on_remote_site(self):
         return self.task_conf.ssh_remote_dest is not None and self.is_on_remote_site
 
     def _resolve_steps(self):
@@ -1440,6 +1441,12 @@ class TaskProcess:
                 self.register_signal_handlers()
                 Thread(target=task_func_wrapper).start()
                 signal.pause()
+
+    def reset_restart_accounting(self):
+        p = Path(self.control_dir, "restarts.tsv")
+        if p.exists():
+            with open(p, "a") as f:
+                f.writelines("RESET\n")
 
     def archive_produced_files(self, task_output_dir, exclusion_glob_patterns):
 

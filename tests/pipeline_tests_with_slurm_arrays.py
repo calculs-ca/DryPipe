@@ -3,10 +3,11 @@ from pathlib import Path
 
 import dry_pipe
 from base_pipeline_test import BasePipelineTest
+from dry_pipe.cli import cli_in_sub_process
 from dry_pipe import TaskConf
 from dry_pipe.pipeline_instance import Monitor
 from dry_pipe.state_machine import AllRunnableTasksCompletedOrInError
-from test_utils import TestSandboxDir
+from tests.test_utils import TestSandboxDir
 from tests.exportable_funcs import test_func, test_step0, test_step1, test_step2, test_step3, digest_all
 
 python_path_for_tests = str(Path(__file__).resolve().parent.parent)
@@ -445,10 +446,7 @@ class PipelineWithMultiStepSlurmArrayWithMultiSbatchOptionsWithCrashAndRestarts(
 
         pipeline_instance.run_sync(sleep_schedule=self.custom_sleep_schedule_parsed())
 
-        tasks_by_keys = {
-            t.key: t
-            for t in pipeline_instance.query("*", include_incomplete_tasks=True)
-        }
+        tasks_by_keys = pipeline_instance.query_all_tasks_by_key()
 
         t_0 = tasks_by_keys["t_0"]
         t_1 = tasks_by_keys["t_1"]
@@ -604,10 +602,7 @@ class PipelineWithAutoRestart1(PipelineWithMultiStepSlurmArrayWithMultiSbatchOpt
 
         pipeline_instance.run_sync(sleep_schedule=self.custom_sleep_schedule_parsed())
 
-        tasks_by_keys = {
-            t.key: t
-            for t in pipeline_instance.query("*", include_incomplete_tasks=True)
-        }
+        tasks_by_keys = pipeline_instance.query_all_tasks_by_key()
 
         t_0 = tasks_by_keys["t_0"]
         t_1 = tasks_by_keys["t_1"]
@@ -644,10 +639,7 @@ class PipelineWithAutoRestart2(PipelineWithAutoRestart1):
 
         pipeline_instance.run_sync(sleep_schedule=self.custom_sleep_schedule_parsed())
 
-        tasks_by_keys = {
-            t.key: t
-            for t in pipeline_instance.query("*", include_incomplete_tasks=True)
-        }
+        tasks_by_keys = pipeline_instance.query_all_tasks_by_key()
 
         t_0 = tasks_by_keys["t_0"]
         t_1 = tasks_by_keys["t_1"]
@@ -716,39 +708,56 @@ class PipelineWithPartialArrayMatch(BasePipelineTest):
                 i=i,
                 code_dep=dsl.file(exportable_funcs_file)
             ).outputs(
-                slurm_result=int
+                slurm_result=int,
+                f=dsl.file("f.txt")
             ).calls(
                 test_step0
             ).calls(
                 test_step1
+            ).calls(
+                """
+                #!/usr/bin/bash
+                echo "$i" > $f
+                """
             )()
 
         for match in dsl.query_all_or_nothing("t_*", state="ready"):
-            yield dsl.task(
+            array_parent = dsl.task(
                 key=f"array_parent",
                 task_conf=self.task_conf()
             ).slurm_array_parent(
                 children_tasks=match.tasks
             )()
 
-        for match in dsl.query_all_or_nothing("t_*", state="completed", min_matches=3):
-            yield dsl.task(
-                key=f"digest",
-                task_conf=self.task_conf()
-            ).outputs(
-                slurm_result=int
-            ).calls(
-                digest_all
-            )()
+            yield array_parent
+
+            if array_parent.has_ended():
+                yield dsl.task(
+                    key=f"digest",
+                    task_conf=TaskConf(
+                        python_bin="python3",
+                        extra_env=None
+                    )
+                ).outputs(
+                    results=dsl.file("results.txt")
+                ).calls(
+                    dsl.download_outputs(array_parent)
+                ).calls(
+                    digest_all
+                )()
 
     def init_instance(self):
         crash_plan = [
         # i: 0  1  2  3  4
             [0, 0, 0, 1, 0], # step 0
             [0, 0, 0, 0, 2], # step 1
+            [0, 0, 0, 0, 0], # step 2
         ]
 
         self.save_crash_plan(crash_plan)
+
+    def launches_tasks_in_process(self):
+        return False
 
     def test_run_pipeline(self):
 
@@ -758,15 +767,83 @@ class PipelineWithPartialArrayMatch(BasePipelineTest):
         pipeline_instance = self.create_pipeline_instance(d.sandbox_dir)
 
         self.init_instance()
-        #pipeline_instance.monitor=self.create_monitor()
 
         pipeline_instance.run_sync(sleep_schedule=self.custom_sleep_schedule_parsed())
 
-        tasks_by_keys = {
-            t.key: t
-            for t in pipeline_instance.query("*", include_incomplete_tasks=True)
-        }
+        self.pipeline_instance = pipeline_instance
 
+        tasks_by_keys = pipeline_instance.query_all_tasks_by_key()
+
+        t_0 = tasks_by_keys["t_0"]
+        t_1 = tasks_by_keys["t_1"]
+        t_2 = tasks_by_keys["t_2"]
+        t_3 = tasks_by_keys["t_3"]
+        t_4 = tasks_by_keys["t_4"]
+        array_parent = tasks_by_keys["array_parent"]
+        digest = tasks_by_keys["digest"]
+
+        self.assertTrue(array_parent.is_failed())
+        self.assertTrue(t_0.is_completed())
+        self.assertTrue(t_1.is_completed())
+        self.assertTrue(t_2.is_completed())
+        self.assertTrue(t_3.is_failed())
+        self.assertTrue(t_4.is_failed())
+        self.assertTrue(digest.is_completed())
+
+        self.assertEqual(t_0.outputs.f.content_as_string_if_exists(), "0\n")
+        self.assertEqual(t_1.outputs.f.content_as_string_if_exists(), "1\n")
+        self.assertEqual(t_2.outputs.f.content_as_string_if_exists(), "2\n")
+        self.assertEqual(t_3.outputs.f.content_as_string_if_exists(), None)
+        self.assertEqual(t_4.outputs.f.content_as_string_if_exists(), None)
+        self.assertEqual(t_4.outputs.f.content_as_string_if_exists(), None)
+
+        self.assertEqual(digest.outputs.results.content_as_string_if_exists(), "t_0,t_1,t_2")
+
+        with cli_in_sub_process([
+            '--pipeline-instance-dir', self.pipeline_instance_dir,
+            'restart',
+            '--task-key', 'array_parent', '--wait'
+        ]) as p:
+            p.wait_and_raise_if_non_zero()
+
+
+        self.assertEqual(t_0.outputs.f.content_as_string_if_exists(), "0\n")
+        self.assertEqual(t_1.outputs.f.content_as_string_if_exists(), "1\n")
+        self.assertEqual(t_2.outputs.f.content_as_string_if_exists(), "2\n")
+        self.assertEqual(t_3.outputs.f.content_as_string_if_exists(), "3\n")
+        self.assertEqual(t_4.outputs.f.content_as_string_if_exists(), None)
+
+        with cli_in_sub_process([
+            '--pipeline-instance-dir', self.pipeline_instance_dir,
+            'restart',
+            '--task-key', 'array_parent', '--wait'
+        ]) as p:
+            p.wait_and_raise_if_non_zero()
+
+
+        self.assertEqual(t_0.outputs.f.content_as_string_if_exists(), "0\n")
+        self.assertEqual(t_1.outputs.f.content_as_string_if_exists(), "1\n")
+        self.assertEqual(t_2.outputs.f.content_as_string_if_exists(), "2\n")
+        self.assertEqual(t_3.outputs.f.content_as_string_if_exists(), "3\n")
+        self.assertEqual(t_4.outputs.f.content_as_string_if_exists(), "4\n")
+
+        from cli_tests import test_cli
+
+        test_cli(
+            self,
+            '--pipeline-instance-dir', self.pipeline_instance_dir,
+            'reset',
+            '--task-key', 'digest'
+        )
+
+        pipeline_instance.reset_state_tracker()
+
+        pipeline_instance.run_sync(sleep_schedule=self.custom_sleep_schedule_parsed())
+
+        self.assertEqual(digest.outputs.results.content_as_string_if_exists(), "t_0,t_1,t_2,t_3,t_4")
+
+    def is_log_level_debug(self):
+        return True
 
 
 all_tests = [
@@ -775,7 +852,8 @@ all_tests = [
     PipelineWithSlurmArray2StepsWith2Sbatch,
     PipelineWithMultiStepSlurmArrayWithMultiSbatchOptionsWithCrashAndRestarts,
     PipelineWithAutoRestart1,
-    PipelineWithAutoRestart2
+    PipelineWithAutoRestart2,
+    PipelineWithPartialArrayMatch
 ]
 
 tests_with_funky_corner_cases = [

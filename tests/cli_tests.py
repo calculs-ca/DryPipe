@@ -93,7 +93,7 @@ class CliArrayTests1(PipelineWithSlurmArrayForRealSlurmTest):
         ).create_pipeline_instance(d.sandbox_dir, instance_log_is_debug=self.is_log_level_debug())
 
         # ensure no task has been executed
-        for task in pipeline_instance.query("*", include_incomplete_tasks=True):
+        for k, task in pipeline_instance.query_all_tasks_by_key().items():
             self.assertEqual(task.state_name(), 'state.ready')
 
         test_cli(

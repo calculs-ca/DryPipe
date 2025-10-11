@@ -40,7 +40,7 @@ class StateFile:
 
     def reload(self):
         from dry_pipe import StateFileTracker
-        p = StateFileTracker.find_state_file_if_exists(self.control_dir())
+        p = StateFileTracker.find_state_file_path_if_exists(self.control_dir())
         self.path = p.path
 
     def transition_to_pre_launch(self, reset_failed=False):

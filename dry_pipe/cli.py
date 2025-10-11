@@ -547,7 +547,7 @@ class Cli:
                         yield task_key, state
 
                 else:
-                    state_file_path = StateFileTracker.find_state_file_if_exists(task_process.control_dir)
+                    state_file_path = StateFileTracker.find_state_file_path_if_exists(task_process.control_dir)
                     if state_file_path is not None:
                         yield task_process.task_key, state_file_path.name
 
@@ -556,6 +556,8 @@ class Cli:
 
         elif self.parsed_args.command == 'restart':
             self.restart_task()
+        elif self.parsed_args.command == 'reset':
+            self.reset_task()
         elif self.parsed_args.command == 'restart-failed-array-tasks':
             task_process = TaskProcess(
                 os.path.join(self.parsed_args.pipeline_instance_dir, ".drypipe", self.parsed_args.task_key),
@@ -596,6 +598,7 @@ class Cli:
         self.add_generator_arg(self.subparsers.add_parser('prepare'))
         self.add_call_args(self.subparsers.add_parser('call'))
         self.add_task_args(self.subparsers.add_parser('task'))
+        self.add_task_args(self.subparsers.add_parser('reset'))
         restart_cmd = self.subparsers.add_parser('restart')
         self.add_task_args(restart_cmd)
         restart_cmd.add_argument(
@@ -832,34 +835,13 @@ class Cli:
 
         task_process = TaskProcess(
             self._control_dir(),
-            wait_for_completion=self.parsed_args.wait
+            wait_for_completion=self.parsed_args.wait,
+            use_remote_drypipe_log=self.parsed_args.from_remote
         )
 
-        if task_process.is_remote_execution_on_master_site():
-            step_number, control_dir, state_file, state_name = task_process.read_task_state()
+        task_process.reset_restart_accounting()
 
-            """
-            0    yield {"call": "python", "module_function": "dry_pipe.task_lib:upload_task_inputs"}
-            1    yield {"call": "python", "module_function": "dry_pipe.task_lib:execute_remote_task"}
-            2    yield {"call": "python", "module_function": "dry_pipe.task_lib:poll_remote_task"}
-            3    yield {"call": "python", "module_function": "dry_pipe.task_lib:download_task_outputs"}
-            """
-
-            if step_number in [0, 3]:
-                # upload or download stage
-                pass
-            elif step_number == 2:
-                # poll stage
-                rps = RemotePipelineSpecs(task_process)
-
-                if task_process.is_slurm_array_parent():
-                    res = rps.remote_exec("restart-failed-array-tasks", args=["--from-remote"])
-                    rps.fetch_remote_array_states_and_reconcile()
-                else:
-                    raise Exception("remote restart for non array not implemented.")
-            else:
-                raise Exception(f"remote exec can't be restarted, investigate")
-
+        step_number, control_dir, state_file, state_name = task_process.read_task_state()
 
         if self.parsed_args.reset:
             shutil.rmtree(task_process.task_output_dir)
@@ -868,8 +850,18 @@ class Cli:
         if self.parsed_args.at_step:
             task_process.rewind_to_step(self.parsed_args.at_step)
 
+        if task_process.is_slurm_array_parent():
+            if step_number == 1:
+                task_process.rewind_to_step(0)
+
+
         task_process.launch_task()
 
+    def reset_task(self):
+        task_process = TaskProcess(self._control_dir())
+        if Path(task_process.task_output_dir).exists():
+            shutil.rmtree(task_process.task_output_dir)
+        task_process.rewind_to_step(0)
 
 def run_cli():
     handle_script_lib_main()

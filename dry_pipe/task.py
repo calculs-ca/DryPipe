@@ -3,7 +3,7 @@ import glob
 import os
 import pathlib
 from hashlib import blake2b
-from tempfile import NamedTemporaryFile
+
 
 from dry_pipe.core_lib import FileCreationDefaultModes, PortablePopen, invoke_rsync
 
@@ -25,7 +25,8 @@ class Task:
         task_conf,
         is_slurm_array_child,
         max_simultaneous_jobs_in_slurm_array,
-        is_slurm_parent
+        is_slurm_parent,
+        state_file_tracker
     ):
         self.key = key
         self.inputs = TaskInputs(self, inputs)
@@ -36,6 +37,7 @@ class Task:
         self.is_slurm_array_child = is_slurm_array_child
         self.max_simultaneous_jobs_in_slurm_array = max_simultaneous_jobs_in_slurm_array
         self.is_slurm_parent = is_slurm_parent
+        self.state_file_tracker = state_file_tracker
 
 
     """            
@@ -144,6 +146,13 @@ class Task:
                     tc.write("\n")
 
 
+    def has_ended(self):
+        from dry_pipe import StateFileTracker
+        state = StateFileTracker.find_state_file_if_exists(
+            self.state_file_tracker.pipeline_work_dir, self.key
+        )
+        return state.has_ended()
+
 class TaskStep:
 
     def __init__(self, task_conf, shell_script=None, python_call=None, shell_snippet=None):
@@ -153,6 +162,7 @@ class TaskStep:
         self.shell_snippet = shell_snippet
         self.sbatch_options = None
         self.container = None
+        self.fixed_args = {}
 
     def hash_values(self):
         if self.shell_script is not None:
@@ -171,6 +181,8 @@ class TaskStep:
                 "call": "python",
                 "module_function": self.python_call.mod_func()
             }
+            if self.python_call.fixed_args is not None and len(self.python_call.fixed_args) > 0:
+                call["fixed_args"] = self.python_call.fixed_args
         else:
             if self.shell_snippet is not None:
 
@@ -419,6 +431,18 @@ class TaskOutput:
             }
 
         return r
+
+    def content_as_string(self):
+        s = self.content_as_string_if_exists()
+        if s is None:
+            raise Exception(f"Task {self.task_key} has no file {self._resolved_value}")
+        return s
+
+    def content_as_string_if_exists(self):
+        if pathlib.Path(self._resolved_value).exists():
+            with open(self._resolved_value) as f:
+                return f.read()
+        return None
 
     def parse(self, v):
         if v == "null":

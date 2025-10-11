@@ -711,7 +711,7 @@ class SlurmArrayParentTask:
         for child_task_key in self.children_task_keys():
             child_task_control_dir = os.path.join(self.task_process.pipeline_work_dir, child_task_key)
 
-            state_file_path = StateFileTracker.find_state_file_if_exists(child_task_control_dir)
+            state_file_path = StateFileTracker.find_state_file_path_if_exists(child_task_control_dir)
             if state_file_path is not None:
                 yield child_task_key, state_file_path.name
 

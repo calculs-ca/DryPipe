@@ -68,14 +68,15 @@ def test_step3(i, __pipeline_instance_dir):
 
 
 @dry_pipe.DryPipe.python_call()
-def digest_all(__pipeline_work_dir):
+def digest_all(__pipeline_work_dir, results):
 
-    c = 0
+     completed_task_names = ",".join(sorted([
+         Path(t).parent.name
+         for t in glob.glob(str(Path(__pipeline_work_dir, "t_*", "state.completed")))
+     ]))
 
-    for t in glob.glob(str(Path(__pipeline_work_dir, "t_*", "state.completed"))):
-        c += 1
-
-    print(f"-->{c}")
+     with open(results, "w") as f_results:
+         f_results.write(completed_task_names)
 
 
 def append_into(s, f):

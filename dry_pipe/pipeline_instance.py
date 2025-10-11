@@ -1,10 +1,12 @@
 import logging
 import os
 import time
+import traceback
+from io import StringIO
 from itertools import groupby
 from logging.handlers import RotatingFileHandler
 
-from dry_pipe.core_lib import TimeLogger
+from dry_pipe.core_lib import TimeLogger, current_stack_as_string
 from dry_pipe.state_machine import StateMachine, AllRunnableTasksCompletedOrInError
 from dry_pipe.state_file_tracker import StateFileTracker
 from dry_pipe.task_process import TaskProcess
@@ -58,6 +60,9 @@ class PipelineInstance:
             "__pipeline_code_dir": self.pipeline.pipeline_code_dir,
             "__containers_dir": self.pipeline.containers_dir
         })
+
+    def reset_state_tracker(self):
+        self.state_file_tracker = StateFileTracker(self.state_file_tracker.pipeline_instance_dir)
 
     def run_sync(self, until_patterns=None, run_tasks_in_process=True, filters=(), sleep_schedule=None):
         self._run(until_patterns, run_tasks_in_process, True, sleep_schedule, filters=filters)
@@ -130,7 +135,8 @@ class PipelineInstance:
                 yield None, None
 
             except Exception as ex:
-                self.instance_logger.error(f"unexpected error in ", exc_info=ex)
+                self.instance_logger.debug(f"entrypoint of exception %s", current_stack_as_string())
+                self.instance_logger.error(f"unexpected error in %s", exc_info=ex)
                 yield None, None
 
         def mon():
@@ -158,6 +164,12 @@ class PipelineInstance:
         yield from self.state_file_tracker.load_tasks_for_query(
             glob_pattern, include_non_completed=include_incomplete_tasks
         )
+
+    def query_all_tasks_by_key(self):
+        return {
+            t.key: t
+            for t in self.query("*", include_incomplete_tasks=True)
+        }
 
     def lookup_single_task_or_none(self, task_key, include_incomplete_tasks=False):
         return self.state_file_tracker.load_single_task_or_none(

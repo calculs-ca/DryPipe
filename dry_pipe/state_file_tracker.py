@@ -136,7 +136,7 @@ class StateFileTracker:
         return self.state_files_in_memory.get(task_key)
 
     @staticmethod
-    def find_state_file_if_exists(control_dir):
+    def find_state_file_path_if_exists(control_dir):
         try:
             with os.scandir(control_dir) as i:
                 for f in i:
@@ -147,8 +147,16 @@ class StateFileTracker:
 
         return None
 
+    @staticmethod
+    def find_state_file_if_exists(pipeline_work_dir, task_key):
+        p = StateFileTracker.find_state_file_path_if_exists(os.path.join(pipeline_work_dir, task_key))
+        if p is not None:
+            return StateFile(task_key, None, None, path=p.path)
+        else:
+            return None
+
     def _find_state_file_path_in_task_control_dir(self, task_key) -> str:
-        p = StateFileTracker.find_state_file_if_exists(os.path.join(self.pipeline_work_dir, task_key))
+        p = StateFileTracker.find_state_file_path_if_exists(os.path.join(self.pipeline_work_dir, task_key))
         if p is not None:
             return p.path
         else:
@@ -318,7 +326,7 @@ class StateFileTracker:
                 state_file_in_memory = self.load_from_existing_file_on_disc_and_resave_if_required(task, state_file_path)
                 self.state_files_in_memory[task.key] = state_file_in_memory
                 task.save_if_hash_has_changed(state_file_in_memory, hash_code)
-                return False, state_file_in_memory
+                return True, state_file_in_memory
             else:
                 # task is new
                 state_file_in_memory = StateFile(task.key, hash_code, self)

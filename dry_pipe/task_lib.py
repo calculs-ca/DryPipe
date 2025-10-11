@@ -3,17 +3,18 @@ import logging
 import os
 from pathlib import Path
 
-from dry_pipe import DryPipe
+from dry_pipe import DryPipe, RemotePipelineSpecs
 from dry_pipe.core_lib import invoke_rsync, exec_remote, SleepySpinner
 from dry_pipe.state_file import StateFile
 from dry_pipe.globus import GlobusToken, GlobusFileTransfer
+from dry_pipe.task_process import TaskProcess
 
 
 @DryPipe.python_call()
 def submit_local_array(__task_process):
     from dry_pipe.slurm_array_task import SlurmArrayParentTask
     t = SlurmArrayParentTask(__task_process)
-    array_tasks_submitted = t.prepare_and_launch_next_array()
+    array_tasks_submitted = t.prepare_and_launch_next_array(None, restart_failed=True)
     return {"array_tasks_submitted": array_tasks_submitted}
 
 
@@ -183,18 +184,26 @@ def upload_task_inputs_rsync(
     if len(external_file_deps) > 0:
         do_rsync("", f"{__remote_pipeline_specs.ssh_remote_dest}/{__remote_pipeline_specs.pid_base_name}/external-file-deps", external_dep_file_txt)
 
+@DryPipe.python_call()
+def download_other_task_outputs(__task_process, __other_task_key):
+
+    other_task_process = TaskProcess(
+        Path(__task_process.control_dir).parent.joinpath(__other_task_key).__str__()
+    )
+
+    if other_task_process.task_conf.globus_transfer is not None:
+        download_task_outputs_globus.func(other_task_process)
+    elif other_task_process.task_conf.ssh_remote_dest is not None:
+        download_task_outputs_rsync.func(other_task_process)
+    else:
+        __task_process.task_logger.info("task %s is not remote, no need to download", __other_task_key)
+
 
 @DryPipe.python_call()
-def download_task_outputs_rsync(
-    __task_key,
-    __task_control_dir,
-    __task_logger,
-    __task_process,
-    __pipeline_work_dir,
-    __pipeline_instance_dir,
-    __remote_pipeline_specs
-):
+def download_task_outputs_rsync(__task_process):
     from dry_pipe.slurm_array_task import SlurmArrayParentTask
+
+    __remote_pipeline_specs = RemotePipelineSpecs(__task_process)
 
     #fetch states, and generate rsync list
     remote_cli = os.path.join(__remote_pipeline_specs.remote_instance_work_dir, "cli")
@@ -204,10 +213,10 @@ def download_task_outputs_rsync(
         remote_cli,
         "list-states",
         "--gen-rsync-list",
-        f"--task-key={__task_key}"
+        f"--task-key={__task_process.task_key}"
     ])
 
-    __task_logger.debug("remote states:\n %s", remote_exec_result)
+    __task_process.task_logger.debug("remote states:\n %s", remote_exec_result)
 
     if __task_process.is_slurm_array_parent():
         __remote_pipeline_specs.reconcile_local_array_states_with_remote_state(remote_exec_result)
@@ -221,8 +230,8 @@ def download_task_outputs_rsync(
         sa = SlurmArrayParentTask(__task_process)
         with open(result_file_txt, "a+") as f:
             for k in sa.children_task_keys():
-                l1 = Path(f"{__pipeline_instance_dir}/.drypipe/{k}/drypipe.log")
-                l2 = Path(f"{__pipeline_instance_dir}/.drypipe/{k}/out.log")
+                l1 = Path(f"{__task_process.pipeline_instance_dir}/.drypipe/{k}/drypipe.log")
+                l2 = Path(f"{__task_process.pipeline_instance_dir}/.drypipe/{k}/out.log")
                 if l1.exists():
                     l1.unlink()
                 if l2.exists():
@@ -232,7 +241,7 @@ def download_task_outputs_rsync(
                 f.write(f".drypipe/{k}/out.log\n")
 
 
-    pid = __pipeline_instance_dir
+    pid = __task_process.pipeline_instance_dir
 
     pipeline_base_name = os.path.basename(pid)
 
@@ -240,7 +249,7 @@ def download_task_outputs_rsync(
         f"{__remote_pipeline_specs.user_at_host}:{__remote_pipeline_specs.remote_base_dir}/{pipeline_base_name}/"
 
     def rs(cmd):
-        __task_logger.info(f"running command: {cmd}")
+        __task_process.task_logger.info(f"running command: {cmd}")
         invoke_rsync(cmd)
 
     rs(f"rsync -a --dirs --partial --ignore-missing-args --files-from={result_file_txt} {ssh_remote_dest} {pid}/")

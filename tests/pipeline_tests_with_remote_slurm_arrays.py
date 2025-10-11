@@ -1,10 +1,13 @@
 
 import os.path
+import time
 from pathlib import Path
 
+from cli import cli_in_sub_process
+from tests.cli_tests import test_cli
 from dry_pipe import TaskConf, PortablePopen
 from tests.pipeline_tests_with_slurm_arrays import PipelineWithSlurmArray, PipelineWithAutoRestart1, \
-    PipelineWithAutoRestart2
+    PipelineWithAutoRestart2, PipelineWithPartialArrayMatch
 from tests.test_utils import TestSandboxDir
 
 
@@ -147,3 +150,22 @@ class RemotePipelineWithAutoRestart2(PipelineWithAutoRestart2):
         d = TestSandboxDir(self)
         self.pre_run(d.sandbox_dir)
         super().test_run_pipeline()
+
+
+class PipelineWithPartialArrayMatchRemote(PipelineWithPartialArrayMatch):
+
+    def remote_test_site(self):
+        return remote_test_site
+
+    def task_conf(self):
+        rts = self.remote_test_site()
+        return TaskConf(
+            executer_type="slurm",
+            ssh_remote_dest=rts.ssh_remote_dst(),
+            sbatch_options=rts.sbatch_options,
+            extra_env={
+                "DRYPIPE_TASK_DEBUG": "True" if self.is_log_level_debug() else "False",
+                "PYTHONPATH": self.python_path_for_remote_site(),
+                "DRYPIPE_SLEEP_SCHEDULE": self.custom_sleep_schedule()
+            }
+        )

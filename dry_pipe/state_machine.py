@@ -4,9 +4,10 @@ import os.path
 import typing
 from pathlib import Path
 
-from dry_pipe import TaskBuilder, TaskConf, FileSet
+from dry_pipe import TaskBuilder, TaskConf, FileSet, Task, DryPipe, PythonCall
 from dry_pipe.state_file_tracker import StateFileTracker
 from dry_pipe.task_process import TaskProcess
+from dry_pipe.task_lib import download_other_task_outputs
 
 
 class AllRunnableTasksCompletedOrInError(Exception):
@@ -106,7 +107,10 @@ class StateMachine:
             task_conf = TaskConf.default()
 
 
-        tb = TaskBuilder(key, task_conf=task_conf, dsl=self, is_slurm_array_child=is_slurm_array_child)
+        tb = TaskBuilder(
+            key, task_conf=task_conf, dsl=self, is_slurm_array_child=is_slurm_array_child,
+            state_file_tracker=self.state_file_tracker
+        )
 
         self.instance_logger.debug(f"task {key} defined")
 
@@ -123,6 +127,15 @@ class StateMachine:
         :return:
         """
         return FileSet(pattern, exclude_pattern)
+
+    def download_outputs(self, task):
+        if not isinstance(task, Task):
+            raise Exception(f"expected Task, got {task.__class__}")
+
+        f = download_other_task_outputs
+        f.fixed_args["__other_task_key"] = task.key
+        return f
+
 
     def pipeline_instance_dir(self):
         return self.state_file_tracker.pipeline_instance_dir
