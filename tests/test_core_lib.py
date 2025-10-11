@@ -1,5 +1,5 @@
 import os
-import tempfile
+import shutil
 import unittest
 from pathlib import Path
 
@@ -45,66 +45,165 @@ class TestExpandVars(unittest.TestCase):
             self.assertEqual(g, v)
 
 
+class MockStateFileForAutoRestartManager:
+    def __init__(self, mock_control_dir, auto_restart_condition_regexp_per_log_file):
+        self.task_key = "t"
+        self.mock_control_dir = mock_control_dir
+        self.out_log = Path(self.mock_control_dir, "out.log")
+        self.drypipe_log = Path(self.mock_control_dir, "drypipe.log")
+        self.auto_restart_condition_regexp_per_log_file = auto_restart_condition_regexp_per_log_file
+        shutil.rmtree(mock_control_dir, ignore_errors=True)
+        os.mkdir(mock_control_dir)
+
+    def control_dir(self):
+        return self.mock_control_dir
+
+    def _write(self, lines, mode, log_file):
+        with open(log_file, mode) as f:
+            for line in lines:
+                f.write(f"{line}\n")
+
+    def reset_with_lines(self, log_file, *lines):
+        self._write(lines, "w", log_file)
+
+    def append_lines(self, log_file, *lines):
+        self._write(lines, "a", log_file)
+
+    def auto_restart_manager(self):
+        d = self.mock_control_dir
+        class AutoRestarter4Tests(AutoRestartManager):
+            def restart_file(self, state_file):
+                return Path(d, "restarts.tsv")
+        return AutoRestarter4Tests(self.auto_restart_condition_regexp_per_log_file)
+
 class TestAutoRestarter(TestWithDirectorySandbox):
 
 
-    def test_auto_restarter(self):
+    def test_auto_restarter_basics(self):
         d = TestSandboxDir(self)
 
-
-        os.mkdir(d.sandbox_dir)
-        out_log = Path(d.sandbox_dir, "out.log")
-
-        auto_restart_failed_regexen = {
+        msf = MockStateFileForAutoRestartManager(d.sandbox_dir, {
             "drypipe.log": [".*BrokenPipeError.*"],
             "out.log": [".*Bus\\ error.*", None]
-        }
+        })
 
-        class AutoRestarter4Tests(AutoRestartManager):
-            def restart_file(self, state_file):
-                return Path(d.sandbox_dir, "restarts.tsv")
+        ar = msf.auto_restart_manager()
 
-
-        class MockStateFile:
-            def __init__(self):
-                self.task_key = "t"
-
-            def control_dir(self):
-                return d.sandbox_dir
-
-        ar = AutoRestarter4Tests(auto_restart_failed_regexen)
-
-        with open(out_log, "w") as f:
-            f.write("allo\n")
-            f.write("123tdr ter t\n")
-
-        self.assertEqual(
-            list(ar.should_restart(MockStateFile())),
-            list((False, None, 0))
+        msf.reset_with_lines(
+            msf.out_log,
+            "allo",
+            "123tdr ter t"
         )
 
-        with open(out_log, "w") as f:
-            f.write("allo\n")
-            f.write("123tdr ter t\n")
-            f.write("123tdr Bus error ter t\n")
+
+        should_restart, matching_line_number, restart_count, matching_log_filename = ar.should_restart_with_details(msf)
 
         self.assertEqual(
-            list(ar.should_restart(MockStateFile())),
-            list((True, 3, 0))
+            [should_restart, matching_line_number, restart_count],
+            [False,          None,                 0]
         )
+
+        msf.reset_with_lines(
+            msf.out_log,
+            "allo",
+            "123tdr ter t",
+            "123tdr Bus error ter t"
+        )
+
+        should_restart, matching_line_number, restart_count, matching_log_filename = ar.should_restart_with_details(msf)
 
         self.assertEqual(
-            list(ar.should_restart(MockStateFile())),
-            list((False, None, 1))
+            [should_restart, matching_line_number, restart_count, matching_log_filename],
+            [True,           3,                    0,             "out.log"]
         )
 
-        with open(out_log, "w") as f:
-            f.write("allo\n")
-            f.write("123tdr ter t\n")
-            f.write("123tdr Bus error ter t\n")
-            f.write("zzz\n")
+        # untouched log, should be treated as absent log ?
+        should_restart, matching_line_number, restart_count, matching_log_filename = ar.should_restart_with_details(msf)
 
         self.assertEqual(
-            list(ar.should_restart(MockStateFile())),
-            list((False, None))
+            [should_restart, matching_line_number, restart_count, matching_log_filename],
+            [False,          None,                 1,             None]
         )
+
+        msf.append_lines(msf.out_log, "nothing")
+
+        should_restart, matching_line_number, restart_count, matching_log_filename = ar.should_restart_with_details(msf)
+
+        self.assertEqual(
+            [should_restart, matching_line_number, restart_count, matching_log_filename],
+            [False,          None,                 1,             None]
+        )
+
+        msf.reset_with_lines(
+            msf.drypipe_log,
+            "ergtert123",
+            "aaaa BrokenPipeError 123 b"
+        )
+
+        should_restart, matching_line_number, restart_count, matching_log_filename = ar.should_restart_with_details(msf)
+
+        self.assertEqual(
+            [should_restart, matching_line_number, restart_count, matching_log_filename],
+            [True,           2,                    1,             "drypipe.log"]
+        )
+
+class TestAutoRestarterMissingLogFileRestarts(TestWithDirectorySandbox):
+
+    def setUp(self):
+        d = TestSandboxDir(self)
+
+        self.msf = MockStateFileForAutoRestartManager(d.sandbox_dir, {
+            "drypipe.log": [".*BrokenPipeError.*"],
+            "out.log": [".*Bus\\ error.*", None]
+        })
+
+        self.ar = self.msf.auto_restart_manager()
+
+
+class TestAutoRestarterMissingLogFileRestartsAtMostOnce(TestAutoRestarterMissingLogFileRestarts):
+
+    def test(self):
+
+        ar = self.ar
+        msf = self.msf
+
+        should_restart, matching_line_number, restart_count, matching_log_filename = self.ar.should_restart_with_details(msf)
+
+        # should restart when out.log is missing
+        self.assertEqual(
+            [should_restart, matching_line_number, restart_count, matching_log_filename],
+            [True,           None,                 0,             "out.log"]
+        )
+
+        should_restart, matching_line_number, restart_count, matching_log_filename = ar.should_restart_with_details(msf)
+
+        # but should restart only once for this reason
+        self.assertEqual(
+            [should_restart, matching_line_number, restart_count, matching_log_filename],
+            [False,          None,                 1,             None]
+        )
+
+class TestAutoRestarterMissingLogFileRestartsOnlySpecifiedFile(TestAutoRestarterMissingLogFileRestarts):
+
+    def test(self):
+
+        ar = self.ar
+        msf = self.msf
+
+        msf.append_lines(msf.out_log, "nothing")
+
+        should_restart, matching_line_number, restart_count, matching_log_filename = ar.should_restart_with_details(msf)
+
+
+        self.assertEqual(
+            [should_restart, matching_line_number, restart_count, matching_log_filename],
+            [False,          None,                 0,             None]
+        )
+
+
+all_tests = [
+    TestExpandVars,
+    TestAutoRestarter,
+    TestAutoRestarterMissingLogFileRestartsAtMostOnce,
+    TestAutoRestarterMissingLogFileRestartsOnlySpecifiedFile
+]

@@ -406,11 +406,7 @@ class SlurmArrayParentTask:
                 yield state_file
                 i += 1
             elif not restart_failed and auto_restart_manager is not None and state_file.is_failed():
-                should_restart, line_in_log, restart_count = auto_restart_manager.should_restart(
-                    state_file,
-                    alternate_logger=self.task_process.task_logger
-                )
-                if should_restart:
+                if auto_restart_manager.should_restart(state_file,alternate_logger=self.task_process.task_logger):
                     yield state_file
                     i += 1
             elif restart_failed and (state_file.is_failed() or state_file.is_timed_out() or state_file.is_killed()):
@@ -661,16 +657,7 @@ class SlurmArrayParentTask:
         )
 
     def _download_array(self):
-
-        download_task_outputs_rsync.func(
-            __task_key=self.task_process.task_key,
-            __task_control_dir=self.task_process.control_dir,
-            __task_logger=self.task_process.task_logger,
-            __task_process=self.task_process,
-            __pipeline_work_dir=self.task_process.pipeline_work_dir,
-            __pipeline_instance_dir=self.task_process.pipeline_instance_dir,
-            __remote_pipeline_specs=RemotePipelineSpecs(self.task_process)
-        )
+        download_task_outputs_rsync.func(__task_process=self.task_process)
 
     @staticmethod
     def create_array_parent(pipeline_instance_dir, new_task_key, matcher, slurm_account, split_into, extra_env):
@@ -759,60 +746,84 @@ class AutoRestartManager:
     def _last_line_of_prev_restarts_per_file_and_restart_count(self, state_file):
 
         restarts = self.restart_file(state_file)
-        restart_counter = [0]
 
-        if restarts.exists():
+        last_line_of_prev_restarts_per_file = {
+            f: None
+            for f in self.auto_restart_condition_regexp_per_log_file.keys()
+        }
+
+        restart_decisions_for_missing_log_files = set([])
+
+        if not restarts.exists():
+            return last_line_of_prev_restarts_per_file, restart_decisions_for_missing_log_files, 0
+        else:
+
+            restart_counter = [0]
+
             def g():
+
+                yield from last_line_of_prev_restarts_per_file.items()
+
                 with open(restarts, "r") as f:
+                    rows = []
                     for line in f:
                         line = line.strip()
                         if line == "":
                             continue
+                        if line.startswith("RESET"):
+                            rows.clear()
+                            continue
                         row = [
                             l.strip() for l in line.split("\t", maxsplit=3)
                         ]
+                        log_name, line_in_log, matching_line = row
+                        if matching_line == "MISSING":
+                            restart_decisions_for_missing_log_files[log_name] = True
+                        else:
+                            rows.append(row)
+
+                    for row in rows:
                         log_name, line_in_log, ignore = row
                         restart_counter[0] = restart_counter[0] + 1
-                        yield log_name, int(line_in_log)
+                        yield log_name, int(line_in_log) if line_in_log != "None" else None
 
             last_line_of_prev_restarts_per_file = dict(g())
-        else:
-            last_line_of_prev_restarts_per_file = {
-                f: None
-                for f in self.auto_restart_condition_regexp_per_log_file.keys()
-            }
 
-        return  last_line_of_prev_restarts_per_file, restart_counter[0]
+        return  last_line_of_prev_restarts_per_file, restart_decisions_for_missing_log_files, restart_counter[0]
 
     def _record_restart(self, state_file, log_file_name, line_number, matching_line):
         with open(self.restart_file(state_file), "a") as f:
             f.write(f"{log_file_name}\t{line_number}\t{matching_line.strip()}\n")
 
-    def should_restart(self, state_file, alternate_logger=None):
+    def should_restart_with_details(self, state_file, alternate_logger=None):
 
         if alternate_logger is None:
             alternate_logger = logger
 
-        last_line_of_prev_restarts_per_file, restart_count = \
+        last_line_of_prev_restarts_per_file, restart_decisions_for_missing_log_files, restart_count = \
             self._last_line_of_prev_restarts_per_file_and_restart_count(state_file)
 
         if restart_count >= self.max_restart:
             alternate_logger.info("%s has reached max relaunch %s", state_file.task_key, restart_count)
-            return False, 0, restart_count
+            return False, 0, restart_count, None
 
         for f, regexen in self.auto_restart_condition_regexp_per_log_file.items():
             for r in regexen:
                 log_file = Path(state_file.control_dir(), f)
 
                 if r is None:
-                    # a task without a log is abnormal, None means we want auto restart in this case,
-                    # but we restart it at most once
+                    # a task without a log is abnormal, most often as a result of a restartable error,
+                    # we restart, but at most once
                     if not log_file.exists() and restart_count == 0:
-                        self._record_restart(state_file, f, 0, "MISSING_FILE")
+
+                        if f in restart_decisions_for_missing_log_files:
+                            continue
+
+                        self._record_restart(state_file, f, None, "MISSING_FILE")
                         alternate_logger.info(
                             "%s has no log %s, will relaunch", state_file.task_key, log_file
                         )
-                        return True, 0, restart_count
+                        return True, None, restart_count, f
                     else:
                         continue
                 else:
@@ -839,13 +850,13 @@ class AutoRestartManager:
                             "will relaunch %s, relaunches so far: %s", state_file.task_key, restart_count
                         )
                         self._record_restart(state_file, f, last_line_of_match_occurrence, line)
-                        return True, c, restart_count
+                        return True, c, restart_count, f
 
         alternate_logger.debug("will NOT relaunch %s", state_file.task_key)
 
-        return False, None, restart_count
+        return False, None, restart_count, None
 
-
-
-class InvalidSlurmJobIdException(Exception):
-    pass
+    def should_restart(self, state_file, alternate_logger=None):
+        should_restart, matching_line_number, restart_count, matching_log_filename = \
+            self.should_restart_with_details(state_file, alternate_logger)
+        return should_restart

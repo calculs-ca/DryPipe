@@ -3,6 +3,7 @@ import os
 import subprocess
 import re
 import time
+import traceback
 
 
 class RetryableRsyncException(Exception):
@@ -286,3 +287,8 @@ class TimeLogger:
         td = format_seconds_to_hhmmss(round(t))
 
         self.logger_func(f"TIME_ELAPSED_FOR:{self.label}: {td}, {round(t, 2)}")
+
+
+def current_stack_as_string():
+    stack_trace_list = traceback.format_stack()[:-3]
+    return "".join(stack_trace_list)
