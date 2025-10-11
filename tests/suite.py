@@ -16,7 +16,7 @@ from tests.pipeline_tests_with_local_slurm import all_with_local_slurm
 from tests import pipeline_tests_with_slurm_arrays
 from tests.pipeline_tests_with_remote_slurm_arrays import \
     RemoteArrayTaskFullyAutomatedRun, RemoteArrayTaskFullyAutomatedRun2Steps2Sbatches, RemotePipelineWithAutoRestart1, \
-    RemotePipelineWithAutoRestart2
+    RemotePipelineWithAutoRestart2, PipelineWithPartialArrayMatchRemote
 from tests.pipeline_tests_with_remote_tasks import RemoteTestFileSet, RemoteTestFileSetWithDataDirVar, \
     RemoteTestFileSetWithGlobus
 from tests.service_runner_tests import ServiceRunnerTest1
@@ -44,7 +44,8 @@ def remote_array_tests():
         RemoteArrayTaskFullyAutomatedRun,
         RemoteArrayTaskFullyAutomatedRun2Steps2Sbatches,
         RemotePipelineWithAutoRestart1,
-        RemotePipelineWithAutoRestart2
+        RemotePipelineWithAutoRestart2,
+        PipelineWithPartialArrayMatchRemote
     ]
 
 def local_and_remote_array_tests():

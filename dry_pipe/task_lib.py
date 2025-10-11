@@ -82,6 +82,21 @@ def watch_remote_array(__remote_pipeline_specs):
     __task_process = __remote_pipeline_specs.task_process
     task_logger = __task_process.task_logger
 
+
+    def download_after_fail():
+        try:
+            task_logger.info(
+                "some array tasks failed will download and reconcile states, logs, and results of completed tasks"
+            )
+            __remote_pipeline_specs.fetch_remote_array_states_and_reconcile()
+            __remote_pipeline_specs.fetch_remote_logs()
+            task_logger.info("remote states and logs have been reconciled")
+            func = _globus_or_rsync_download_func(__task_process)
+            func(__task_process)
+            task_logger.info("results of completed tasks have been downloaded")
+        except Exception:
+            task_logger.exception("unable to download array states and reconcile", exc_info=True)
+
     with SleepySpinner(__task_process.sleep_schedule([30, 120, 240]), task_logger) as ss:
 
         round_counter = 0
@@ -94,7 +109,7 @@ def watch_remote_array(__remote_pipeline_specs):
             try:
                 report = __remote_pipeline_specs.remote_exec_json_results("watch-array-from-remote")
             except Exception:
-                __remote_pipeline_specs.fetch_remote_logs()
+                download_after_fail()
                 raise
 
             total_children_tasks = report["total_children_tasks"]
@@ -110,9 +125,7 @@ def watch_remote_array(__remote_pipeline_specs):
                 first_20_tasks = ','.join(report["failed_task_keys"][:20])
 
                 try:
-                    __remote_pipeline_specs.fetch_remote_array_states_and_reconcile()
-                    __remote_pipeline_specs.fetch_remote_logs()
-                    task_logger.info("remote states and logs have been reconciled")
+                    download_after_fail()
                 except Exception as ex:
                     task_logger.info("failed to reconcile remote states and logs")
 
@@ -184,6 +197,15 @@ def upload_task_inputs_rsync(
     if len(external_file_deps) > 0:
         do_rsync("", f"{__remote_pipeline_specs.ssh_remote_dest}/{__remote_pipeline_specs.pid_base_name}/external-file-deps", external_dep_file_txt)
 
+
+def _globus_or_rsync_download_func(task_process):
+    if task_process.task_conf.globus_transfer is not None:
+        return download_task_outputs_globus.func
+    elif task_process.task_conf.ssh_remote_dest is not None:
+        return download_task_outputs_rsync.func
+    else:
+        return None
+
 @DryPipe.python_call()
 def download_other_task_outputs(__task_process, __other_task_key):
 
@@ -191,10 +213,10 @@ def download_other_task_outputs(__task_process, __other_task_key):
         Path(__task_process.control_dir).parent.joinpath(__other_task_key).__str__()
     )
 
-    if other_task_process.task_conf.globus_transfer is not None:
-        download_task_outputs_globus.func(other_task_process)
-    elif other_task_process.task_conf.ssh_remote_dest is not None:
-        download_task_outputs_rsync.func(other_task_process)
+    func = _globus_or_rsync_download_func(other_task_process)
+
+    if func is not None:
+        func(other_task_process)
     else:
         __task_process.task_logger.info("task %s is not remote, no need to download", __other_task_key)
 

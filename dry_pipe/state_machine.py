@@ -280,6 +280,9 @@ class StateMachine:
                 new_generated_tasks += 1
                 upstream_dep_keys = task.upstream_dep_keys()
 
+                if state_file.has_ended():
+                    continue
+
                 if state_file.is_slurm_array_child:
                     self.state_file_tracker.set_ready_on_disk_and_in_memory(state_file.task_key)
                     continue
@@ -316,7 +319,7 @@ class StateMachine:
                             #self.state_file_tracker.fetch_true_state_and_update_memory_if_changed(k)
                 yield state_file
             else:
-                self.state_file_tracker.register_pre_launch(state_file, reset_failed)
+                self.state_file_tracker.transition_to_pre_launch(state_file, reset_failed)
                 yield state_file
 
         if self._task_generator is not None:

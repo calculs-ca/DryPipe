@@ -169,3 +169,11 @@ class PipelineWithPartialArrayMatchRemote(PipelineWithPartialArrayMatch):
                 "DRYPIPE_SLEEP_SCHEDULE": self.custom_sleep_schedule()
             }
         )
+
+    def test_run_pipeline(self):
+        d = TestSandboxDir(self)
+        self.pre_run(d.sandbox_dir)
+        super().test_run_pipeline()
+
+    #def launches_tasks_in_process(self):
+    #    return True

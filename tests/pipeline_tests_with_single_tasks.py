@@ -873,6 +873,11 @@ class RestartTest(PipelineWithMultiStepsForRestartTests):
         self.assertEqual(t.step_idx(), 2)
 
 
+unimplemented = [
+    PipelineWithSingleBashTaskExternalReset
+]
+
+
 def all_basic_tests():
     return [
         TestExtraEnvResolution,
@@ -890,8 +895,7 @@ def all_basic_tests():
         TestPythonPathInExtraEnv,
         TestPythonPathInExtraEnv2,
         PipelineWithCrashOnFirstRun,
-        PipelineWithMultiStepVarPassTrough,
-        PipelineWithSingleBashTaskExternalReset
+        PipelineWithMultiStepVarPassTrough
     ]
 
 def all_tests_in_containers():

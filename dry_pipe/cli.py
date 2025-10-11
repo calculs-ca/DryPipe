@@ -850,8 +850,13 @@ class Cli:
         if self.parsed_args.at_step:
             task_process.rewind_to_step(self.parsed_args.at_step)
 
+
         if task_process.is_slurm_array_parent():
-            if step_number == 1:
+            if task_process.is_remote_execution_on_master_site() and step_number == 2:
+                task_process.task_logger.info("remote array at watch[2] step, will rewind to submit[1]")
+                task_process.rewind_to_step(1)
+            elif step_number == 1:
+                task_process.task_logger.info("local array at watch[1] step, will rewind to submit[0]")
                 task_process.rewind_to_step(0)
 
 

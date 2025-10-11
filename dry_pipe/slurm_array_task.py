@@ -412,7 +412,7 @@ class SlurmArrayParentTask:
             elif restart_failed and (state_file.is_failed() or state_file.is_timed_out() or state_file.is_killed()):
                 self.task_process.task_logger.debug("will launch %s", state_file.task_key)
                 if not dry_run:
-                    self.tracker.register_pre_launch(state_file, restart_failed)
+                    self.tracker.transition_to_pre_launch(state_file, restart_failed)
                 yield state_file
                 i += 1
             if start_next_n is not None and i >= start_next_n:
@@ -510,7 +510,7 @@ class SlurmArrayParentTask:
                 with open(next_task_key_file, "w") as _next_task_key_file:
                     for state_file in state_files_in_batch:
                         _next_task_key_file.write(f"{state_file.task_key}\n")
-                        self.tracker.register_pre_launch(state_file)
+                        self.tracker.transition_to_pre_launch(state_file)
 
                 command_args = self.prepare_sbatch_command(
                     next_task_key_file, len(state_files_in_batch), sbatch_options

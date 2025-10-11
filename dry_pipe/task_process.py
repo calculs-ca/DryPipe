@@ -108,7 +108,6 @@ class TaskProcess:
                 f"TaskProcess(%s, as_subprocess=%s, wait_for_completion=%s)",
                 self.task_key, self.as_subprocess, self.wait_for_completion
             )
-            self.task_logger.debug(f"pipeline_instance_dir %s", self.pipeline_instance_dir)
 
             if self.pipeline_instance_dir == "":
                 raise Exception(f"pipeline_instance_dir can't be empty string")
@@ -627,11 +626,6 @@ class TaskProcess:
             # stderr defaults to stdout, by default
             yield "__err_log", os.path.join(self.control_dir, "out.log")
 
-            #if self.task_conf.ssh_remote_dest is not None:
-            #    yield "__is_remote", "True"
-            #else:
-            #    yield "__is_remote", "False"
-
             yield "__is_on_remote_site", self.is_on_remote_site
 
             container = self.task_conf.container
@@ -640,11 +634,9 @@ class TaskProcess:
             else:
                 yield "__is_singularity", "False"
 
-            self.task_logger.debug("resolved input vars")
             for k, v in self.inputs._task_inputs.items():
                 yield k, v.resolved_value
 
-            self.task_logger.debug("file output vars")
             for _, k, f in self.outputs.iterate_file_task_outputs(self.task_output_dir):
                 yield k, f
 
@@ -652,7 +644,6 @@ class TaskProcess:
 
         extra_env = self.task_conf.extra_env
         if extra_env is not None:
-            self.task_logger.debug("extra_env vars from task-conf.json")
             for k, v0 in extra_env.items():
                 v1 = os.path.expandvars(v0)
                 # os.path.expandvars will leave missing vars unchanged, expandvars_from_dict will do it:
@@ -1407,12 +1398,8 @@ class TaskProcess:
 
         def task_func_wrapper():
             try:
-                self.task_logger.debug("task func started")
-
                 with self.create_time_logger("TASK", self.task_logger.info):
                     self._run_steps()
-
-                self.task_logger.info("task ended")
             except Exception as ex:
                 if not exit_process_when_done:
                     raise ex

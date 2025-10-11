@@ -1,4 +1,5 @@
 import os
+import shutil
 from pathlib import Path
 
 import dry_pipe
@@ -741,8 +742,6 @@ class PipelineWithPartialArrayMatch(BasePipelineTest):
                 ).outputs(
                     results=dsl.file("results.txt")
                 ).calls(
-                    dsl.download_outputs(array_parent)
-                ).calls(
                     digest_all
                 )()
 
@@ -758,6 +757,22 @@ class PipelineWithPartialArrayMatch(BasePipelineTest):
 
     def launches_tasks_in_process(self):
         return False
+
+    def _test_regression_1(self):
+        d = TestSandboxDir(self)
+        self.pipeline_instance_dir = d.sandbox_dir
+
+        z = Path(__file__).parent.joinpath("regression_data").joinpath("PipelineWithPartialArrayMatchRemote.test_run_pipeline")
+
+        shutil.copytree(str(z), self.pipeline_instance_dir, dirs_exist_ok=True)
+
+        pipeline_instance = self.create_pipeline_instance(d.sandbox_dir)
+
+        pipeline_instance.run_sync(sleep_schedule=self.custom_sleep_schedule_parsed())
+
+        for t, task in pipeline_instance.query_all_tasks_by_key().items():
+            self.assertTrue(task.is_completed())
+
 
     def test_run_pipeline(self):
 
@@ -799,6 +814,14 @@ class PipelineWithPartialArrayMatch(BasePipelineTest):
 
         self.assertEqual(digest.outputs.results.content_as_string_if_exists(), "t_0,t_1,t_2")
 
+        from cli_tests import test_cli
+
+        #test_cli(
+        #    self,
+        #    '--pipeline-instance-dir', self.pipeline_instance_dir,
+        #    'restart',
+        #    '--task-key', 'array_parent', '--wait'
+        #)
         with cli_in_sub_process([
             '--pipeline-instance-dir', self.pipeline_instance_dir,
             'restart',
@@ -826,8 +849,6 @@ class PipelineWithPartialArrayMatch(BasePipelineTest):
         self.assertEqual(t_2.outputs.f.content_as_string_if_exists(), "2\n")
         self.assertEqual(t_3.outputs.f.content_as_string_if_exists(), "3\n")
         self.assertEqual(t_4.outputs.f.content_as_string_if_exists(), "4\n")
-
-        from cli_tests import test_cli
 
         test_cli(
             self,
