@@ -508,7 +508,7 @@ class RemotePipelineSpecs:
 
         dst = f"{self.absolute_pid}/.drypipe"
 
-        cmd = f"rsync -a --update --include=*/*.log --exclude=*/* {remote_src}/ {dst}/"
+        cmd = f"rsync --prune-empty-dirs -va --update --include='*/' --include='*/*.log' --exclude='*' {remote_src}/ {dst}/"
 
         self.task_logger.debug("rsync remote logs: %s", cmd)
 
