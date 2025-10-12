@@ -99,17 +99,25 @@ class StateMachine:
         return False
 
 
-    def task(self, key=None, task_conf=None, is_slurm_array_child=False):
+    def task(self, key=None, task_conf=None, is_slurm_array_child=False, downstream_resets=()):
         if key is None:
             raise Exception(f"key can't be none")
 
         if task_conf is None:
             task_conf = TaskConf.default()
 
+        def n(o):
+            if isinstance(o, str):
+                return o
+            elif isinstance(o, Task):
+                return o.key
+            else:
+                raise Exception(f"valid types for downstream_resets are tasks or task keys, got {type(o)}")
 
         tb = TaskBuilder(
             key, task_conf=task_conf, dsl=self, is_slurm_array_child=is_slurm_array_child,
-            state_file_tracker=self.state_file_tracker
+            state_file_tracker=self.state_file_tracker,
+            downstream_resets=sorted([n(o) for o in downstream_resets])
         )
 
         self.instance_logger.debug(f"task {key} defined")

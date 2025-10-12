@@ -859,6 +859,13 @@ class Cli:
                 task_process.task_logger.info("local array at watch[1] step, will rewind to submit[0]")
                 task_process.rewind_to_step(0)
 
+        for downstream_task_key in task_process.task_conf.downstream_resets:
+            to_delete = [
+                Path(d, downstream_task_key).__str__()
+                for d in [task_process.pipeline_work_dir, task_process.pipeline_output_dir]
+            ]
+            for d in to_delete:
+                shutil.rmtree(d, ignore_errors=True)
 
         task_process.launch_task()
 

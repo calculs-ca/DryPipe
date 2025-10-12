@@ -139,7 +139,7 @@ class TaskBuilder:
          dsl=None, task_steps=[],
          task_conf=None, pipeline_instance=None, is_slurm_array_child=None,
          is_slurm_parent=None, max_simultaneous_jobs_in_slurm_array=None, children_tasks=None,
-         state_file_tracker=None
+         state_file_tracker=None, downstream_resets=()
     ):
 
         for illegal_char in ['"', "'", "{", "}", " "]:
@@ -158,6 +158,7 @@ class TaskBuilder:
         self.is_slurm_parent = is_slurm_parent
         self.children_tasks = children_tasks
         self.max_simultaneous_jobs_in_slurm_array = max_simultaneous_jobs_in_slurm_array
+        self.downstream_resets = downstream_resets
 
     def slurm_array_parent(self, children_tasks, max_simultaneous_jobs=None):
         """
@@ -215,6 +216,8 @@ class TaskBuilder:
             for o in args:
                 if isinstance(o, TaskOutput):
                     yield from g_o(o.name, o)
+                elif isinstance(o, Task):
+                    yield o.key, TaskInput(f"task:{o.key}", 'task', value=o.key)
                 else:
                     raise Exception(
                         f"bad arg: {o} passed to {self}"
@@ -350,7 +353,8 @@ class TaskBuilder:
             self.is_slurm_array_child,
             self.max_simultaneous_jobs_in_slurm_array,
             self.is_slurm_parent,
-            self.state_file_tracker
+            self.state_file_tracker,
+            self.downstream_resets
         )
 
 
@@ -615,7 +619,8 @@ class TaskConf:
             apptainer_exec_args=None,
             globus_transfer=None,
             globus_local_path_rewrite=None,
-            auto_restart_condition_regexp_per_log_file=None
+            auto_restart_condition_regexp_per_log_file=None,
+            downstream_resets=()
     ):
 
         self.external_files_root = None
@@ -670,6 +675,7 @@ class TaskConf:
         self.globus_transfer = globus_transfer
         self.globus_local_path_rewrite = globus_local_path_rewrite
         self.auto_restart_condition_regexp_per_log_file = auto_restart_condition_regexp_per_log_file
+        self.downstream_resets = downstream_resets
 
         if extra_env is not None:
             if not isinstance(extra_env, dict):

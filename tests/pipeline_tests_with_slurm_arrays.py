@@ -725,7 +725,8 @@ class PipelineWithPartialArrayMatch(BasePipelineTest):
         for match in dsl.query_all_or_nothing("t_*", state="ready"):
             array_parent = dsl.task(
                 key=f"array_parent",
-                task_conf=self.task_conf()
+                task_conf=self.task_conf(),
+                downstream_resets=["digest"]
             ).slurm_array_parent(
                 children_tasks=match.tasks
             )()
@@ -829,6 +830,7 @@ class PipelineWithPartialArrayMatch(BasePipelineTest):
         ]) as p:
             p.wait_and_raise_if_non_zero()
 
+        self.assertEqual(digest.outputs.results.content_as_string_if_exists(), None)
 
         self.assertEqual(t_0.outputs.f.content_as_string_if_exists(), "0\n")
         self.assertEqual(t_1.outputs.f.content_as_string_if_exists(), "1\n")
@@ -849,13 +851,6 @@ class PipelineWithPartialArrayMatch(BasePipelineTest):
         self.assertEqual(t_2.outputs.f.content_as_string_if_exists(), "2\n")
         self.assertEqual(t_3.outputs.f.content_as_string_if_exists(), "3\n")
         self.assertEqual(t_4.outputs.f.content_as_string_if_exists(), "4\n")
-
-        test_cli(
-            self,
-            '--pipeline-instance-dir', self.pipeline_instance_dir,
-            'reset',
-            '--task-key', 'digest'
-        )
 
         pipeline_instance.reset_state_tracker()
 

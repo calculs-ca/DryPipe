@@ -26,7 +26,8 @@ class Task:
         is_slurm_array_child,
         max_simultaneous_jobs_in_slurm_array,
         is_slurm_parent,
-        state_file_tracker
+        state_file_tracker,
+        downstream_resets
     ):
         self.key = key
         self.inputs = TaskInputs(self, inputs)
@@ -38,6 +39,7 @@ class Task:
         self.max_simultaneous_jobs_in_slurm_array = max_simultaneous_jobs_in_slurm_array
         self.is_slurm_parent = is_slurm_parent
         self.state_file_tracker = state_file_tracker
+        self.downstream_resets = downstream_resets
 
 
     """            
@@ -93,6 +95,9 @@ class Task:
         if self.max_simultaneous_jobs_in_slurm_array is not None:
             h(str(self.max_simultaneous_jobs_in_slurm_array))
 
+        for k in self.downstream_resets:
+            h(k)
+
         return d.hexdigest()
 
     def save_if_hash_has_changed(self, state_file, hash_code):
@@ -137,6 +142,7 @@ class Task:
         self.task_conf.inputs = self.inputs.as_json()
         self.task_conf.outputs = self.outputs.as_json()
         self.task_conf.step_invocations = step_invocations
+        self.task_conf.downstream_resets = self.downstream_resets
         self.task_conf.save_as_json(control_dir, digest=hash_code)
 
         if self.is_slurm_parent:
