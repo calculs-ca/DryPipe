@@ -367,7 +367,7 @@ class Cli:
                 until_patterns=self.parsed_args.until,
                 restart_failed=self.parsed_args.restart_failed,
                 reset_failed=self.parsed_args.reset_failed,
-                sleep_schedule=self.sleep_schedule
+                sleep_schedule=self.get_parsed_sleep_schedule()
             )
         elif self.parsed_args.command == 'service':
 
@@ -399,7 +399,7 @@ class Cli:
         elif self.parsed_args.command == 'prepare':
             pipeline_instance = pipeline_instance_from_args()
             pipeline_instance.prepare_instance_dir()
-            pipeline_instance.run_sync(["*"], sleep_schedule=self.sleep_schedule)
+            pipeline_instance.run_sync(["*"], sleep_schedule=self.get_parsed_sleep_schedule())
         elif self.parsed_args.command == 'call':
 
             call(self.parsed_args.module_function)
@@ -666,6 +666,8 @@ class Cli:
             default=ig
         )
 
+        self.add_schedule_arg(parser)
+
     def add_report_args(self, report_parser):
         report_parser.add_argument(
             '--filter',
@@ -692,6 +694,16 @@ class Cli:
 
         self._add_restart_failed_args(run_parser)
 
+
+    def add_schedule_arg(self, parser):
+        parser.add_argument(
+            "--sleep-schedule",
+            action=EnvDefault,
+            envvar="DRYPIPE_SERVICE_SLEEP_SCHEDULE",
+            help="a list of sleep times in seconds, for the main loop of the service, can also be set with environment var DRYPIPE_SERVICE_SLEEP_SCHEDULE",
+            default="0,1,3,5,10,15,20"
+        )
+
     def add_service_args(self, service_parser):
         service_parser.add_argument(
             "--config-generator",
@@ -701,14 +713,7 @@ class Cli:
                     can also be set with environment var DRYPIPE_SERVICE_CONFIG_GENERATOR""",
         )
 
-        service_parser.add_argument(
-            "--sleep-schedule",
-            action=EnvDefault,
-            envvar="DRYPIPE_SERVICE_SLEEP_SCHEDULE",
-            help="a list of sleep times in seconds, for the main loop of the service, can also be set with environment var DRYPIPE_SERVICE_SLEEP_SCHEDULE",
-            default="0,1,3,5,10,15,20"
-        )
-
+        self.add_task_args(service_parser)
         service_parser.add_argument(
             "--log-conf",
             action=EnvDefault,
