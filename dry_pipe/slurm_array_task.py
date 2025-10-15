@@ -1,19 +1,16 @@
-import contextlib
 import glob
-import json
 import logging
-import mmap
 import os
 import re
-import time
 from itertools import groupby
 from pathlib import Path
 from typing import List, Iterator, Tuple
 
-from dry_pipe import PortablePopen, TaskConf, RemotePipelineSpecs
+from dry_pipe import PortablePopen, TaskConf
 from dry_pipe.state_file_tracker import StateFileTracker
 from dry_pipe.task_lib import upload_task_inputs_rsync, download_task_outputs_rsync
 from dry_pipe.task_process import TaskProcess
+from dry_pipe.slurm_codes import SlurmJobStateCodes
 
 logger = logging.getLogger(__name__)
 
@@ -53,22 +50,12 @@ class SlurmArrayParentTask:
             if a is not None:
                 yield f"--account={a}"
 
-            # stdout and stderr are handled by TaskProcess, slurm redirection is almost always empty
-            slurm_std_out_err_log = os.environ.get("DRYPIPE_SLURM_STD_OUT_ERR_LOG") == "True"
-            #slurm_std_out_err_log = self.task_process.is_debug()
-
-            if slurm_std_out_err_log:
-                yield f"--output={self.control_dir()}/debug-%A_%a.log"
-            else:
-                yield "--output=/dev/null"
+            yield f"--output={self.control_dir()}/launch-%A_%a.log"
 
             if sbatch_options_override is not None:
                 yield from sbatch_options_override
             else:
                 yield from self.task_process.task_conf.sbatch_options
-
-            if slurm_std_out_err_log:
-                yield f"--error={self.control_dir()}/debug-%A_%a.log"
 
             yield "--export={0}".format(",".join([
                 f"DRYPIPE_TASK_CONTROL_DIR={self.control_dir()}",
@@ -212,18 +199,11 @@ class SlurmArrayParentTask:
         task_key_to_job_id_and_array_idx = self._task_key_to_job_id_and_array_idx_map()
 
         for job_id, array_idx_to_state_codes in job_ids_to_array_idx_to_squeue_state.items():
-            def is_running_or_will_run(slurm_code):
-                if slurm_code in {"PD", "R", "CG", "CF"}:
-                    return True
-                elif slurm_code in {"F", "CD", "TO", "ST", "PR", "RV", "SE", "BF", "CA", "DL", "OOM", "NF"}:
-                    return False
-                this_logger.warning("rare code: %s", slurm_code)
-                return False
 
             is_running_or_will_run_count = 0
 
             for array_idx, state_code in array_idx_to_state_codes.items():
-                if is_running_or_will_run(state_code):
+                if SlurmJobStateCodes.is_running_or_will_run(state_code, this_logger):
                     is_running_or_will_run_count += 1
                 else:
                     task_key = task_key_to_job_id_and_array_idx[(job_id, array_idx)]
@@ -267,14 +247,9 @@ class SlurmArrayParentTask:
             state_from_squeue = None
             if array_idx_to_squeue_state is not None:
                 state_from_squeue = array_idx_to_squeue_state.get(array_idx)
-            unexpected_states = self.compare_and_reconcile_task_state_file_with_squeue_state(task_key, state_from_squeue)
-            if unexpected_states is not None:
-                dict_unexpected_states[task_key] = unexpected_states
-                state_from_file_system, expected_squeue_state = unexpected_states
-                self.task_process.task_logger.warning(
-                    "unexpected state_from_squeue '%s', expected '%s' for task '%s', state_from_file_system: '%s'",
-                    state_from_squeue, expected_squeue_state, task_key, state_from_file_system
-                )
+            unexpected_states_tuple = self.compare_and_reconcile_task_state_file_with_squeue_state(task_key, state_from_squeue)
+            if unexpected_states_tuple is not None:
+                dict_unexpected_states[task_key] = unexpected_states_tuple
         return dict_unexpected_states
 
 
@@ -328,29 +303,43 @@ class SlurmArrayParentTask:
 
         # see JOB STATE CODES at https://slurm.schedmd.com/squeue.html
 
-        self.task_process.task_logger.debug(
-            "task_key=%s, state_from_file_system=%s, state_from_squeue=%s ",
-            task_key, state_from_file_system, state_from_squeue
-        )
+        def f():
 
-        if state_from_file_system in ["completed", "failed", "killed", "timed-out"]:
-            if state_from_squeue != "CD" and state_from_squeue is not None:
-                return state_from_file_system, None
-        elif state_from_file_system in ["ready", "waiting"]:
-            if state_from_squeue is not None:
-                return state_from_file_system, None
-        elif state_from_file_system.endswith("_step-started"):
-            if state_from_squeue is None:
-                self.tracker.transition_to_crashed(state_file)
-                return state_from_file_system,  "R,PD"
-            elif state_from_squeue not in ["R", "PD"]:
-                return state_from_file_system, "R,PD"
-        elif state_from_file_system.endswith("step-started"):
-            if state_from_squeue is None:
-                self.tracker.transition_to_crashed(state_file)
-                return state_from_file_system,  "R,PD"
-            elif state_from_squeue not in ["R", "PD"]:
-                return state_from_file_system, "R,PD"
+            if state_from_file_system == "completed":
+                if state_from_squeue in {SlurmJobStateCodes.RUNNING, SlurmJobStateCodes.COMPLETING}:
+                    return None
+
+            if state_from_file_system in ["completed", "failed", "killed", "timed-out"]:
+                if state_from_squeue != "CD" and state_from_squeue is not None:
+                    return state_from_file_system, None
+            elif state_from_file_system in ["ready", "waiting"]:
+                if state_from_squeue is not None:
+                    return state_from_file_system, None
+            elif state_from_file_system == "_step-started":
+                if state_from_squeue is None:
+                    self.tracker.transition_to_crashed(state_file)
+                    return state_from_file_system,  "R,PD"
+                elif state_from_squeue not in ["R", "PD"]:
+                    return state_from_file_system, "R,PD"
+            elif state_from_file_system == "step-started":
+                if state_from_squeue is None:
+                    self.tracker.transition_to_crashed(state_file)
+                    return state_from_file_system,  "R,PD"
+                elif state_from_squeue not in ["R", "PD"]:
+                    return state_from_file_system, "R,PD"
+
+            return None
+
+        unexpected_states = f()
+
+        if unexpected_states is not None:
+            state_from_file_system, expected_squeue_state = unexpected_states
+            self.task_process.task_logger.warning(
+                "unexpected state_from_squeue '%s', expected '%s' for task '%s', state_file: '%s'",
+                state_from_squeue, expected_squeue_state, task_key, state_file
+            )
+
+        return unexpected_states
 
 
     def arrays_files(self) -> Iterator[Tuple[int, str]]:
@@ -589,15 +578,7 @@ class SlurmArrayParentTask:
                 f"requires ssh_remote_dest in TaskConf OR --ssh-remote-dest argument to be set"
             )
 
-        upload_task_inputs_rsync.func(
-            __task_key=self.task_process.task_key,
-            __task_control_dir=self.task_process.control_dir,
-            __remote_pipeline_specs=RemotePipelineSpecs(self.task_process),
-            __task_logger=self.task_process.task_logger,
-            __task_process=self.task_process,
-            __pipeline_instance_dir=self.task_process.pipeline_instance_dir,
-            __task_conf = self.task_process.task_conf
-        )
+        upload_task_inputs_rsync.func(__task_process=self.task_process)
 
     def _download_array(self):
         download_task_outputs_rsync.func(__task_process=self.task_process)

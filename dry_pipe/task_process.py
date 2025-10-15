@@ -1346,9 +1346,21 @@ class TaskProcess:
 
             raise Exception(f"Error: no task_key for SLURM_ARRAY_TASK_ID={slurm_array_task_id}")
 
+    def _delete_array_child_launch_log_if_empty(self):
+        launch_log = Path(
+            self._array_parent_control_dir(),
+            f"launch-{self.slurm_array_job_id}_{self.slurm_array_task_id}.log"
+        )
+        if launch_log.exists() and launch_log.stat().st_size == 0:
+            launch_log.unlink()
+        else:
+            # should be rare, since launch error makes it unlikely to make it here
+            self.task_logger.warning("non empty launch log")
+
     def _rename_slurm_job(self):
 
         if self.is_array_child_task():
+            self._delete_array_child_launch_log_if_empty()
             this_task_job_id = f"{self.slurm_array_job_id}_{self.slurm_array_task_id}"
         else:
             this_task_job_id = self.slurm_job_id

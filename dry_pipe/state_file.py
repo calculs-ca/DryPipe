@@ -28,7 +28,7 @@ class StateFile:
         self.is_parent_task = False
 
     def __repr__(self):
-        return f"/{self.task_key}/{os.path.basename(self.path)}"
+        return f"{self.task_key}/{os.path.basename(self.path)}"
 
     def refresh(self, new_path):
         assert self.path != new_path
