@@ -70,16 +70,19 @@ def watch_local_array(__task_process):
 
 
 @DryPipe.python_call()
-def submit_remote_array(__remote_pipeline_specs):
-    res = __remote_pipeline_specs.remote_exec_json_results("submit-array-from-remote")
+def submit_remote_array(__task_process):
+
+    remote_helper  = __task_process.remote_task_helper()
+    res = remote_helper.remote_exec_json_results("submit-array-from-remote")
     msg = json.dumps(res)
-    __remote_pipeline_specs.task_process.task_logger.info("submit array from remote %s", msg)
+    remote_helper.task_process.task_logger.info("submit array from remote %s", msg)
 
 
 @DryPipe.python_call()
-def watch_remote_array(__remote_pipeline_specs):
+def watch_remote_array(__task_process):
 
-    __task_process = __remote_pipeline_specs.task_process
+    remote_helper = __task_process.remote_task_helper()
+    __task_process = remote_helper.task_process
     task_logger = __task_process.task_logger
 
 
@@ -88,8 +91,8 @@ def watch_remote_array(__remote_pipeline_specs):
             task_logger.info(
                 "some array tasks failed will download and reconcile states, logs, and results of completed tasks"
             )
-            __remote_pipeline_specs.fetch_remote_array_states_and_reconcile()
-            __remote_pipeline_specs.fetch_remote_logs()
+            remote_helper.fetch_remote_array_states_and_reconcile()
+            remote_helper.fetch_remote_logs()
             task_logger.info("remote states and logs have been reconciled")
             func = _globus_or_rsync_download_func(__task_process)
             func(__task_process)
@@ -103,11 +106,11 @@ def watch_remote_array(__remote_pipeline_specs):
 
         while True:
 
-            __remote_pipeline_specs.fetch_remote_array_states_and_reconcile()
-            __remote_pipeline_specs.fetch_remote_logs()
+            remote_helper.fetch_remote_array_states_and_reconcile()
+            remote_helper.fetch_remote_logs()
 
             try:
-                report = __remote_pipeline_specs.remote_exec_json_results("watch-array-from-remote")
+                report = remote_helper.remote_exec_json_results("watch-array-from-remote")
             except Exception:
                 download_after_fail()
                 raise
@@ -140,62 +143,56 @@ def watch_remote_array(__remote_pipeline_specs):
 
 
 @DryPipe.python_call()
-def upload_task_inputs_rsync(
-    __task_key,
-    __task_control_dir,
-    __remote_pipeline_specs,
-    __task_logger,
-    __task_process,
-    __pipeline_instance_dir,
-    __task_conf
-):
+def upload_task_inputs_rsync(__task_process):
+
+    remote_helper = __task_process.remote_task_helper()
 
     external_file_deps = []
 
-    __task_logger.info("will generate file list for upload")
+    __task_process.task_logger.info("will generate file list for upload")
 
     def g():
         for f in __task_process.gen_internal_file_deps(external_file_deps):
-            ff = Path(__pipeline_instance_dir, f)
+            ff = Path(__task_process.pipeline_instance_dir, f)
             if ff.is_dir() and not f.endswith("/"):
                 yield f"{f}/"
             else:
                 yield f
 
-    internal_dep_file_txt = __remote_pipeline_specs.dump_unique_files_in_file(
+    internal_dep_file_txt = remote_helper.dump_unique_files_in_file(
         g(),
         "deps.txt"
     )
 
 
     if len(external_file_deps) == 0:
-        __task_logger.info("no external file deps")
+        __task_process.task_logger.info("no external file deps")
     else:
-        __task_logger.info("will generate external file deps")
-        external_dep_file_txt = __remote_pipeline_specs.dump_unique_files_in_file(external_file_deps, "external-deps.txt")
+        __task_process.task_logger.info("will generate external file deps")
+        external_dep_file_txt = remote_helper.dump_unique_files_in_file(external_file_deps, "external-deps.txt")
 
 
     def rs(cmd):
-        __task_logger.info(f"running command: {cmd}")
+        __task_process.task_logger.info(f"running command: {cmd}")
         invoke_rsync(cmd)
 
     def do_rsync(src, dst, deps_file):
-        rs(f"rsync {__remote_pipeline_specs.rsync_chown_arg} --mkpath -a --dirs --files-from={deps_file} {src}/ {dst}/")
+        rs(f"rsync {remote_helper.rsync_chown_arg} --mkpath -a --dirs --files-from={deps_file} {src}/ {dst}/")
 
 
     def rsync_upload(overrides_file, dst):
-        rs(f"rsync {__remote_pipeline_specs.rsync_chown_arg} --mkpath {overrides_file} {dst}")
+        rs(f"rsync {remote_helper.rsync_chown_arg} --mkpath {overrides_file} {dst}")
 
-    __remote_pipeline_specs.gen_and_upload_task_conf_remote_overrides(rsync_upload)
+    remote_helper.gen_and_upload_task_conf_remote_overrides(rsync_upload)
 
     do_rsync(
-        __remote_pipeline_specs.absolute_pid,
-        f"{__remote_pipeline_specs.ssh_remote_dest}/{__remote_pipeline_specs.pid_base_name}",
+        remote_helper.absolute_pid,
+        f"{remote_helper.ssh_remote_dest}/{remote_helper.pid_base_name}",
         internal_dep_file_txt
     )
 
     if len(external_file_deps) > 0:
-        do_rsync("", f"{__remote_pipeline_specs.ssh_remote_dest}/{__remote_pipeline_specs.pid_base_name}/external-file-deps", external_dep_file_txt)
+        do_rsync("", f"{remote_helper.ssh_remote_dest}/{remote_helper.pid_base_name}/external-file-deps", external_dep_file_txt)
 
 
 def _globus_or_rsync_download_func(task_process):
@@ -225,12 +222,12 @@ def download_other_task_outputs(__task_process, __other_task_key):
 def download_task_outputs_rsync(__task_process):
     from dry_pipe.slurm_array_task import SlurmArrayParentTask
 
-    __remote_pipeline_specs = RemotePipelineSpecs(__task_process)
+    remote_helper = __task_process.remote_task_helper()
 
     #fetch states, and generate rsync list
-    remote_cli = os.path.join(__remote_pipeline_specs.remote_instance_work_dir, "cli")
+    remote_cli = os.path.join(remote_helper.remote_instance_work_dir, "cli")
 
-    remote_exec_result = exec_remote(__remote_pipeline_specs.user_at_host, [
+    remote_exec_result = exec_remote(remote_helper.user_at_host, [
         "python3",
         remote_cli,
         "list-states",
@@ -241,10 +238,10 @@ def download_task_outputs_rsync(__task_process):
     __task_process.task_logger.debug("remote states:\n %s", remote_exec_result)
 
     if __task_process.is_slurm_array_parent():
-        __remote_pipeline_specs.reconcile_local_array_states_with_remote_state(remote_exec_result)
+        remote_helper.reconcile_local_array_states_with_remote_state(remote_exec_result)
 
-    result_file_txt = __remote_pipeline_specs.dump_unique_files_in_file(
-        __remote_pipeline_specs.gen_result_files(),
+    result_file_txt = remote_helper.dump_unique_files_in_file(
+        remote_helper.gen_result_files(),
         "result-files.txt"
     )
 
@@ -268,7 +265,7 @@ def download_task_outputs_rsync(__task_process):
     pipeline_base_name = os.path.basename(pid)
 
     ssh_remote_dest = \
-        f"{__remote_pipeline_specs.user_at_host}:{__remote_pipeline_specs.remote_base_dir}/{pipeline_base_name}/"
+        f"{remote_helper.user_at_host}:{remote_helper.remote_base_dir}/{pipeline_base_name}/"
 
     def rs(cmd):
         __task_process.task_logger.info(f"running command: {cmd}")
@@ -283,32 +280,29 @@ def download_task_outputs_rsync(__task_process):
 
 
 @DryPipe.python_call()
-def execute_remote_task(
-        __task_key,
-        __remote_pipeline_specs
-):
-    __remote_pipeline_specs.remote_exec("remote-exec")
+def execute_remote_task(__task_process):
+
+    __task_process.remote_task_helper().remote_exec("remote-exec")
 
 
 
 @DryPipe.python_call()
-def poll_remote_task(
-    __task_key,
-    __remote_pipeline_specs
-):
-    task_process = __remote_pipeline_specs.task_process
-    task_logger = __remote_pipeline_specs.task_process.task_logger
+def poll_remote_task(__task_process):
+
+    remote_helper = __task_process.remote_task_helper()
+
+    task_logger = remote_helper.task_process.task_logger
 
     def fetch_remote_state():
-        res = __remote_pipeline_specs.remote_exec("poll-task")
+        res = remote_helper.remote_exec("poll-task")
         for remote_state_file_absolute_path in res.split("\n"):
 
             if not "/state." in remote_state_file_absolute_path:
                 continue
 
-            return StateFile.create_from_path(__task_key, remote_state_file_absolute_path)
+            return StateFile.create_from_path(__task_process.task_key, remote_state_file_absolute_path)
 
-    with SleepySpinner(task_process.sleep_schedule([30, 120, 240]), task_logger) as ss:
+    with SleepySpinner(__task_process.sleep_schedule([30, 120, 240]), task_logger) as ss:
 
         while True:
 
@@ -330,21 +324,15 @@ def poll_remote_task(
 
 
 @DryPipe.python_call()
-def upload_task_inputs_globus(
-    __task_key,
-    __task_control_dir,
-    __remote_pipeline_specs,
-    __task_logger,
-    __task_process,
-    __pipeline_instance_dir,
-    __task_conf
-):
+def upload_task_inputs_globus(__task_process):
+
+    remote_helper = __task_process.remote_task_helper()
 
     def rewrite_if(it):
-        if __task_conf.globus_local_path_rewrite is None:
+        if __task_process.task_conf.globus_local_path_rewrite is None:
             yield from it
         else:
-            prefix, replacement_prefix = __task_conf.globus_local_path_rewrite.split(":")
+            prefix, replacement_prefix = __task_process.task_conf.globus_local_path_rewrite.split(":")
             for f1, f2 in it:
                 if f1.startswith(prefix):
                     f_suffix = f1[len(prefix):]
@@ -352,9 +340,9 @@ def upload_task_inputs_globus(
                 else:
                     yield f1, f2
 
-    __task_logger.info("will generate file list for upload")
+    __task_process.task_logger.info("will generate file list for upload")
 
-    src_endpoint, dst_endpoint, tok_file, client_id = __task_conf.globus_transfer.split(":")
+    src_endpoint, dst_endpoint, tok_file, client_id = __task_process.task_conf.globus_transfer.split(":")
 
     tok = GlobusToken(access_token_file=tok_file, client_id=client_id)
 
@@ -363,24 +351,24 @@ def upload_task_inputs_globus(
     def g():
         external_file_deps = []
         for f in __task_process.gen_internal_file_deps(external_file_deps):
-            yield str(Path(__pipeline_instance_dir, f)), str(Path(__remote_pipeline_specs.remote_pid, f))
+            yield str(Path(__task_process.pipeline_instance_dir, f)), str(Path(remote_helper.remote_pid, f))
 
         for f in external_file_deps:
-            yield f, str(Path(__remote_pipeline_specs.remote_pid, "external-file-deps", f))
+            yield f, str(Path(remote_helper.remote_pid, "external-file-deps", f))
 
-        o_src = __remote_pipeline_specs.gen_remote_site_env_file()
+        o_src = remote_helper.gen_remote_site_env_file()
 
-        yield o_src, str(Path(__remote_pipeline_specs.remote_instance_work_dir, "site.env"))
+        yield o_src, str(Path(remote_helper.remote_instance_work_dir, "site.env"))
 
     transfer_response = transfer.submit_file_transfer(
         rewrite_if(g()),
         log_file=
-        Path(__task_control_dir, "globus-uploads.json")
-        if __task_logger.isEnabledFor(logging.DEBUG)
+        Path(__task_process.task_control_dir, "globus-uploads.json")
+        if __task_process.task_logger.isEnabledFor(logging.DEBUG)
         else None
     )
 
-    transfer_response.spin_until_complete(__task_logger)
+    transfer_response.spin_until_complete(__task_process.task_logger)
 
 
 

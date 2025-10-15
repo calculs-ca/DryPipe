@@ -973,7 +973,7 @@ class TaskProcess:
         with open(output_vars, "w") as f:
             f.write("\n".join(all_vars))
 
-        self.task_logger.info("out vars written: %s", ",".join(all_vars))
+        self.task_logger.info("output vars written: %s", ",".join(all_vars))
 
     def resolve_container_path(self, container):
 
@@ -1546,6 +1546,9 @@ class TaskProcess:
             self.task_logger.info("APPTAINER_BIND not set")
         else:
             self.task_logger.info("APPTAINER_BIND=%s", new_bind)
+
+    def remote_task_helper(self):
+        return RemotePipelineSpecs(self)
 
 
 def tail_file(file, delay=1.0):
