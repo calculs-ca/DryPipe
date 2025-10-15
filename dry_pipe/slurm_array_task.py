@@ -554,61 +554,6 @@ class SlurmArrayParentTask:
 
         return f"123400{launch_idx}"
 
-    def obsolete_run_array(self, restart_failed, reset_failed, limit):
-
-        self.prepare_and_launch_next_array(limit)
-
-        if self.mockup_run_launch_local_processes:
-            return
-
-        self.task_process.task_logger.info("will run array %s", self.task_process.task_key)
-
-        if self.debug:
-            pause_in_seconds = [0, 0, 0, 0, 0, 1]
-        else:
-            pause_in_seconds = [2, 2, 3, 3, 4, 10, 30, 60, 120, 120, 180, 240, 300]
-
-        pause_idx = 0
-        max_idx = len(pause_in_seconds) - 1
-        while True:
-            res = self.compare_and_reconcile_squeue_with_state_files()
-            if res is None:
-                break
-            next_sleep = pause_in_seconds[pause_idx]
-            self.task_process.task_logger.debug("will sleep %s seconds", next_sleep)
-            time.sleep(next_sleep)
-            if pause_idx < max_idx:
-                pause_idx += 1
-
-        self.submitted_arrays_files_with_job_is_running_status()
-
-        total_children_tasks = 0
-        ended_tasks = 0
-        completed_tasks = 0
-        failed_tasks = []
-        for task_key in self.children_task_keys():
-            total_children_tasks += 1
-            state_file = self.tracker.load_state_file(task_key)
-            if state_file.has_ended():
-                ended_tasks += 1
-            if state_file.is_completed():
-                completed_tasks += 1
-
-            if state_file.is_failed():
-                failed_tasks.append(state_file.task_key)
-
-        # We could fail earlier, at the first failure inside self.compare_and_reconcile_squeue_with_state_files()
-        # but letting "compare_and_reconcile" until the last job is alive, improves monitoring, at the cost of a single
-        # task running and polling the file system
-        if len(failed_tasks) > 0:
-            raise Exception(f"at least one failed task: {','.join(failed_tasks)}")
-
-        if completed_tasks == total_children_tasks:
-            self.task_process.task_logger.info("array %s completed", self.task_process.task_key)
-            return True
-
-        return False
-
     def inspect_child_tasks(self):
 
         total_children_tasks = 0
