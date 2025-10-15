@@ -65,6 +65,15 @@ class StateFile:
     def state_as_string(self):
         return os.path.basename(self.path)
 
+    def state(self):
+        state = self.state_as_string()
+        # strip "state.":
+        state = state[6:]
+        # strip step number if applicable:
+        if "." in state:
+            state = state.split(".")[0]
+        return state
+
     def key_state_step(self):
 
         state = os.path.basename(self.path)[6:]

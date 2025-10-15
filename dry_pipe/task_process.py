@@ -188,7 +188,7 @@ class TaskProcess:
             logger.addHandler(h)
 
 
-        logger.info("log level: %s", logging.getLevelName(logging_level))
+        logger.debug("log level: %s", logging.getLevelName(logging_level))
         return logger
 
     def __repr__(self):
@@ -1202,9 +1202,11 @@ class TaskProcess:
             try:
                 cmd = list(self.sbatch_cmd_lines(step_invocation["sbatch_options"]))
                 self.task_logger.info("will launch next step: %s", " ".join(cmd))
-                p = PortablePopen(cmd)
-                p.popen.wait()
-                return True
+                with PortablePopen(cmd) as p:
+                    p.wait_and_raise_if_non_zero()
+                    job_id = p.stdout_as_string().strip()
+                    self.task_logger.info("launched job_id %s", job_id)
+                    return True
             except Exception as ex:
                 self.task_logger.error("fail task launch", exc_info=ex)
                 raise TaskFailedException()

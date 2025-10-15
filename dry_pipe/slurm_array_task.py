@@ -264,16 +264,16 @@ class SlurmArrayParentTask:
 
         for task_key, (job_id, array_idx) in task_key_to_job_id_array_idx.items():
             array_idx_to_squeue_state = job_ids_to_array_idx_to_squeue_state.get(job_id)
-            squeue_state = None
+            state_from_squeue = None
             if array_idx_to_squeue_state is not None:
-                squeue_state = array_idx_to_squeue_state.get(array_idx)
-            unexpected_states = self.compare_and_reconcile_task_state_file_with_squeue_state(task_key, squeue_state)
+                state_from_squeue = array_idx_to_squeue_state.get(array_idx)
+            unexpected_states = self.compare_and_reconcile_task_state_file_with_squeue_state(task_key, state_from_squeue)
             if unexpected_states is not None:
                 dict_unexpected_states[task_key] = unexpected_states
-                drypipe_state_as_string, expected_squeue_state, actual_queue_state = unexpected_states
+                state_from_file_system, expected_squeue_state = unexpected_states
                 self.task_process.task_logger.warning(
-                    "unexpected squeue state '%s', expected '%s' for task '%s'",
-                    actual_queue_state, expected_squeue_state, task_key
+                    "unexpected state_from_squeue '%s', expected '%s' for task '%s', state_from_file_system: '%s'",
+                    state_from_squeue, expected_squeue_state, task_key, state_from_file_system
                 )
         return dict_unexpected_states
 
@@ -320,39 +320,37 @@ class SlurmArrayParentTask:
         _, state_file = self.tracker.fetch_true_state_and_update_memory_if_changed(task_key)
         return state_file
 
-    def compare_and_reconcile_task_state_file_with_squeue_state(self, task_key, squeue_state):
+
+    def compare_and_reconcile_task_state_file_with_squeue_state(self, task_key, state_from_squeue):
+
         state_file = self.fetch_state_file(task_key)
-        drypipe_state_as_string = state_file.state_as_string()
-        # strip "state."
-        drypipe_state_as_string = drypipe_state_as_string[6:]
-        if "." in drypipe_state_as_string:
-            drypipe_state_as_string = drypipe_state_as_string.split(".")[0]
+        state_from_file_system = state_file.state()
 
         # see JOB STATE CODES at https://slurm.schedmd.com/squeue.html
 
         self.task_process.task_logger.debug(
-            "task_key=%s, drypipe_state_as_string=%s, squeue_state=%s ",
-            task_key, drypipe_state_as_string, squeue_state
+            "task_key=%s, state_from_file_system=%s, state_from_squeue=%s ",
+            task_key, state_from_file_system, state_from_squeue
         )
 
-        if drypipe_state_as_string in ["completed", "failed", "killed", "timed-out"]:
-            if squeue_state != "CD" and squeue_state is not None:
-                return drypipe_state_as_string, None, squeue_state
-        elif drypipe_state_as_string in ["ready", "waiting"]:
-            if squeue_state is not None:
-                return drypipe_state_as_string, None, squeue_state
-        elif drypipe_state_as_string.endswith("_step-started"):
-            if squeue_state is None:
+        if state_from_file_system in ["completed", "failed", "killed", "timed-out"]:
+            if state_from_squeue != "CD" and state_from_squeue is not None:
+                return state_from_file_system, None
+        elif state_from_file_system in ["ready", "waiting"]:
+            if state_from_squeue is not None:
+                return state_from_file_system, None
+        elif state_from_file_system.endswith("_step-started"):
+            if state_from_squeue is None:
                 self.tracker.transition_to_crashed(state_file)
-                return drypipe_state_as_string,  "R,PD", None
-            elif squeue_state not in ["R", "PD"]:
-                return drypipe_state_as_string, "R,PD", squeue_state
-        elif drypipe_state_as_string.endswith("step-started"):
-            if squeue_state is None:
+                return state_from_file_system,  "R,PD"
+            elif state_from_squeue not in ["R", "PD"]:
+                return state_from_file_system, "R,PD"
+        elif state_from_file_system.endswith("step-started"):
+            if state_from_squeue is None:
                 self.tracker.transition_to_crashed(state_file)
-                return drypipe_state_as_string,  "R,PD", None
-            elif squeue_state not in ["R", "PD"]:
-                return drypipe_state_as_string, "R,PD", squeue_state
+                return state_from_file_system,  "R,PD"
+            elif state_from_squeue not in ["R", "PD"]:
+                return state_from_file_system, "R,PD"
 
 
     def arrays_files(self) -> Iterator[Tuple[int, str]]:
