@@ -185,11 +185,6 @@ class Cli:
         else:
             self.env = env
 
-        custom_sleep_schedule = self.env.get("DRYPIPE_SLEEP_SCHEDULE")
-
-        if custom_sleep_schedule is not None:
-            self.sleep_schedule = [int(s) for s in custom_sleep_schedule.split(",")]
-
         self.is_dp_func = environ.get("__IS_DRYPIPE_DP_FUNC") == "True"
 
         self.parser = argparse.ArgumentParser(
@@ -319,6 +314,10 @@ class Cli:
             else:
                 ssh_remote_dest = self.parsed_args.ssh_remote_dest
 
+    def get_parsed_sleep_schedule(self):
+        logging.info("DryPipe service sleep schedule: %s", self.parsed_args.sleep_schedule)
+        return [int(s) for s in self.parsed_args.sleep_schedule.split(",")]
+
     def invoke(self, test_mode=False):
 
         if self._has_implicit_pid:
@@ -387,7 +386,7 @@ class Cli:
                 g,
                 run_sync=False,
                 run_tasks_in_process=False,
-                sleep_schedule=self.sleep_schedule
+                sleep_schedule=self.get_parsed_sleep_schedule()
             )
 
             logging.info("starting drypipe service")

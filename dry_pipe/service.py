@@ -146,8 +146,10 @@ class PipelineInstanceAccessor:
 
 class PipelineRunner:
 
-    def __init__(self, config_generator, run_sync=False, run_tasks_in_process=False, sleep_schedule = (0, 0, 0, 1, 5)):
+    def __init__(self, config_generator, run_sync=False, run_tasks_in_process=False, sleep_schedule=None):
 
+        if sleep_schedule is None:
+            raise Exception("sleep_schedule cannot be None")
 
         self.instances_dir_to_pipeline_types = {
             instances_dir: pipeline_type
@@ -200,6 +202,13 @@ class PipelineRunner:
                 }
 
         return list(g())
+
+    def get_pipeline_type(self, type_name):
+        for instances_dir, pipeline_type in self.instances_dir_to_pipeline_types.items():
+            if pipeline_type.name == type_name:
+                return pipeline_type
+
+        return None
 
     def get_parent_instances_dir(self, path):
         for instances_dir, pipeline_and_validator in self.instances_dir_to_pipeline_types.items():

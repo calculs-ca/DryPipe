@@ -745,7 +745,7 @@ class TaskConf:
         if self.auto_restart_condition_regexp_per_log_file is not None:
             for k, v in self.auto_restart_condition_regexp_per_log_file.items():
                 h1 = k
-                h2 = ",".join(v)
+                h2 = ",".join([str(s) for s in v])
                 yield f"{h1}:{h2}"
 
 

@@ -205,9 +205,9 @@ class TaskProcess:
         site_env_file = Path(self.pipeline_work_dir, "site.env")
 
         if not site_env_file.exists():
-            self.task_logger.debug("NOT on remote site")
+            self.task_logger.info("NOT on remote site")
         else:
-            self.task_logger.debug("is on remote site")
+            self.task_logger.info("is on remote site")
             self.is_on_remote_site = True
             with open(site_env_file) as f:
                 for l in f.readlines():
