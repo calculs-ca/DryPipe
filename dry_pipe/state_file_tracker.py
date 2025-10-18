@@ -119,7 +119,8 @@ class StateFileTracker:
         state_file.transition_to_crashed()
         os.rename(previous_path, state_file.path)
 
-    def transition_to_pre_launch(self, state_file, reset_failed=False):
+    @classmethod
+    def transition_to_pre_launch(cls, state_file, reset_failed=False):
         previous_path = state_file.path
         state_file.transition_to_pre_launch(reset_failed)
         os.rename(previous_path, state_file.path)

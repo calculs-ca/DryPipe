@@ -10,7 +10,7 @@ from dry_pipe import PortablePopen, TaskConf
 from dry_pipe.state_file_tracker import StateFileTracker
 from dry_pipe.task_lib import upload_task_inputs_rsync, download_task_outputs_rsync
 from dry_pipe.task_process import TaskProcess
-from dry_pipe.slurm_codes import SlurmJobStateCodes
+from dry_pipe.slurm_codes import SlurmJobStateCodes, SlurmJobStateShortCodes
 
 logger = logging.getLogger(__name__)
 
@@ -203,7 +203,7 @@ class SlurmArrayParentTask:
             is_running_or_will_run_count = 0
 
             for array_idx, state_code in array_idx_to_state_codes.items():
-                if SlurmJobStateCodes.is_running_or_will_run(state_code, this_logger):
+                if SlurmJobStateShortCodes.is_running_or_will_run(state_code):
                     is_running_or_will_run_count += 1
                 else:
                     task_key = task_key_to_job_id_and_array_idx[(job_id, array_idx)]

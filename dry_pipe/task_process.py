@@ -15,7 +15,7 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile
 from threading import Thread
 
-from dry_pipe import TaskConf, RemotePipelineSpecs
+from dry_pipe import TaskConf, RemotePipelineSpecs, StateFileTracker
 from dry_pipe.core_lib import UpstreamTasksNotCompleted, PortablePopen, func_from_mod_func, invoke_rsync, \
     FileCreationDefaultModes, expandvars_from_dict, TimeLogger
 
@@ -832,11 +832,8 @@ class TaskProcess:
 
                 self.env[k] = v
 
-    def read_task_state(self, control_dir=None, state_file=None, non_existant_ok=False):
-
-        if control_dir is None:
-            control_dir = self.env["__control_dir"]
-
+    @classmethod
+    def read_task_state_from(cls, control_dir, state_file=None, non_existant_ok=False):
         if state_file is None:
             glob_exp = os.path.join(control_dir, "state.*")
             state_file = list(glob.glob(glob_exp))
@@ -864,6 +861,12 @@ class TaskProcess:
 
         return step_number, control_dir, state_file, state_name
 
+
+    def read_task_state(self, control_dir=None, state_file=None, non_existant_ok=False):
+        if control_dir is None:
+            control_dir = self.env["__control_dir"]
+        return self.read_task_state_from(control_dir=control_dir, state_file=state_file, non_existant_ok=non_existant_ok)
+
     def _append_to_history(self, control_dir, state_name, step_number=None):
         with open(os.path.join(control_dir, "history.tsv"), "a") as f:
             f.write(state_name)
@@ -883,7 +886,7 @@ class TaskProcess:
         self._transition_state_file(state_file, "waiting", i)
 
 
-    def _transition_state_file(self, state_file, next_state_name, step_number=None):
+    def _transition_state_file(self, state_file, next_state_name, step_number=None, update_slurm_job_name=False):
 
         self.task_logger.debug("_transition_state_file: %s", state_file)
 
@@ -895,6 +898,9 @@ class TaskProcess:
         else:
             next_step_number = step_number
             next_state_basename = f"state.{next_state_name}.{next_step_number}"
+
+        if update_slurm_job_name:
+            self._update_job_name(f"{self.task_key}:{next_state_basename[6:]}")
 
         next_state_file = os.path.join(control_dir, next_state_basename)
 
@@ -921,7 +927,11 @@ class TaskProcess:
 
         pre_launch_flag = "_" if is_pre_launch else ""
 
-        return self._transition_state_file(state_file, f"{pre_launch_flag}step-started", step_number)
+        update_slurm_job_name = False
+        if self.is_array_child_task() and not is_pre_launch:
+            update_slurm_job_name = True
+
+        return self._transition_state_file(state_file, f"{pre_launch_flag}step-started", step_number, update_slurm_job_name)
 
 
     def transition_to_step_completed(self, state_file, step_number):
@@ -951,7 +961,11 @@ class TaskProcess:
 
 
     def transition_to_completed(self, state_file):
-        return self._transition_state_file(state_file, "completed")
+        return self._transition_state_file(
+            state_file,
+            "completed",
+            update_slurm_job_name=self.is_array_child_task()
+        )
 
 
     def write_out_vars(self, out_vars):
@@ -1357,17 +1371,17 @@ class TaskProcess:
             # should be rare, since launch error makes it unlikely to make it here
             self.task_logger.warning("non empty launch log")
 
-    def _rename_slurm_job(self):
 
+    def _task_job_id(self):
         if self.is_array_child_task():
-            self._delete_array_child_launch_log_if_empty()
-            this_task_job_id = f"{self.slurm_array_job_id}_{self.slurm_array_task_id}"
+            return f"{self.slurm_array_job_id}_{self.slurm_array_task_id}"
         else:
-            this_task_job_id = self.slurm_job_id
+            return self.slurm_job_id
 
-        self.task_logger.info("Will rename slurm job %s to %s", this_task_job_id, self.task_key)
-
-        with PortablePopen(["scontrol", "update", f"JobId={this_task_job_id}", f"JobName={self.task_key}"]) as p:
+    def _update_job_name(self, name):
+        this_task_job_id = self._task_job_id()
+        self.task_logger.info("Will rename slurm job %s to %s", this_task_job_id, name)
+        with PortablePopen(["scontrol", "update", f"JobId={this_task_job_id}", f"JobName={name}"]) as p:
             p.wait_and_raise_if_non_zero()
 
     def _launch_and_tail(self, launch_func):
@@ -1436,7 +1450,10 @@ class TaskProcess:
             else:
                 # forked child, or slurm job
                 if is_slurm:
-                    self._rename_slurm_job()
+                    if self.is_array_child_task():
+                        #step_number, control_dir, state_file, state_name = self.read_task_state()
+                        #self._update_job_name(f"{self.task_key}:{state_name}.{step_number}")
+                        self._delete_array_child_launch_log_if_empty()
 
                 os.setpgrp()
                 self.register_signal_handlers()
