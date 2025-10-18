@@ -6,6 +6,10 @@ import shutil
 import logging.config
 from dry_pipe import DryPipe, core_lib
 
+class DummyLogger(object):
+    def __getattr__(self, name):
+        return lambda *args, **kwargs: None
+
 
 def test_suite_base_dir():
     return os.path.dirname(__file__)
