@@ -8,6 +8,12 @@ from dry_pipe.slurm_array_task import AutoRestartManager
 from dry_pipe.slurm_codes import SlurmJobStateLongCodes
 from dry_pipe.state_file_tracker import StateFileTracker
 
+def dedent_lines(txt):
+    return "\n".join([
+        line.strip()
+        for line in txt.split("\n")
+    ])
+
 
 class SAcctParser:
 
@@ -18,6 +24,7 @@ class SAcctParser:
             sacct_output = fake_outputs.get(job_id)
             if sacct_output is None:
                 raise Exception(f'No fake sacct output for job_id {job_id}')
+            sacct_output = dedent_lines(sacct_output)
         else:
             with PortablePopen(f'sacct --format="JobId,State,JobName,ExitCode" --parsable -j {job_id}') as p:
                 p.wait_and_raise_if_non_zero()
@@ -58,6 +65,7 @@ class SQueueParser:
             squeue_output = fake_outputs.get(job_id)
             if squeue_output is None:
                 raise Exception(f'No fake squeue output for job_id {job_id}')
+            squeue_output = dedent_lines(squeue_output)
         else:
             with PortablePopen(f'squeue --noheader --format="%i|%T|%j|0:0|" -j {job_id}') as p:
                 p.wait_and_raise_if_non_zero()
@@ -153,7 +161,8 @@ class ArraySubmitInfo:
 
         self.sacct_logs_files_sequence = SequenceOfFiles(
             "array.{0}.job.{1}.{2}.sacct.out".format(submit_array_idx, job_id, "{0}"),
-            self.array_keys_file.parent
+            self.array_keys_file.parent,
+            lambda f: f.split(".")[4]
         )
 
         def g():
@@ -173,9 +182,10 @@ class ArraySubmitInfo:
 
 class SequenceOfFiles:
 
-    def __init__(self, name_template, directory):
+    def __init__(self, name_template, directory, index_from_file_name):
         self.name_template = name_template
         self.directory = directory
+        self.index_from_file_name = index_from_file_name
 
     def next_file_and_number(self):
         files = list(self.list_files())
@@ -193,8 +203,7 @@ class SequenceOfFiles:
         def gen():
             for f in glob.glob(os.path.join(self.directory, self.name_template.format("*"))):
                 b = os.path.basename(f)
-                idx = b.split(".")[1]
-                idx = int(idx)
+                idx = int(self.index_from_file_name(b))
                 yield idx, f
 
         yield from sorted(gen(), key= lambda t: t[0])
@@ -228,7 +237,11 @@ class ArrayTaskManager:
         self.task_process = task_process
         self.arrays_submitted_sacct_info = None
         self.last_sacct_row_per_task_key = dict([])
-        self.array_files_sequence = SequenceOfFiles("array.{0}.tsv", self.array_task_control_dir())
+        self.array_files_sequence = SequenceOfFiles(
+            "array.{0}.tsv",
+            self.array_task_control_dir(),
+            lambda f: f.split(".")[1]
+        )
 
     def next_array_file_name_and_number(self):
         return self.array_files_sequence.next_file_and_number()
@@ -442,12 +455,12 @@ class ArrayTaskManager:
         for sbatch_options, task_keys in self.group_by_sbatch_options(next_task_keys):
 
             next_task_key_file, next_array_number = self.next_array_file_name_and_number()
-
+            task_keys_for_saving = sorted(task_keys)
             def pre_submit_func():
                 self.logger().info("next array task keys in %s", next_task_key_file)
 
                 with open(next_task_key_file, "w") as _next_task_key_file:
-                    for task_key in task_keys:
+                    for task_key in task_keys_for_saving:
                         _next_task_key_file.write(f"{task_key}\n")
 
             command_args = self.prepare_sbatch_command(

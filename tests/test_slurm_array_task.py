@@ -99,7 +99,7 @@ class ArrayTaskScenario(TestWithDirectorySandbox):
 class ArrayTaskScenario1(ArrayTaskScenario):
 
     def task_keys(self):
-        return ["t_1", "t_2"]
+        return ["t_1", "t_2", "t_3"]
 
     def task_conf_parent(self):
         return TaskConf(fields_from_json={
@@ -121,17 +121,17 @@ class ArrayTaskScenario1(ArrayTaskScenario):
 
         self.assertSetEqual(
             atm.task_keys_for_next_batch(),
-            {"t_1", "t_2"},
+            {"t_1", "t_2", "t_3"}
         )
 
         submit = list(atm.next_submits())[0]
 
-        self.assertEqual(submit.sbatch_command[1],"--array=0-1")
+        self.assertEqual(submit.sbatch_command[1],"--array=0-2")
 
         submit.pre_submit_func()
         self.assertSetEqual(
             atm.children_task_keys(),
-            {"t_1", "t_2"}
+            {"t_1", "t_2", "t_3"}
         )
         # un submit...
         os.remove(list(atm.array_files_sequence.list_files())[0][1])
@@ -148,7 +148,7 @@ class ArrayTaskScenario1(ArrayTaskScenario):
         # --format="JobId,State,JobName,ExitCode"
 
         atm.invoke_sacct(fake_sacct_outputs={
-            "51027286": "51027286_[0-1]|PENDING|cli|0:0|"
+            "51027286": "51027286_[0-2]|PENDING|cli|0:0|"
         })
 
 
@@ -163,7 +163,7 @@ class ArrayTaskScenario1(ArrayTaskScenario):
             []
         )
 
-        expected = {'t_1': 'PENDING', 't_2': 'PENDING'}
+        expected = {'t_1': 'PENDING', 't_2': 'PENDING', 't_3': 'PENDING'}
 
         self.assertEqual(
             atm.last_sact_state_code_by_task_keys(),
@@ -173,10 +173,11 @@ class ArrayTaskScenario1(ArrayTaskScenario):
         atm.invoke_sacct(fake_sacct_outputs={
             "51027286":
                 """51027286_0|RUNNING|t_1:step-started.0|0:0|
-                   51027286_1|RUNNING|t_2:step-started.1|0:0|"""
+                   51027286_1|RUNNING|t_2:step-started.1|0:0|
+                   51027286_2|RUNNING|t_3:step-started.1|0:0|"""
         })
 
-        expected = {'t_1': 'RUNNING', 't_2': 'RUNNING'}
+        expected = {'t_1': 'RUNNING', 't_2': 'RUNNING', 't_3': 'RUNNING'}
 
         assert_empty_next_submit()
 
@@ -193,12 +194,13 @@ class ArrayTaskScenario1(ArrayTaskScenario):
         atm.invoke_sacct(fake_sacct_outputs={
             "51027286":
                 """51027286_0|COMPLETED|t_1:completed|0:0|
-                   51027286_1|COMPLETED|t_2:completed|0:0|"""
+                   51027286_1|COMPLETED|t_2:completed|0:0|
+                   51027286_2|COMPLETED|t_3:completed|0:0|"""
         })
 
         assert_empty_next_submit()
 
-        expected = {'t_1': 'COMPLETED', 't_2': 'COMPLETED'}
+        expected = {'t_1': 'COMPLETED', 't_2': 'COMPLETED', 't_3': 'COMPLETED'}
 
         self.assertEqual(
             atm.last_sact_state_code_by_task_keys(),
@@ -214,7 +216,7 @@ class ArrayTaskScenario1(ArrayTaskScenario):
 
         self.assertSetEqual(
             atm.task_keys_for_next_batch(),
-            {"t_1", "t_2"},
+            {"t_1", "t_2", "t_3"},
         )
 
         submit = list(atm.next_submits())[0]
@@ -228,7 +230,7 @@ class ArrayTaskScenario1(ArrayTaskScenario):
 
         fake_sacct_outputs = {
             # --format="JobId,State,JobName,ExitCode"
-            "51027286": "51027286_[0-1]|CANCELLED|cli|0:0|"
+            "51027286": "51027286_[0-2]|CANCELLED|cli|0:0|"
         }
 
         atm.invoke_sacct(fake_sacct_outputs)
@@ -237,7 +239,7 @@ class ArrayTaskScenario1(ArrayTaskScenario):
 
         self.assertSetEqual(
             atm.task_keys_for_next_batch(),
-            {"t_1", "t_2"},
+            {"t_1", "t_2", "t_3"},
         )
 
 
@@ -245,7 +247,8 @@ class ArrayTaskScenario1(ArrayTaskScenario):
 
         fake_sacct_outputs["51027287"] = \
             """51027287_0|RUNNING|t_1:step-started.0|0:0|
-               51027287_1|FAILED|t_2:failed.1|0:0|"""
+               51027287_1|FAILED|t_2:failed.1|0:0|
+               51027287_2|COMPLETED|t_3:completed|0:0|"""
 
         atm.invoke_sacct(fake_sacct_outputs)
 
