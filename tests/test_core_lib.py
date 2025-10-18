@@ -5,8 +5,8 @@ from pathlib import Path
 
 from base_pipeline_test import TestWithDirectorySandbox
 from dry_pipe.core_lib import expandvars_from_dict
-from dry_pipe.slurm_array_task import AutoRestartManager
-from test_utils import TestSandboxDir
+from dry_pipe import AutoRestartManager
+from test_utils import TestSandboxDir, DummyLogger
 
 
 class TestExpandVars(unittest.TestCase):
@@ -95,8 +95,10 @@ class TestAutoRestarter(TestWithDirectorySandbox):
             "123tdr ter t"
         )
 
+        logger = DummyLogger()
 
-        should_restart, matching_line_number, restart_count, matching_log_filename = ar.should_restart_with_details(msf)
+        should_restart, matching_line_number, restart_count, matching_log_filename = \
+            ar.should_restart_with_details(msf, logger)
 
         self.assertEqual(
             [should_restart, matching_line_number, restart_count],
@@ -110,7 +112,8 @@ class TestAutoRestarter(TestWithDirectorySandbox):
             "123tdr Bus error ter t"
         )
 
-        should_restart, matching_line_number, restart_count, matching_log_filename = ar.should_restart_with_details(msf)
+        should_restart, matching_line_number, restart_count, matching_log_filename = \
+            ar.should_restart_with_details(msf, logger)
 
         self.assertEqual(
             [should_restart, matching_line_number, restart_count, matching_log_filename],
@@ -118,7 +121,8 @@ class TestAutoRestarter(TestWithDirectorySandbox):
         )
 
         # untouched log, should be treated as absent log ?
-        should_restart, matching_line_number, restart_count, matching_log_filename = ar.should_restart_with_details(msf)
+        should_restart, matching_line_number, restart_count, matching_log_filename = \
+            ar.should_restart_with_details(msf, logger)
 
         self.assertEqual(
             [should_restart, matching_line_number, restart_count, matching_log_filename],
@@ -127,7 +131,8 @@ class TestAutoRestarter(TestWithDirectorySandbox):
 
         msf.append_lines(msf.out_log, "nothing")
 
-        should_restart, matching_line_number, restart_count, matching_log_filename = ar.should_restart_with_details(msf)
+        should_restart, matching_line_number, restart_count, matching_log_filename = \
+            ar.should_restart_with_details(msf, logger)
 
         self.assertEqual(
             [should_restart, matching_line_number, restart_count, matching_log_filename],
@@ -140,7 +145,8 @@ class TestAutoRestarter(TestWithDirectorySandbox):
             "aaaa BrokenPipeError 123 b"
         )
 
-        should_restart, matching_line_number, restart_count, matching_log_filename = ar.should_restart_with_details(msf)
+        should_restart, matching_line_number, restart_count, matching_log_filename = \
+            ar.should_restart_with_details(msf, logger)
 
         self.assertEqual(
             [should_restart, matching_line_number, restart_count, matching_log_filename],
@@ -167,7 +173,10 @@ class TestAutoRestarterMissingLogFileRestartsAtMostOnce(TestAutoRestarterMissing
         ar = self.ar
         msf = self.msf
 
-        should_restart, matching_line_number, restart_count, matching_log_filename = self.ar.should_restart_with_details(msf)
+        logger = DummyLogger()
+
+        should_restart, matching_line_number, restart_count, matching_log_filename = \
+            self.ar.should_restart_with_details(msf, logger)
 
         # should restart when out.log is missing
         self.assertEqual(
@@ -175,7 +184,8 @@ class TestAutoRestarterMissingLogFileRestartsAtMostOnce(TestAutoRestarterMissing
             [True,           None,                 0,             "out.log"]
         )
 
-        should_restart, matching_line_number, restart_count, matching_log_filename = ar.should_restart_with_details(msf)
+        should_restart, matching_line_number, restart_count, matching_log_filename = \
+            self.ar.should_restart_with_details(msf, logger)
 
         # but should restart only once for this reason
         self.assertEqual(
@@ -192,7 +202,10 @@ class TestAutoRestarterMissingLogFileRestartsOnlySpecifiedFile(TestAutoRestarter
 
         msf.append_lines(msf.out_log, "nothing")
 
-        should_restart, matching_line_number, restart_count, matching_log_filename = ar.should_restart_with_details(msf)
+        logger = DummyLogger()
+
+        should_restart, matching_line_number, restart_count, matching_log_filename = \
+            self.ar.should_restart_with_details(msf, logger)
 
 
         self.assertEqual(

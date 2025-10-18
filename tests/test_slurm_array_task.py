@@ -1,12 +1,10 @@
 import os
-import textwrap
-import unittest
 from pathlib import Path
 
-from dry_pipe.slurm_arrays import SAcctParser, ArrayTaskManager
+from dry_pipe.slurm_arrays import ArrayTaskManager
 from dry_pipe import TaskConf
 
-from tests.base_pipeline_test import TestWithDirectorySandbox, BasePipelineTest
+from tests.base_pipeline_test import TestWithDirectorySandbox
 from tests.test_utils import DummyLogger, TestSandboxDir
 
 
@@ -22,9 +20,6 @@ class ArrayTaskScenario(TestWithDirectorySandbox):
 
     def array_task_key(self):
         return "array-task"
-
-    def auto_restart_condition_regexp_per_log_file(self):
-        return None
 
     def array_task_conf(self):
         return TaskConf(fields_from_json={
@@ -59,9 +54,6 @@ class ArrayTaskScenario(TestWithDirectorySandbox):
 
             def array_task_control_dir(self):
                 return Path(pipeline_instance_dir, ".drypipe", s.array_task_key()).__str__()
-
-            def auto_restart_condition_regexp_per_log_file(self):
-                return s.auto_restart_condition_regexp_per_log_file()
 
             def array_task_conf(self):
                 return s.array_task_conf()

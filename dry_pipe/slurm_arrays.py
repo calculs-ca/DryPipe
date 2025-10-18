@@ -4,7 +4,6 @@ from itertools import groupby
 from pathlib import Path
 
 from dry_pipe import PortablePopen, TaskConf
-from dry_pipe.slurm_array_task import AutoRestartManager
 from dry_pipe.slurm_codes import SlurmJobStateLongCodes
 from dry_pipe.state_file_tracker import StateFileTracker
 
@@ -233,7 +232,7 @@ class SlurmArrayBatchSubmit:
 
 class ArrayTaskManager:
 
-    def __init__(self, task_process):
+    def __init__(self, task_process, auto_restart_manager=None):
         self.task_process = task_process
         self.arrays_submitted_sacct_info = None
         self.last_sacct_row_per_task_key = dict([])
@@ -242,6 +241,7 @@ class ArrayTaskManager:
             self.array_task_control_dir(),
             lambda f: f.split(".")[1]
         )
+        self.auto_restart_manager = auto_restart_manager
 
     def next_array_file_name_and_number(self):
         return self.array_files_sequence.next_file_and_number()
@@ -333,10 +333,6 @@ class ArrayTaskManager:
     def array_task_conf(self):
         return self.task_process.task_conf
 
-
-    def auto_restart_condition_regexp_per_log_file(self):
-        return self.array_task_conf().auto_restart_condition_regexp_per_log_file
-
     def find_state_file_for_task_key(self, task_key):
         return StateFileTracker.find_state_file_if_exists(self.pipeline_work_dir(), task_key)
 
@@ -422,11 +418,6 @@ class ArrayTaskManager:
     def task_keys_for_next_batch(self):
 
         def g():
-            if self.auto_restart_condition_regexp_per_log_file() is None:
-                arm = None
-            else:
-                arm = AutoRestartManager(self.array_task_conf().auto_restart_condition_regexp_per_log_file)
-
             for task_key in self.children_task_keys():
                 sacct_row = self.last_sacct_row_per_task_key.get(task_key)
                 if sacct_row is None:
@@ -441,9 +432,9 @@ class ArrayTaskManager:
                     yield task_key
                     continue
 
-                if SlurmJobStateLongCodes.has_failed(sacct_row.long_code_state) and arm is not None:
+                if SlurmJobStateLongCodes.has_failed(sacct_row.long_code_state) and self.auto_restart_manager is not None:
                     state_file = self.find_state_file_for_task_key(task_key)
-                    if arm.should_restart(state_file, alternate_logger=self.logger()):
+                    if self.auto_restart_manager.should_restart(state_file, alternate_logger=self.logger()):
                         yield task_key
                         continue
         return set(g())

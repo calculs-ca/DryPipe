@@ -802,6 +802,148 @@ class TaskConf:
 
 
 
+class AutoRestartManager:
+
+    def __init__(self, auto_restart_condition_regexp_per_log_file, max_restart=3):
+
+        self.max_restart = max_restart
+
+        if auto_restart_condition_regexp_per_log_file is None:
+            self.auto_restart_condition_regexp_per_log_file = None
+        else:
+            def compile_regexp(f, pattern):
+                try:
+                    return re.compile(pattern)
+                except Exception as ex:
+                    raise Exception(f"Failed to compile regex pattern '{pattern}', for file '{f}'")
+
+            self.auto_restart_condition_regexp_per_log_file = {
+                f: [
+                    None if r is None else compile_regexp(f, r)
+                    for r in regexen
+                ]
+                for f, regexen in auto_restart_condition_regexp_per_log_file.items()
+            }
+
+    def restart_file(self, state_file):
+        return Path(state_file.control_dir(), "restarts.tsv")
+
+
+    def _last_line_of_prev_restarts_per_file_and_restart_count(self, state_file):
+
+        restarts = self.restart_file(state_file)
+
+        last_line_of_prev_restarts_per_file = {
+            f: None
+            for f in self.auto_restart_condition_regexp_per_log_file.keys()
+        }
+
+        restart_decisions_for_missing_log_files = set([])
+
+        if not restarts.exists():
+            return last_line_of_prev_restarts_per_file, restart_decisions_for_missing_log_files, 0
+        else:
+
+            restart_counter = [0]
+
+            def g():
+
+                yield from last_line_of_prev_restarts_per_file.items()
+
+                with open(restarts, "r") as f:
+                    rows = []
+                    for line in f:
+                        line = line.strip()
+                        if line == "":
+                            continue
+                        if line.startswith("RESET"):
+                            rows.clear()
+                            continue
+                        row = [
+                            l.strip() for l in line.split("\t", maxsplit=3)
+                        ]
+                        log_name, line_in_log, matching_line = row
+                        if matching_line == "MISSING":
+                            restart_decisions_for_missing_log_files[log_name] = True
+                        else:
+                            rows.append(row)
+
+                    for row in rows:
+                        log_name, line_in_log, ignore = row
+                        restart_counter[0] = restart_counter[0] + 1
+                        yield log_name, int(line_in_log) if line_in_log != "None" else None
+
+            last_line_of_prev_restarts_per_file = dict(g())
+
+        return  last_line_of_prev_restarts_per_file, restart_decisions_for_missing_log_files, restart_counter[0]
+
+    def _record_restart(self, state_file, log_file_name, line_number, matching_line):
+        with open(self.restart_file(state_file), "a") as f:
+            f.write(f"{log_file_name}\t{line_number}\t{matching_line.strip()}\n")
+
+    def should_restart_with_details(self, state_file, logger):
+
+        last_line_of_prev_restarts_per_file, restart_decisions_for_missing_log_files, restart_count = \
+            self._last_line_of_prev_restarts_per_file_and_restart_count(state_file)
+
+        if restart_count >= self.max_restart:
+            logger.info("%s has reached max relaunch %s", state_file.task_key, restart_count)
+            return False, 0, restart_count, None
+
+        for f, regexen in self.auto_restart_condition_regexp_per_log_file.items():
+            for r in regexen:
+                log_file = Path(state_file.control_dir(), f)
+
+                if r is None:
+                    # a task without a log is abnormal, most often as a result of a restartable error,
+                    # we restart, but at most once
+                    if not log_file.exists() and restart_count == 0:
+
+                        if f in restart_decisions_for_missing_log_files:
+                            continue
+
+                        self._record_restart(state_file, f, None, "MISSING_FILE")
+                        logger.info(
+                            "%s has no log %s, will relaunch", state_file.task_key, log_file
+                        )
+                        return True, None, restart_count, f
+                    else:
+                        continue
+                else:
+                    if not log_file.exists():
+                        continue
+
+                match_starting_at_line = last_line_of_prev_restarts_per_file[f]
+
+                with open(log_file) as log_file_h:
+                    c = 0
+
+                    last_line_of_match_occurrence = None
+
+                    for line in log_file_h:
+                        c += 1
+                        if match_starting_at_line is not None and c <= match_starting_at_line:
+                            continue
+
+                        if r.match(line):
+                            last_line_of_match_occurrence = c
+
+                    if last_line_of_match_occurrence is not None:
+                        logger.info(
+                            "will relaunch %s, relaunches so far: %s", state_file.task_key, restart_count
+                        )
+                        self._record_restart(state_file, f, last_line_of_match_occurrence, line)
+                        return True, c, restart_count, f
+
+        logger.debug("will NOT relaunch %s", state_file.task_key)
+
+        return False, None, restart_count, None
+
+    def should_restart(self, state_file, logger):
+        should_restart, matching_line_number, restart_count, matching_log_filename = \
+            self.should_restart_with_details(state_file, logger)
+        return should_restart
+
 
 class ApptainerConf:
 
