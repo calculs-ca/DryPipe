@@ -504,14 +504,14 @@ class PipelineWithMultiStepSlurmArrayWithMultiSbatchOptionsWithCrashAndRestarts(
         self.assertEqual(len(batch_with_sbatch_options), 3)
 
         self.assertEqual(
-            {"/t_0/state.failed.0"},
+            {"t_0/state.failed.0"},
             {str(s) for s in batch_with_no_sbatch_options}
         )
 
         self.assertEqual(
-            {"/t_1/state.failed.1",
-             "/t_2/state.failed.1",
-             "/t_3/state.failed.3"},
+            {"t_1/state.failed.1",
+             "t_2/state.failed.1",
+             "t_3/state.failed.3"},
             {str(s) for s in batch_with_sbatch_options}
         )
 

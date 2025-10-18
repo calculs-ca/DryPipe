@@ -133,7 +133,7 @@ class BaseStateFileTrackerTester(unittest.TestCase):
 
         true_state_file, _ = state_file_tracker.fetch_true_state_and_update_memory_if_changed("t1")
 
-        self.assertEqual("/t1/state.completed", str(true_state_file))
+        self.assertEqual("t1/state.completed", str(true_state_file))
 
         # ensure only fetched once:
         true_state_file, _ = state_file_tracker.fetch_true_state_and_update_memory_if_changed("t1")
