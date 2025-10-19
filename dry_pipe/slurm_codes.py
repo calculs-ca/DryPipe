@@ -177,6 +177,8 @@ class SlurmJobStateCodes:
 
     is_in_queue_or_in_progression = {PENDING, RUNNING, COMPLETING, CONFIGURING}
 
+    failed_cancelled_or_timed_out = {FAILED, CANCELLED, TIMEOUT}
+
     @classmethod
     def all_codes_by_long_code(cls):
         for _, o in cls.__dict__.items():
@@ -237,3 +239,7 @@ class SlurmJobStateLongCodes:
     @staticmethod
     def pending_or_running(long_code: str):
         return SlurmJobStateLongCodes._lookup_code(long_code) in SlurmJobStateCodes.is_running_or_will_run
+
+    @staticmethod
+    def has_failed_cancelled_or_timed_out(long_code: str):
+        return SlurmJobStateLongCodes._lookup_code(long_code) in SlurmJobStateCodes.failed_cancelled_or_timed_out

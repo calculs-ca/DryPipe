@@ -45,7 +45,7 @@ class BasePipelineTest(TestWithDirectorySandbox):
         pass
 
     def custom_sleep_schedule(self):
-        return "0"
+        return "1"
 
     def custom_sleep_schedule_parsed(self):
         return [int(s) for s in self.custom_sleep_schedule().split(",")]

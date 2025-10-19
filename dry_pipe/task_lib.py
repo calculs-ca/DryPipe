@@ -12,56 +12,48 @@ from dry_pipe.task_process import TaskProcess
 
 @DryPipe.python_call()
 def submit_local_array(__task_process):
-    from dry_pipe.slurm_array_task import SlurmArrayParentTask
-    t = SlurmArrayParentTask(__task_process)
-    array_tasks_submitted = t.prepare_and_launch_next_array(None, restart_failed=True)
-    return {"array_tasks_submitted": array_tasks_submitted}
+
+    array_task_manager = __task_process.create_array_task_manager()
+
+    submit = array_task_manager.next_submits()[0]
+
+    submit.invoke()
+
+    return {"array_tasks_submitted": len(submit.task_keys)}
 
 
 @DryPipe.python_call()
 def watch_local_array(__task_process):
-    from dry_pipe.slurm_array_task import SlurmArrayParentTask, AutoRestartManager
 
-    t = SlurmArrayParentTask(__task_process)
+    array_task_manager = __task_process.create_array_task_manager()
+
     task_logger = __task_process.task_logger
 
     with SleepySpinner(__task_process.sleep_schedule([30, 120, 240]), task_logger) as ss:
 
         round_counter = 0
 
-        if t.task_process.task_conf.auto_restart_condition_regexp_per_log_file is not None:
-            arm = AutoRestartManager(t.task_process.task_conf.auto_restart_condition_regexp_per_log_file)
-        else:
-            arm = None
-
         while True:
 
-            t.compare_and_reconcile_squeue_with_state_files(alternate_logger=task_logger)
-            if arm is not None:
-                #if round % 5 == 1 and round > 1:
-                relaunch_count = t.prepare_and_launch_next_array(
-                    auto_restart_manager=arm, alternate_logger=__task_process.task_logger
-                )
-            else:
-                relaunch_count = 0
+            array_task_manager.invoke_sacct()
 
-            number_of_active_sbatch_submissions = \
-                t.number_of_active_sbatch_submissions()
-            if number_of_active_sbatch_submissions == 0:
-                if relaunch_count == 0:
-                    task_logger.info("array task has no more running array jobs")
+            launch_count_this_round = 0
+            for submit in array_task_manager.next_submits():
+                submit.invoke()
+                launch_count_this_round += len(submit.task_keys)
+            atc = len(array_task_manager.active_tasks())
 
-                    report = t.inspect_child_tasks()
-                    failed_task_keys = report["failed_task_keys"]
-                    failed_task_count = len(failed_task_keys)
-                    if failed_task_count > 0:
-                        msg = json.dumps(report)
-                        raise Exception(f"{failed_task_count} tasks failed, {msg}")
-                    break
+            if atc == 0 and launch_count_this_round == 0:
+                task_logger.info("array task has no more running array jobs")
+
+                failed_task_count = len(array_task_manager.failed_canceld_timedout_tasks())
+                if failed_task_count > 0:
+                    raise Exception(f"{failed_task_count} tasks failed")
+                break
             else:
                 task_logger.info(
                     "array still has %s active submissions, will sleep %s seconds",
-                    number_of_active_sbatch_submissions, ss.next_sleep()
+                    atc, ss.next_sleep()
                 )
                 ss.sleep()
 

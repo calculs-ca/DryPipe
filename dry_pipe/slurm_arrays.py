@@ -4,7 +4,7 @@ from itertools import groupby
 from pathlib import Path
 
 from dry_pipe import PortablePopen, TaskConf
-from dry_pipe.slurm_codes import SlurmJobStateLongCodes
+from dry_pipe.slurm_codes import SlurmJobStateLongCodes, SlurmJobStateCodes
 from dry_pipe.state_file_tracker import StateFileTracker
 
 def dedent_lines(txt):
@@ -25,7 +25,7 @@ class SAcctParser:
                 raise Exception(f'No fake sacct output for job_id {job_id}')
             sacct_output = dedent_lines(sacct_output)
         else:
-            with PortablePopen(f'sacct --format="JobId,State,JobName,ExitCode" --parsable -j {job_id}') as p:
+            with PortablePopen(f'sacct --format="JobId,State,JobName,ExitCode" --parsable -j {job_id}', shell=True) as p:
                 p.wait_and_raise_if_non_zero()
                 sacct_output = p.stdout_as_string()
 
@@ -66,7 +66,7 @@ class SQueueParser:
                 raise Exception(f'No fake squeue output for job_id {job_id}')
             squeue_output = dedent_lines(squeue_output)
         else:
-            with PortablePopen(f'squeue --noheader --format="%i|%T|%j|0:0|" -j {job_id}') as p:
+            with PortablePopen(f'squeue --noheader --format="%i|%T|%j|0:0|" -j {job_id}', shell=True) as p:
                 p.wait_and_raise_if_non_zero()
                 squeue_output = p.stdout_as_string()
 
@@ -81,6 +81,12 @@ class SQueueParser:
 
         return squeue_output, list(g())
 
+
+class SyntheticSAcctRow:
+    def __init__(self, long_code_state, dry_pipe_state):
+        self.long_code_state = long_code_state
+        self.dry_pipe_state = dry_pipe_state
+        self.dry_pipe_step_number = None
 
 class SAcctRow:
 
@@ -140,7 +146,7 @@ class ArraySubmitInfo:
     where array_submit_idx is a number from 0,1,... N representing the ith array submission,
     """
 
-    def __init__(self, submit_array_idx, job_id, submit_file, logger, sacct_parser=SAcctParser()):
+    def __init__(self, submit_array_idx, job_id, submit_file, logger, sacct_parser):
 
         self.array_submit_file_name = Path(submit_file).name
 
@@ -174,7 +180,17 @@ class ArraySubmitInfo:
 
     def invoke_sacct(self, fake_outputs=None):
         self.sacct_output, self.sacct_rows = self.sacct_parser.invoke(self.job_id, fake_outputs)
-        file, _ = self.sacct_logs_files_sequence.next_file_and_number()
+        file, n = self.sacct_logs_files_sequence.next_file_and_number()
+
+        # don't save sacct output, if it's the same as previous
+        if n > 0:
+            prev_file = self.sacct_logs_files_sequence.file_name(n - 1)
+            if Path(prev_file).exists():
+                with open(prev_file, "r") as f:
+                    prev_output = f.read()
+                    if prev_output == self.sacct_output:
+                        return
+
         with open(file, "w") as f:
             f.write(self.sacct_output)
 
@@ -195,7 +211,10 @@ class SequenceOfFiles:
             last_file_idx = files[-1][0]
             next_number = last_file_idx + 1
 
-        return os.path.join(self.directory, self.name_template.format(next_number)), next_number
+        return self.file_name(next_number), next_number
+
+    def file_name(self, number):
+        return os.path.join(self.directory, self.name_template.format(number))
 
     def list_files(self):
 
@@ -232,7 +251,7 @@ class SlurmArrayBatchSubmit:
 
 class ArrayTaskManager:
 
-    def __init__(self, task_process, auto_restart_manager=None):
+    def __init__(self, task_process, auto_restart_manager=None, sacct_parser=SAcctParser()):
         self.task_process = task_process
         self.arrays_submitted_sacct_info = None
         self.last_sacct_row_per_task_key = dict([])
@@ -242,6 +261,7 @@ class ArrayTaskManager:
             lambda f: f.split(".")[1]
         )
         self.auto_restart_manager = auto_restart_manager
+        self.sacct_parser=sacct_parser
 
     def next_array_file_name_and_number(self):
         return self.array_files_sequence.next_file_and_number()
@@ -262,10 +282,28 @@ class ArrayTaskManager:
                     yield task_key, sacct_row
 
 
+        if isinstance(self.sacct_parser, SQueueParser):
+            for task_key in self.children_task_keys():
+                state_file = self.find_state_file_for_task_key(task_key)
+                if state_file.is_failed():
+                    yield task_key, SyntheticSAcctRow(SlurmJobStateCodes.FAILED.long_code, state_file.state())
+                elif state_file.is_completed():
+                    yield task_key, SyntheticSAcctRow(SlurmJobStateCodes.COMPLETED.long_code, state_file.state())
+                elif state_file.is_timed_out():
+                    yield task_key, SyntheticSAcctRow(SlurmJobStateCodes.TIMEOUT.long_code, state_file.state())
+
+
+    def list_array_states(self):
+        pwd = self.pipeline_work_dir()
+        for task_key in self.children_task_keys():
+            state_file_path = StateFileTracker.find_state_file_path_if_exists(os.path.join(pwd, task_key))
+            yield task_key, state_file_path.name
+
     def invoke_sacct(self, fake_sacct_outputs=None):
 
+
         self.arrays_submitted_sacct_info = [
-            ArraySubmitInfo(array_n, job_id, f, self.logger)
+            ArraySubmitInfo(array_n, job_id, f, self.logger, self.sacct_parser)
             for array_n, job_id, f in self.submitted_arrays_files()
         ]
 
@@ -359,7 +397,7 @@ class ArrayTaskManager:
             yield "--export={0}".format(",".join([
                 f"DRYPIPE_TASK_CONTROL_DIR={self.array_task_control_dir()}",
                 f"DRYPIPE_TASK_KEY_FILE_BASENAME={os.path.basename(task_key_file)}",
-                f"DRYPIPE_TASK_DEBUG={self.is_debug()}"
+                f"DRYPIPE_TASK_DEBUG={self.task_process.is_debug()}"
             ]))
 
             if self.task_process is not None and self.task_process.wait_for_completion:
@@ -434,33 +472,54 @@ class ArrayTaskManager:
 
                 if SlurmJobStateLongCodes.has_failed(sacct_row.long_code_state) and self.auto_restart_manager is not None:
                     state_file = self.find_state_file_for_task_key(task_key)
-                    if self.auto_restart_manager.should_restart(state_file, alternate_logger=self.logger()):
+                    if self.auto_restart_manager.should_restart(state_file, logger=self.logger()):
                         yield task_key
                         continue
         return set(g())
+
+    def active_tasks(self):
+
+        def g():
+            for task_key, sacct_row in self.last_sacct_row_per_task_key.items():
+                if SlurmJobStateLongCodes.pending_or_running(sacct_row.long_code_state):
+                    yield task_key
+
+        return list(g())
+
+    def failed_canceld_timedout_tasks(self):
+        def g():
+            for task_key, sacct_row in self.last_sacct_row_per_task_key.items():
+                if SlurmJobStateLongCodes.has_failed_cancelled_or_timed_out(sacct_row.long_code_state):
+                    yield task_key
+
+        return list(g())
 
     def next_submits(self):
 
         next_task_keys = self.task_keys_for_next_batch()
 
-        for sbatch_options, task_keys in self.group_by_sbatch_options(next_task_keys):
+        def g():
 
-            next_task_key_file, next_array_number = self.next_array_file_name_and_number()
-            task_keys_for_saving = sorted(task_keys)
-            def pre_submit_func():
-                self.logger().info("next array task keys in %s", next_task_key_file)
+            for sbatch_options, task_keys in self.group_by_sbatch_options(next_task_keys):
 
-                with open(next_task_key_file, "w") as _next_task_key_file:
-                    for task_key in task_keys_for_saving:
-                        _next_task_key_file.write(f"{task_key}\n")
+                next_task_key_file, next_array_number = self.next_array_file_name_and_number()
+                task_keys_for_saving = sorted(task_keys)
+                def pre_submit_func():
+                    self.logger().info("next array task keys in %s", next_task_key_file)
 
-            command_args = self.prepare_sbatch_command(
-                next_task_key_file, len(task_keys), sbatch_options
-            )
+                    with open(next_task_key_file, "w") as _next_task_key_file:
+                        for task_key in task_keys_for_saving:
+                            _next_task_key_file.write(f"{task_key}\n")
 
-            def post_submit_func(job_id):
-                self.logger().info("array job id: %s", job_id)
-                with open(self.i_th_submitted_array_file(next_array_number, job_id), "w") as f:
-                    f.write(" ".join(command_args))
+                command_args = self.prepare_sbatch_command(
+                    next_task_key_file, len(task_keys), sbatch_options
+                )
 
-            yield SlurmArrayBatchSubmit(pre_submit_func, command_args, post_submit_func, task_keys)
+                def post_submit_func(job_id):
+                    self.logger().info("array job id: %s", job_id)
+                    with open(self.i_th_submitted_array_file(next_array_number, job_id), "w") as f:
+                        f.write(" ".join(command_args))
+
+                yield SlurmArrayBatchSubmit(pre_submit_func, command_args, post_submit_func, task_keys)
+
+        return list(g())

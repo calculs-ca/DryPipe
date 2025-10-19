@@ -620,7 +620,8 @@ class TaskConf:
             globus_transfer=None,
             globus_local_path_rewrite=None,
             auto_restart_condition_regexp_per_log_file=None,
-            downstream_resets=()
+            downstream_resets=(),
+            use_squeue=False
     ):
 
         self.external_files_root = None
@@ -676,6 +677,7 @@ class TaskConf:
         self.globus_local_path_rewrite = globus_local_path_rewrite
         self.auto_restart_condition_regexp_per_log_file = auto_restart_condition_regexp_per_log_file
         self.downstream_resets = downstream_resets
+        self.use_squeue = use_squeue
 
         if extra_env is not None:
             if not isinstance(extra_env, dict):
@@ -825,8 +827,12 @@ class AutoRestartManager:
                 for f, regexen in auto_restart_condition_regexp_per_log_file.items()
             }
 
+    def control_dir(self, state_file):
+        return os.path.dirname(state_file.path)
+
+
     def restart_file(self, state_file):
-        return Path(state_file.control_dir(), "restarts.tsv")
+        return Path(self.control_dir(state_file), "restarts.tsv")
 
 
     def _last_line_of_prev_restarts_per_file_and_restart_count(self, state_file):
@@ -892,7 +898,7 @@ class AutoRestartManager:
 
         for f, regexen in self.auto_restart_condition_regexp_per_log_file.items():
             for r in regexen:
-                log_file = Path(state_file.control_dir(), f)
+                log_file = Path(self.control_dir(state_file), f)
 
                 if r is None:
                     # a task without a log is abnormal, most often as a result of a restartable error,

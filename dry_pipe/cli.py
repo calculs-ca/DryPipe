@@ -121,14 +121,13 @@ def setup_verbose2():
 
 
 class EnvDefault(argparse.Action):
-    def __init__(self, envvar, required=True, default=None, **kwargs):
+    def __init__(self, envvar, env, required=True, default=None, **kwargs):
         if envvar:
-            if envvar in os.environ:
-                default = os.environ[envvar]
+            if envvar in env:
+                default = env[envvar]
         if required and default:
             required = False
-        super(EnvDefault, self).__init__(default=default, required=required,
-                                         **kwargs)
+        super(EnvDefault, self).__init__(default=default, required=required, **kwargs)
 
     def __call__(self, parser, namespace, values, option_string=None):
         setattr(namespace, self.dest, values)
@@ -363,7 +362,7 @@ class Cli:
                 until_patterns=self.parsed_args.until,
                 restart_failed=self.parsed_args.restart_failed,
                 reset_failed=self.parsed_args.reset_failed,
-                sleep_schedule=self.sleep_schedule
+                sleep_schedule=self.parsed_args.sleep_schedule
             )
         elif self.parsed_args.command == 'service':
 
@@ -395,7 +394,7 @@ class Cli:
         elif self.parsed_args.command == 'prepare':
             pipeline_instance = pipeline_instance_from_args()
             pipeline_instance.prepare_instance_dir()
-            pipeline_instance.run_sync(["*"], sleep_schedule=self.sleep_schedule)
+            pipeline_instance.run_sync(["*"], sleep_schedule=self.parsed_args.sleep_schedule)
         elif self.parsed_args.command == 'call':
 
             call(self.parsed_args.module_function)
@@ -590,7 +589,9 @@ class Cli:
         self.add_run_args(self.subparsers.add_parser('run'))
         self.add_service_args(self.subparsers.add_parser('service'))
         self.add_report_args(self.subparsers.add_parser('report-perf'))
-        self.add_generator_arg(self.subparsers.add_parser('prepare'))
+        prepare_parser = self.subparsers.add_parser('prepare')
+        self.add_generator_arg(prepare_parser)
+        self._add_sleep_schedule_args(prepare_parser)
         self.add_call_args(self.subparsers.add_parser('call'))
         self.add_task_args(self.subparsers.add_parser('task'))
         self.add_task_args(self.subparsers.add_parser('reset'))
@@ -687,28 +688,42 @@ class Cli:
         self._add_task_key_parser_arg(run_parser)
 
         self._add_restart_failed_args(run_parser)
+        self._add_sleep_schedule_args(run_parser)
+
+
+    def _add_sleep_schedule_args(self, parser):
+
+        class ListOfInts:
+            def __call__(self, txt):
+                return [int(s) for s in txt.split(",")]
+
+        parser.add_argument(
+            "--sleep-schedule",
+            action=EnvDefault,
+            envvar="DRYPIPE_SERVICE_SLEEP_SCHEDULE",
+            env=self.env,
+            help="a list of sleep times in seconds, for the main loop of the service, can also be set with environment var DRYPIPE_SERVICE_SLEEP_SCHEDULE",
+            default="0,1,3,5,10,15,20",
+            type=ListOfInts()
+        )
 
     def add_service_args(self, service_parser):
         service_parser.add_argument(
             "--config-generator",
             action=EnvDefault,
             envvar="DRYPIPE_SERVICE_CONFIG_GENERATOR",
+            env=self.env,
             help="""a function that yields instances of dry_pipe.pipeline.PipelineType, 
                     can also be set with environment var DRYPIPE_SERVICE_CONFIG_GENERATOR""",
         )
 
-        service_parser.add_argument(
-            "--sleep-schedule",
-            action=EnvDefault,
-            envvar="DRYPIPE_SERVICE_SLEEP_SCHEDULE",
-            help="a list of sleep times in seconds, for the main loop of the service, can also be set with environment var DRYPIPE_SERVICE_SLEEP_SCHEDULE",
-            default="0,1,3,5,10,15,20"
-        )
+        self._add_sleep_schedule_args(service_parser)
 
         service_parser.add_argument(
             "--log-conf",
             action=EnvDefault,
             envvar="DRYPIPE_LOGGING_CONF",
+            env=self.env,
             help="the path to a logging configuration file, can also be set with environment var DRYPIPE_LOGGING_CONF",
             required=False
         )

@@ -15,13 +15,12 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile
 from threading import Thread
 
-from dry_pipe.slurm_arrays import ArrayTaskManager
+from dry_pipe.slurm_arrays import ArrayTaskManager, SAcctParser, SQueueParser
 from dry_pipe import TaskConf, RemotePipelineSpecs, AutoRestartManager
 from dry_pipe.core_lib import UpstreamTasksNotCompleted, PortablePopen, func_from_mod_func, invoke_rsync, \
     FileCreationDefaultModes, expandvars_from_dict, TimeLogger
 
 from dry_pipe.task import TaskOutput, TaskInputs, TaskOutputs, TaskInput
-
 
 APPTAINER_COMMAND = "apptainer"
 
@@ -1534,11 +1533,18 @@ class TaskProcess:
                     rsync_list_file.write(f)
                     rsync_list_file.write(f"\n")
 
-    def create_array_manager(self):
-        if self.task_conf.auto_restart_condition_regexp_per_log_file is None:
-            return ArrayTaskManager(self)
+    def create_array_task_manager(self):
+
+        arm = None
+        if self.task_conf.auto_restart_condition_regexp_per_log_file is not None:
+             arm = AutoRestartManager(self.task_conf.auto_restart_condition_regexp_per_log_file)
+
+        if self.task_conf.use_squeue:
+            parser = SQueueParser()
         else:
-            return AutoRestartManager(self, self.task_conf.auto_restart_condition_regexp_per_log_file)
+            parser = SAcctParser()
+
+        return ArrayTaskManager(self, arm, parser)
 
     def _set_apptainer_bind_in_env(self, env, script=None):
 

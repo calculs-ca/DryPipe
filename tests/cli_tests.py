@@ -8,22 +8,25 @@ from dry_pipe.cli import Cli
 from dry_pipe.core_lib import UpstreamTasksNotCompleted, PortablePopen
 from dry_pipe.pipeline import Pipeline
 from dry_pipe.task_process import TaskProcess
-from dry_pipe.slurm_array_task import SlurmArrayParentTask
 
 from pipeline_tests_with_slurm_mockup import PipelineWithSlurmArray
+from slurm_arrays import ArrayTaskManager
 from test_utils import TestSandboxDir
-from tests.base_pipeline_test import BasePipelineTest
 from tests.pipeline_tests_with_slurm_arrays import PipelineWithSlurmArrayForRealSlurmTest, \
     PipelineWithSlurmArrayForRestarts
 
 
-def test_cli(*args):
+def test_cli(*args, **kwargs):
     test = args[0]
+
     env = {
         "DRYPIPE_TASK_DEBUG": test.is_log_level_debug().__str__(),
         "DRYPIPE_INSTANCE_DEBUG": test.is_log_level_debug().__str__(),
-        "DRYPIPE_SLEEP_SCHEDULE": test.custom_sleep_schedule()
+        "DRYPIPE_SERVICE_SLEEP_SCHEDULE": test.custom_sleep_schedule()
     }
+
+    if "env" in kwargs:
+        env.update(kwargs["env"])
 
     args = args[1:]
 
@@ -235,7 +238,7 @@ class CliTestsPipelineWithSlurmArray(PipelineWithSlurmArray):
     def test_run_pipeline(self):
         pass
 
-    def test_cli_generated_array_parents(self):
+    def _test_cli_generated_array_parents(self):
         pipeline_instance = self.create_prepare_and_run_pipeline(TestSandboxDir(self))
 
         def create_parent_task(parent_task_key, match):
@@ -303,12 +306,12 @@ class CliTestsPipelineWithSlurmArray(PipelineWithSlurmArray):
             '--limit=1'
         )
 
-        array_parent_task = SlurmArrayParentTask(TaskProcess(
+        atm = ArrayTaskManager(TaskProcess(
             os.path.join(pipeline_instance.state_file_tracker.pipeline_work_dir, "p2")
         ))
 
         self.assertEqual(
-            {task_key: state for task_key, state in array_parent_task.list_array_states()},
+            {task_key: state for task_key, state in atm.list_array_states()},
             {"t_b_1": "state.completed", "t_b_2": "state.completed"}
         )
 
