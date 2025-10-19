@@ -292,7 +292,7 @@ class TaskProcess:
             yield f".drypipe/{self.task_key}/task-keys.tsv"
             for child_task_key in self.children_task_keys():
                 yield from g(child_task_key)
-                yield f".drypipe/{child_task_key}/state.ready"
+                #yield f".drypipe/{child_task_key}/state.ready"
 
         yield from g(self.task_key)
 
@@ -847,7 +847,8 @@ class TaskProcess:
                 else:
                     raise Exception(f"no state file in {control_dir}, {glob_exp}")
             if len(state_file) > 1:
-                raise Exception(f"more than one state file found in {control_dir}, {glob_exp}")
+                ls_files = ','.join([os.path.basename(f) for f in state_file])
+                raise Exception(f"more than one state file found in {control_dir}: {ls_files}")
 
             state_file = state_file[0]
 
@@ -1364,7 +1365,7 @@ class TaskProcess:
     def _delete_array_child_launch_log_if_empty(self):
         launch_log = Path(
             self._array_parent_control_dir(),
-            f"launch-{self.slurm_array_job_id}_{self.slurm_array_task_id}.log"
+            f"launch-{self.slurm_array_job_id}_{self.slurm_array_task_id}.out"
         )
         if launch_log.exists() and launch_log.stat().st_size == 0:
             launch_log.unlink()

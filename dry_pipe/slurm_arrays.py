@@ -25,7 +25,7 @@ class SAcctParser:
                 raise Exception(f'No fake sacct output for job_id {job_id}')
             sacct_output = dedent_lines(sacct_output)
         else:
-            with PortablePopen(f'sacct --format="JobId,State,JobName,ExitCode" --parsable -j {job_id}', shell=True) as p:
+            with PortablePopen(f'sacct -n --format="JobId,State,JobName,ExitCode" --parsable -j {job_id}', shell=True) as p:
                 p.wait_and_raise_if_non_zero()
                 sacct_output = p.stdout_as_string()
 
@@ -34,12 +34,12 @@ class SAcctParser:
                 line = line.strip()
                 if line == "":
                     continue
-                job_id, end, long_code_state, job_name, empty = line.split("|")
+                job_id, long_code_state, job_name, exit_code, empty = line.split("|")
                 assert empty == ""
                 if job_name in {"batch", "extern"}:
                     continue
 
-                yield SAcctRow(line, job_id, end, long_code_state, job_name)
+                yield SAcctRow(line, job_id, long_code_state, job_name, exit_code)
 
         return sacct_output, list(g())
 
@@ -120,6 +120,10 @@ class SAcctRow:
             self.job_id = job_id
 
         if job_name != "cli":
+
+            if ":" not in job_name:
+                raise Exception(f"unexpected job name {job_name}")
+
             self.task_key, self.dry_pipe_state = job_name.split(":")
             if "." in self.dry_pipe_state:
                 self.dry_pipe_step_number = int(self.dry_pipe_state.split(".")[1])
@@ -189,6 +193,7 @@ class ArraySubmitInfo:
                 with open(prev_file, "r") as f:
                     prev_output = f.read()
                     if prev_output == self.sacct_output:
+                        self.logger().debug("sacct identical, won't save")
                         return
 
         with open(file, "w") as f:
@@ -283,6 +288,7 @@ class ArrayTaskManager:
 
 
         if isinstance(self.sacct_parser, SQueueParser):
+            self.logger().warning("Using SQueueParser")
             for task_key in self.children_task_keys():
                 state_file = self.find_state_file_for_task_key(task_key)
                 if state_file.is_failed():
@@ -390,7 +396,7 @@ class ArrayTaskManager:
             if a is not None:
                 yield f"--account={a}"
 
-            yield f"--output={self.array_task_control_dir()}/launch-%A_%a.log"
+            yield f"--output={self.array_task_control_dir()}/launch-%A_%a.out"
 
             yield from sbatch_options
 
@@ -477,22 +483,19 @@ class ArrayTaskManager:
                         continue
         return set(g())
 
+    def filter_task_keys(self, long_code_state_func):
+        for task_key, sacct_row in self.last_sacct_row_per_task_key.items():
+            if long_code_state_func(sacct_row.long_code_state):
+                yield task_key
+
     def active_tasks(self):
+        return list(self.filter_task_keys(SlurmJobStateLongCodes.pending_or_running))
 
-        def g():
-            for task_key, sacct_row in self.last_sacct_row_per_task_key.items():
-                if SlurmJobStateLongCodes.pending_or_running(sacct_row.long_code_state):
-                    yield task_key
+    def failed_cancelled_timedout_tasks(self):
+        return list(self.filter_task_keys(SlurmJobStateLongCodes.has_failed_cancelled_or_timed_out))
 
-        return list(g())
-
-    def failed_canceld_timedout_tasks(self):
-        def g():
-            for task_key, sacct_row in self.last_sacct_row_per_task_key.items():
-                if SlurmJobStateLongCodes.has_failed_cancelled_or_timed_out(sacct_row.long_code_state):
-                    yield task_key
-
-        return list(g())
+    def completed_tasks(self):
+        return list(self.filter_task_keys(SlurmJobStateLongCodes.is_completed))
 
     def next_submits(self):
 
@@ -523,3 +526,21 @@ class ArrayTaskManager:
                 yield SlurmArrayBatchSubmit(pre_submit_func, command_args, post_submit_func, task_keys)
 
         return list(g())
+
+    def manage_auto_restarts_from_remote(self):
+
+        self.invoke_sacct()
+
+        launch_count_this_round = 0
+
+        for submit in self.next_submits():
+            submit.invoke()
+            launch_count_this_round += len(submit.task_keys)
+
+        return {
+            "launch_count_this_round": launch_count_this_round,
+            "total_children_tasks": len(self.children_task_keys()),
+            "active_tasks": len(self.active_tasks()),
+            "completed_tasks": len(self.completed_tasks()),
+            "failed_cancelled_timedout_tasks": len(self.failed_cancelled_timedout_tasks())
+        }

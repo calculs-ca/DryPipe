@@ -568,14 +568,13 @@ class PipelineWithAutoRestart1(PipelineWithMultiStepSlurmArrayWithMultiSbatchOpt
             },
             auto_restart_condition_regexp_per_log_file={
                 "out.log": [".*predicted_crash.*"]
-            },
-            use_squeue=True
+            }
         )
         tc.python_bin = None
         return tc
 
     def launches_tasks_in_process(self):
-        return True
+        return False
 
     def task_conf(self):
         if self.remote_test_site() is not None:
@@ -695,7 +694,8 @@ class PipelineWithPartialArrayMatch(BasePipelineTest):
                 "PYTHONPATH": os.environ.get("PYTHONPATH"),
                 "DRYPIPE_TASK_DEBUG": self.is_log_level_debug().__str__(),
                 "DRYPIPE_SLEEP_SCHEDULE": self.custom_sleep_schedule()
-            }
+            },
+            use_squeue=True
         )
 
     def create_monitor(self):

@@ -55,8 +55,11 @@ class RemoteArrayTaskFullyAutomatedRun(PipelineWithSlurmArray):
     def is_log_level_debug(self):
         return True
 
-    #def custom_sleep_schedule(self):
-    #    return "1"
+    def remote_test_site(self):
+        return remote_test_site
+
+    def custom_sleep_schedule(self):
+        return "2"
 
     def task_conf(self):
 
@@ -167,7 +170,8 @@ class PipelineWithPartialArrayMatchRemote(PipelineWithPartialArrayMatch):
                 "DRYPIPE_TASK_DEBUG": "True" if self.is_log_level_debug() else "False",
                 "PYTHONPATH": self.python_path_for_remote_site(),
                 "DRYPIPE_SLEEP_SCHEDULE": self.custom_sleep_schedule()
-            }
+            },
+            use_squeue=False
         )
 
     def test_run_pipeline(self):

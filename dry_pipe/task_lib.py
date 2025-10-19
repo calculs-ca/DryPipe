@@ -3,7 +3,7 @@ import logging
 import os
 from pathlib import Path
 
-from dry_pipe import DryPipe, RemotePipelineSpecs
+from dry_pipe import DryPipe
 from dry_pipe.core_lib import invoke_rsync, exec_remote, SleepySpinner
 from dry_pipe.state_file import StateFile
 from dry_pipe.globus import GlobusToken, GlobusFileTransfer
@@ -46,7 +46,7 @@ def watch_local_array(__task_process):
             if atc == 0 and launch_count_this_round == 0:
                 task_logger.info("array task has no more running array jobs")
 
-                failed_task_count = len(array_task_manager.failed_canceld_timedout_tasks())
+                failed_task_count = len(array_task_manager.failed_cancelled_timedout_tasks())
                 if failed_task_count > 0:
                     raise Exception(f"{failed_task_count} tasks failed")
                 break
@@ -107,24 +107,26 @@ def watch_remote_array(__task_process):
                 download_after_fail()
                 raise
 
+            __task_process.task_logger.info("remote command returned %s", json.dumps(report))
+
+            launch_count_this_round = report["launch_count_this_round"]
             total_children_tasks = report["total_children_tasks"]
+            active_tasks = report["active_tasks"]
             completed_tasks = report["completed_tasks"]
+            failed_cancelled_timedout_tasks = report["failed_cancelled_timedout_tasks"]
+
 
             if completed_tasks == total_children_tasks:
                 __task_process.task_logger.info("array task completed successfully")
                 return
 
-            failed_task_count = len(report["failed_task_keys"])
-
-            if failed_task_count > 0:
-                first_20_tasks = ','.join(report["failed_task_keys"][:20])
-
+            if active_tasks == 0 and failed_cancelled_timedout_tasks > 0:
                 try:
                     download_after_fail()
                 except Exception as ex:
                     task_logger.info("failed to reconcile remote states and logs")
 
-                raise Exception(f"{failed_task_count} child remote tasks failed {first_20_tasks}")
+                raise Exception(f"{failed_cancelled_timedout_tasks} child remote tasks failed")
             else:
                 task_logger.debug("%s", json.dumps(report))
 
