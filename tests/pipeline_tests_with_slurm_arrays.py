@@ -213,7 +213,7 @@ class PipelineWithSlurmArray(BasePipelineTest):
 class PipelineWithSlurmArray2StepsWith2Sbatch(PipelineWithSlurmArray):
 
     def launches_tasks_in_process(self):
-        return True
+        return False
 
     def sbatch_step2(self, dsl):
         return ["--time=30:00"]

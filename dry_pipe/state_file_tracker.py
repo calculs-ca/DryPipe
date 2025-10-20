@@ -152,7 +152,7 @@ class StateFileTracker:
     def find_state_file_if_exists(pipeline_work_dir, task_key):
         p = StateFileTracker.find_state_file_path_if_exists(os.path.join(pipeline_work_dir, task_key))
         if p is not None:
-            return StateFile(task_key, None, None, path=p.path)
+            return StateFile(task_key, None, pipeline_work_dir, path=p.path)
         else:
             return None
 
@@ -167,7 +167,7 @@ class StateFileTracker:
         state_file_path = self._find_state_file_path_in_task_control_dir(task_key)
         if state_file_path is None:
             raise Exception(f"no state file exists in {os.path.join(self.pipeline_work_dir, task_key)}")
-        state_file = StateFile(task_key, None, self, path=state_file_path, slurm_array_id=slurm_array_id)
+        state_file = StateFile(task_key, None, self.pipeline_work_dir, path=state_file_path, slurm_array_id=slurm_array_id)
         self.state_files_in_memory[task_key] = state_file
         return state_file
 
@@ -196,7 +196,7 @@ class StateFileTracker:
         task_key = os.path.basename(task_control_dir)
         assert task.key == task_key
         current_hash_code = task.compute_hash_code()
-        state_file = StateFile(task_key, current_hash_code, self, path=state_file_path)
+        state_file = StateFile(task_key, current_hash_code, self.pipeline_work_dir, path=state_file_path)
         if state_file.is_completed():
             pass
         else:
@@ -264,7 +264,7 @@ class StateFileTracker:
                     task_control_dir, ensure_all_upstream_deps_complete= not include_non_completed,
                     no_logger=True
                 ).resolve_task(
-                    StateFile(task_key, None, self, path=state_file_path)
+                    StateFile(task_key, None, self.pipeline_work_dir, path=state_file_path)
                 )
 
     def load_tasks_for_query(self, glob_filter=None, include_non_completed=False):
@@ -295,7 +295,7 @@ class StateFileTracker:
     def load_state_files_for_run(self, glob_filter=None):
         for task_key, task_control_dir, state_file_path in self._iterate_all_tasks_from_disk(glob_filter):
             state_file = StateFile(
-                task_key, None, self, path=state_file_path
+                task_key, None, self.pipeline_work_dir, path=state_file_path
             )
             self.state_files_in_memory[task_key] = state_file
             task_conf = self._load_task_conf(task_control_dir)
@@ -330,7 +330,7 @@ class StateFileTracker:
                 return True, state_file_in_memory
             else:
                 # task is new
-                state_file_in_memory = StateFile(task.key, hash_code, self)
+                state_file_in_memory = StateFile(task.key, hash_code, self.pipeline_work_dir)
                 state_file_in_memory.is_slurm_array_child = task.is_slurm_array_child
                 if task.is_slurm_parent:
                     state_file_in_memory.is_parent_task = True

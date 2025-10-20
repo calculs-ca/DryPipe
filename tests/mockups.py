@@ -24,7 +24,7 @@ class TaskMockup:
         return ",".join(str(i) for i in self.inputs)
 
     def save(self, state_file, hash_code):
-        task_control_dir = Path(state_file.tracker.pipeline_instance_dir, ".drypipe", self.key)
+        task_control_dir = Path(state_file.pipeline_work_dir, self.key)
         task_control_dir.mkdir(exist_ok=True, parents=True)
         inputs = [
             {
@@ -68,7 +68,7 @@ class StateFileTrackerMockup:
                 yield k
     def all_state_files(self):
         for s in self.state_files_in_memory:
-            yield StateFile(s, s, self)
+            yield StateFile(s, s, self.pipeline_work_dir)
 
     def fetch_true_state_and_update_memory_if_changed(self, task_key):
 
@@ -92,7 +92,7 @@ class StateFileTrackerMockup:
         true_task_state = self.task_keys_to_task_states_on_mockup_disk.get(task.key)
 
         if true_task_state is None:
-            s = StateFile(task.key, task.compute_hash_code(), self)
+            s = StateFile(task.key, task.compute_hash_code(), self.pipeline_work_dir)
             self.task_keys_to_task_states_on_mockup_disk[task.key] = s.state_as_string()
             self.state_files_in_memory[task.key] = s
             return True, s

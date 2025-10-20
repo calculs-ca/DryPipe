@@ -518,6 +518,19 @@ class RemotePipelineSpecs:
 
         invoke_rsync(cmd)
 
+    def fetch_sacct_dumps(self):
+
+        remote_src = f"{self.user_at_host}:{self.remote_base_dir}/{self.pid_base_name}/.drypipe"
+
+        dst = f"{self.absolute_pid}/.drypipe"
+
+        cmd = f"rsync --prune-empty-dirs -va --update --include='*/' --include='*/*.sacct.out' --exclude='*' {remote_src}/ {dst}/"
+
+        self.task_logger.debug("rsync remote sacct dumps: %s", cmd)
+
+        invoke_rsync(cmd)
+
+
     def remote_exec(self, cmd, args=()):
 
         remote_cli = os.path.join(self.remote_instance_work_dir, "cli")
@@ -828,8 +841,7 @@ class AutoRestartManager:
             }
 
     def control_dir(self, state_file):
-        return os.path.dirname(state_file.path)
-
+        return state_file.control_dir()
 
     def restart_file(self, state_file):
         return Path(self.control_dir(state_file), "restarts.tsv")

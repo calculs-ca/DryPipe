@@ -64,6 +64,7 @@ class TaskProcess:
         self.test_mode = test_mode
         self.run_python_calls_in_process = run_python_calls_in_process
         self.env = {}
+        self.is_array_spawn = os.environ.get("ARRAY_SPAWN") == "True"
 
         if not is_python_call:
             # override causes problems for python_call
@@ -901,8 +902,14 @@ class TaskProcess:
             next_step_number = step_number
             next_state_basename = f"state.{next_state_name}.{next_step_number}"
 
+        next_name = next_state_basename[6:]
+
         if update_slurm_job_name:
-            self._update_job_name(f"{self.task_key}:{next_state_basename[6:]}")
+            self._update_job_name(f"{self.task_key}:{next_name}")
+        else:
+            if self.is_array_child_task() or self.is_array_spawn:
+                if next_state_name in ["failed", "timed-out", "completed"]:
+                    self._update_job_name(f"{self.task_key}:{next_name}")
 
         next_state_file = os.path.join(control_dir, next_state_basename)
 
@@ -1216,11 +1223,18 @@ class TaskProcess:
 
             self.transition_to_step_started(state_file, step_number, is_pre_launch=True)
             try:
-                cmd = list(self.sbatch_cmd_lines(step_invocation["sbatch_options"]))
-                self.task_logger.info("will launch next step: %s", " ".join(cmd))
+
+                job_name = f"{self.task_key}:{state_file_bn[6:]}"
+                sbo = step_invocation["sbatch_options"] + [f"--job-name={job_name}"]
+                cmd = list(self.sbatch_cmd_lines(sbo, is_spawn=True))
+                self.task_logger.info("will spawn next step: %s", " ".join(cmd))
+
                 with PortablePopen(cmd) as p:
                     p.wait_and_raise_if_non_zero()
                     job_id = p.stdout_as_string().strip()
+
+                    self._update_job_name(f"{job_name}>{job_id}")
+
                     self.task_logger.info("launched job_id %s", job_id)
                     return True
             except Exception as ex:
@@ -1280,7 +1294,7 @@ class TaskProcess:
         except TaskFailedException as tfe:
             self._transition_state_file(state_file, "failed", step_number)
 
-    def sbatch_cmd_lines(self, override_options=None):
+    def sbatch_cmd_lines(self, override_options=None, is_spawn=False):
 
         #if self.task_conf.executer_type != "slurm":
         #    raise Exception(f"not a slurm task")
@@ -1301,8 +1315,12 @@ class TaskProcess:
 
         yield f"--output={self.control_dir}/out.log"
 
+        def job_env():
+            yield f"DRYPIPE_TASK_CONTROL_DIR={self.control_dir}"
+            if is_spawn:
+                yield "ARRAY_SPAWN=True"
 
-        yield "--export={0}".format(",".join([f"DRYPIPE_TASK_CONTROL_DIR={self.control_dir}"]))
+        yield "--export={0}".format(",".join(job_env()))
         yield "--signal=B:USR1@50"
         yield "--parsable"
         yield f"{self.pipeline_instance_dir}/.drypipe/cli"

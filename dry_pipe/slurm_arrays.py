@@ -16,7 +16,7 @@ def dedent_lines(txt):
 
 class SAcctParser:
 
-    def invoke(self, job_id, fake_outputs=None):
+    def invoke(self, job_id, fake_outputs=None, logger=None):
 
         sacct_output = None
         if fake_outputs is not None:
@@ -25,7 +25,13 @@ class SAcctParser:
                 raise Exception(f'No fake sacct output for job_id {job_id}')
             sacct_output = dedent_lines(sacct_output)
         else:
-            with PortablePopen(f'sacct -n --format="JobId,State,JobName,ExitCode" --parsable -j {job_id}', shell=True) as p:
+
+            cmd = f'sacct -n --format="JobId,State,JobName,ExitCode" --parsable -j {job_id}'
+
+            if logger is not None:
+                logger.debug(f'command: %', cmd)
+
+            with PortablePopen(cmd, shell=True) as p:
                 p.wait_and_raise_if_non_zero()
                 sacct_output = p.stdout_as_string()
 
@@ -83,7 +89,8 @@ class SQueueParser:
 
 
 class SyntheticSAcctRow:
-    def __init__(self, long_code_state, dry_pipe_state):
+    def __init__(self, task_key, long_code_state, dry_pipe_state):
+        self.task_key = task_key
         self.long_code_state = long_code_state
         self.dry_pipe_state = dry_pipe_state
         self.dry_pipe_step_number = None
@@ -100,6 +107,7 @@ class SAcctRow:
         self.array_range = None
         self.dry_pipe_state = None
         self.dry_pipe_step_number = None
+        self.child_job_id = None
 
         if "_" in job_id:
             self.is_array_task = True
@@ -124,7 +132,11 @@ class SAcctRow:
             if ":" not in job_name:
                 raise Exception(f"unexpected job name {job_name}")
 
+            if ">" in job_name:
+                job_name, self.child_job_id = job_name.split(">")
+
             self.task_key, self.dry_pipe_state = job_name.split(":")
+
             if "." in self.dry_pipe_state:
                 self.dry_pipe_step_number = int(self.dry_pipe_state.split(".")[1])
 
@@ -137,7 +149,7 @@ class SAcctRow:
 
     def __str__(self):
         k = "?" if self.task_key is None else self.task_key
-        return f"Task(key={k}, {self.long_code_state}, {self.job_id})"
+        return f"Task(key={k}, {self.long_code_state}, {self.job_id}, {self.dry_pipe_state})"
 
 
 class ArraySubmitInfo:
@@ -259,6 +271,7 @@ class ArrayTaskManager:
     def __init__(self, task_process, auto_restart_manager=None, sacct_parser=SAcctParser()):
         self.task_process = task_process
         self.arrays_submitted_sacct_info = None
+        self.child_task_sacct_rows = None
         self.last_sacct_row_per_task_key = dict([])
         self.array_files_sequence = SequenceOfFiles(
             "array.{0}.tsv",
@@ -286,17 +299,19 @@ class ArrayTaskManager:
                     task_key = array_info.task_keys_per_array_index[sacct_row.array_child_idx]
                     yield task_key, sacct_row
 
+        for child_task_sacct_row in self.child_task_sacct_rows:
+            yield child_task_sacct_row.task_key, child_task_sacct_row
 
         if isinstance(self.sacct_parser, SQueueParser):
             self.logger().warning("Using SQueueParser")
             for task_key in self.children_task_keys():
                 state_file = self.find_state_file_for_task_key(task_key)
                 if state_file.is_failed():
-                    yield task_key, SyntheticSAcctRow(SlurmJobStateCodes.FAILED.long_code, state_file.state())
+                    yield task_key, SyntheticSAcctRow(task_key, SlurmJobStateCodes.FAILED.long_code, state_file.state())
                 elif state_file.is_completed():
-                    yield task_key, SyntheticSAcctRow(SlurmJobStateCodes.COMPLETED.long_code, state_file.state())
+                    yield task_key, SyntheticSAcctRow(task_key, SlurmJobStateCodes.COMPLETED.long_code, state_file.state())
                 elif state_file.is_timed_out():
-                    yield task_key, SyntheticSAcctRow(SlurmJobStateCodes.TIMEOUT.long_code, state_file.state())
+                    yield task_key, SyntheticSAcctRow(task_key, SlurmJobStateCodes.TIMEOUT.long_code, state_file.state())
 
 
     def list_array_states(self):
@@ -316,7 +331,31 @@ class ArrayTaskManager:
         for array_info in self.arrays_submitted_sacct_info:
             array_info.invoke_sacct(fake_sacct_outputs)
 
-        self.last_sacct_row_per_task_key = dict(self.gen_last_sacct_row_per_task_key())
+        def gen_child_job_ids():
+            for array_info in self.arrays_submitted_sacct_info:
+                for sacct_row in array_info.sacct_rows:
+                    if sacct_row.child_job_id is not None:
+                        yield sacct_row.child_job_id.strip()
+
+        child_job_ids = list(gen_child_job_ids())
+
+        try:
+            if len(child_job_ids) > 0:
+                p = SAcctParser()
+                sacct_output, rows = p.invoke(",".join(child_job_ids), logger=self.logger())
+                self.child_task_sacct_rows = rows
+
+                self.logger().debug("array has spawned %s non array jobs, sacct output: %s", len(child_job_ids), sacct_output)
+
+                for r in self.child_task_sacct_rows:
+                    self.logger().debug(r.__str__())
+
+            else:
+                self.child_task_sacct_rows = []
+
+            self.last_sacct_row_per_task_key = dict(self.gen_last_sacct_row_per_task_key())
+        except Exception as e:
+            self.logger().error("Failed to invoke sacct due to error: %s", e)
 
 
     def last_sact_state_code_by_task_keys(self):
@@ -461,6 +500,9 @@ class ArrayTaskManager:
 
     def task_keys_for_next_batch(self):
 
+        self.logger().debug(f"Task has auto-restart manager: %s ", self.auto_restart_manager is not None)
+
+
         def g():
             for task_key in self.children_task_keys():
                 sacct_row = self.last_sacct_row_per_task_key.get(task_key)
@@ -476,11 +518,21 @@ class ArrayTaskManager:
                     yield task_key
                     continue
 
-                if SlurmJobStateLongCodes.has_failed(sacct_row.long_code_state) and self.auto_restart_manager is not None:
+                is_failed = False
+
+                self.logger().debug(f"{sacct_row.task_key} {sacct_row.dry_pipe_state}")
+                if sacct_row.dry_pipe_state is not None and sacct_row.dry_pipe_state.startswith("failed"):
+                    is_failed = True
+
+                if SlurmJobStateLongCodes.has_failed(sacct_row.long_code_state):
+                    is_failed = True
+
+                if is_failed:
                     state_file = self.find_state_file_for_task_key(task_key)
                     if self.auto_restart_manager.should_restart(state_file, logger=self.logger()):
                         yield task_key
                         continue
+
         return set(g())
 
     def filter_task_keys(self, long_code_state_func):
@@ -492,10 +544,21 @@ class ArrayTaskManager:
         return list(self.filter_task_keys(SlurmJobStateLongCodes.pending_or_running))
 
     def failed_cancelled_timedout_tasks(self):
-        return list(self.filter_task_keys(SlurmJobStateLongCodes.has_failed_cancelled_or_timed_out))
+        def g():
+            for task_key, sacct_row in self.last_sacct_row_per_task_key.items():
+                if sacct_row.dry_pipe_state is not None and sacct_row.dry_pipe_state.startswith("failed"):
+                    yield task_key
+                elif SlurmJobStateLongCodes.has_failed(sacct_row.long_code_state):
+                    yield task_key
+        return list(g())
 
     def completed_tasks(self):
-        return list(self.filter_task_keys(SlurmJobStateLongCodes.is_completed))
+        def g():
+            for task_key, sacct_row in self.last_sacct_row_per_task_key.items():
+                if sacct_row.dry_pipe_state == "completed":
+                    yield task_key
+        return list(g())
+
 
     def next_submits(self):
 

@@ -1,16 +1,15 @@
 import glob
 import os.path
-import unittest
 from pathlib import Path
 
-from dry_pipe import DryPipe, TaskConf
+from dry_pipe import DryPipe
 from dry_pipe.cli import Cli
-from dry_pipe.core_lib import UpstreamTasksNotCompleted, PortablePopen
+from dry_pipe.core_lib import UpstreamTasksNotCompleted
 from dry_pipe.pipeline import Pipeline
 from dry_pipe.task_process import TaskProcess
 
 from pipeline_tests_with_slurm_mockup import PipelineWithSlurmArray
-from slurm_arrays import ArrayTaskManager
+from dry_pipe.slurm_arrays import ArrayTaskManager
 from test_utils import TestSandboxDir
 from tests.pipeline_tests_with_slurm_arrays import PipelineWithSlurmArrayForRealSlurmTest, \
     PipelineWithSlurmArrayForRestarts

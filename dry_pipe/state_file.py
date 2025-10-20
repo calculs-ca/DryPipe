@@ -12,13 +12,13 @@ class StateFile:
         sf = StateFile(task_key, None, None, path)
         return sf
 
-    def __init__(self, task_key, current_hash_code, tracker, path=None, slurm_array_id=None):
-        self.tracker = tracker
+    def __init__(self, task_key, current_hash_code, pipeline_work_dir, path=None, slurm_array_id=None):
+        self.pipeline_work_dir = pipeline_work_dir
         self.task_key = task_key
         if path is not None:
             self.path = path
         else:
-            self.path = os.path.join(tracker.pipeline_work_dir, task_key, "state.waiting")
+            self.path = os.path.join(pipeline_work_dir, task_key, "state.waiting")
         self.hash_code = current_hash_code
         self.inputs = None
         self.outputs = None
@@ -49,7 +49,7 @@ class StateFile:
         if s is None:
             s = 0
 
-        self.path = os.path.join(self.tracker.pipeline_work_dir, self.task_key, f"state._step-started.{s}")
+        self.path = os.path.join(self.pipeline_work_dir, self.task_key, f"state._step-started.{s}")
 
     def transition_to_crashed(self):
 
@@ -57,10 +57,10 @@ class StateFile:
 
         step_ending = "" if step is None else f".{step}"
 
-        self.path = os.path.join(self.tracker.pipeline_work_dir, self.task_key, f"state.crashed{step_ending}")
+        self.path = os.path.join(self.pipeline_work_dir, self.task_key, f"state.crashed{step_ending}")
 
     def transition_to_ready(self):
-        self.path = os.path.join(self.tracker.pipeline_work_dir, self.task_key, "state.ready")
+        self.path = os.path.join(self.pipeline_work_dir, self.task_key, "state.ready")
 
     def state_as_string(self):
         return os.path.basename(self.path)
@@ -131,10 +131,10 @@ class StateFile:
         return fnmatch.fnmatch(self.path, "*/state._step-started.*")
 
     def control_dir(self):
-        return os.path.join(self.tracker.pipeline_work_dir, self.task_key)
+        return os.path.join(self.pipeline_work_dir, self.task_key)
 
     def output_dir(self):
-        return os.path.join(self.tracker.pipeline_output_dir, self.task_key)
+        return Path(self.pipeline_work_dir).parent.joinpath("output").joinpath(self.task_key).__str__()
 
     def task_conf_file(self):
         return os.path.join(self.control_dir(), "task-conf.json")

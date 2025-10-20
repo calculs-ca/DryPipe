@@ -120,9 +120,8 @@ class Task:
 
     def save(self, state_file, hash_code):
 
-        pipeline_instance_dir = state_file.tracker.pipeline_instance_dir
+        pipeline_instance_dir = pathlib.Path(state_file.pipeline_work_dir).parent.__str__()
         control_dir = state_file.control_dir()
-        output_dir = state_file.output_dir()
 
         class ShallowPipelineInstance:
             def __init__(self):

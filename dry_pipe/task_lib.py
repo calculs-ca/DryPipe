@@ -85,6 +85,7 @@ def watch_remote_array(__task_process):
             )
             remote_helper.fetch_remote_array_states_and_reconcile()
             remote_helper.fetch_remote_logs()
+            remote_helper.fetch_sacct_dumps()
             task_logger.info("remote states and logs have been reconciled")
             func = _globus_or_rsync_download_func(__task_process)
             func(__task_process)
@@ -100,6 +101,7 @@ def watch_remote_array(__task_process):
 
             remote_helper.fetch_remote_array_states_and_reconcile()
             remote_helper.fetch_remote_logs()
+            remote_helper.fetch_sacct_dumps()
 
             try:
                 report = remote_helper.remote_exec_json_results("watch-array-from-remote")
@@ -115,12 +117,11 @@ def watch_remote_array(__task_process):
             completed_tasks = report["completed_tasks"]
             failed_cancelled_timedout_tasks = report["failed_cancelled_timedout_tasks"]
 
-
             if completed_tasks == total_children_tasks:
                 __task_process.task_logger.info("array task completed successfully")
                 return
 
-            if active_tasks == 0 and failed_cancelled_timedout_tasks > 0:
+            if active_tasks == 0 and failed_cancelled_timedout_tasks > 0 and launch_count_this_round == 0:
                 try:
                     download_after_fail()
                 except Exception as ex:
