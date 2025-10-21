@@ -892,6 +892,9 @@ def handle_script_lib_main():
     try:
         cli = Cli(sys.argv[1:])
         cli.invoke()
+    except Exception as e:
+        logging.exception(e)
+        raise
     finally:
         logging.shutdown()
 
