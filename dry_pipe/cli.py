@@ -381,7 +381,7 @@ class Cli:
                 g,
                 run_sync=False,
                 run_tasks_in_process=False,
-                sleep_schedule=self.sleep_schedule
+                sleep_schedule=self.parsed_args.sleep_schedule
             )
 
             logging.info("starting drypipe service")
