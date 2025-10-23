@@ -462,7 +462,18 @@ class Cli:
 
         elif self.parsed_args.command == 'watch-array-from-remote':
             control_dir = self._control_dir()
-            task_process = TaskProcess(control_dir, use_remote_drypipe_log=True, for_dry_run=self.parsed_args.dry_run)
+
+            use_remote_drypipe_log = True
+            alternate_logger = None
+            if self.parsed_args.vv:
+                use_remote_drypipe_log = False
+                alternate_logger=logger
+
+            task_process = TaskProcess(
+                control_dir, use_remote_drypipe_log=use_remote_drypipe_log,
+                for_dry_run=self.parsed_args.dry_run,
+                alternate_logger=alternate_logger
+            )
             atm = task_process.create_array_task_manager()
             report = atm.manage_auto_restarts_from_remote()
             print(json.dumps(report))
