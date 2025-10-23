@@ -1611,6 +1611,17 @@ class TaskProcess:
     def remote_task_helper(self):
         return RemotePipelineSpecs(self)
 
+    def fetch_remote_state(self):
+        if self.is_remote_execution_on_master_site():
+            remote_task_helper = RemotePipelineSpecs(self)
+            if self.is_slurm_array_parent():
+                # TODO: don't fetch logs for the whole pipeline`:
+                remote_task_helper.fetch_remote_logs()
+                remote_task_helper.fetch_remote_array_states_and_reconcile()
+            else:
+                # TODO: implement
+                pass
+
 
 def tail_file(file, delay=1.0):
     line_terminators = ("\r\n", "\n", "\r")

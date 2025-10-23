@@ -470,6 +470,11 @@ class Cli:
             task_process = TaskProcess(self.parsed_args.control_dir, wait_for_completion=self._wait())
             task_process.submit_sbatch_task()
 
+        elif self.parsed_args.command == 'fetch-remote-state':
+            task_process = TaskProcess(
+                os.path.join(self.parsed_args.pipeline_instance_dir, ".drypipe", self.parsed_args.task_key),
+                wait_for_completion=self._wait())
+            task_process.fetch_remote_state()
         elif self.parsed_args.command == 'sbatch-gen':
             task_process = TaskProcess(self.parsed_args.control_dir, wait_for_completion=self._wait())
             print(" ".join(task_process.sbatch_cmd_lines()))
@@ -614,6 +619,11 @@ class Cli:
         self.add_task_args(self.subparsers.add_parser('remote-exec'))
         self.add_task_args(self.subparsers.add_parser("submit-array-from-remote"))
         self.add_task_args(self.subparsers.add_parser("watch-array-from-remote"))
+
+        fetch_remote_state = self.subparsers.add_parser('fetch-remote-state')
+        self._add_task_key_parser_arg(fetch_remote_state)
+        self.__wait_arg(fetch_remote_state)
+
         self.add_sbatch_args(self.subparsers.add_parser('sbatch'))
         self.add_sbatch_args(self.subparsers.add_parser('sbatch-gen'))
         self.add_array_args(self.subparsers.add_parser('array-submit'))

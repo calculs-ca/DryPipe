@@ -28,11 +28,11 @@ class RemoteTestSite:
     def user_at_host(self):
         return self._user_at_host
 
-    #def remote_pipeline_dir(self):
-    #    return os.path.join(self.remote_base_dir(), os.path.basename(self.test_sandbox_dir.test_name))
+    def remote_pipeline_dir(self, pipeline_instance_dir):
+        return os.path.join(self.remote_base_dir(), os.path.basename(pipeline_instance_dir))
 
     def reset(self, pipeline_instance_dir):
-        d = os.path.join(self.remote_base_dir(), os.path.basename(pipeline_instance_dir))
+        d = self.remote_pipeline_dir(pipeline_instance_dir)
         self.exec_remote(["rm", "-Rf", d])
         self.exec_remote(["mkdir", "-p", d])
 
@@ -98,6 +98,19 @@ class RemoteArrayTaskFullyAutomatedRun(PipelineWithSlurmArray):
         }
 
         self.validate(tasks_by_keys)
+
+
+        rst = self.remote_test_site()
+
+        #TODO: change a log, to validate that rsync really worked
+
+        test_cli(
+            self,
+            f"--pipeline-instance-dir={self.pipeline_instance_dir}",
+            "fetch-remote-state",
+            f"--task-key=array_parent",
+            "--wait",
+        )
 
         for k, t in tasks_by_keys.items():
             if k.startswith("t_"):
