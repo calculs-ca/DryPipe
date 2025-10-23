@@ -352,7 +352,7 @@ class ArrayTaskManager:
                 sacct_output, rows = p.invoke(",".join(child_job_ids), logger=self.logger())
                 self.child_task_sacct_rows = rows
 
-                self.info().debug("array has spawned %s non array jobs", len(child_job_ids))
+                self.logger().info("array has spawned %s non array jobs", len(child_job_ids))
                 self.logger().debug("sacct output for spawned non array jobs: %s", sacct_output)
 
                 if self.is_log_level_debug():
