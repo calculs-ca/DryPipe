@@ -1,4 +1,5 @@
 import glob
+import json
 import os
 from itertools import groupby
 from pathlib import Path
@@ -247,7 +248,8 @@ class SequenceOfFiles:
 
 class SlurmArrayBatchSubmit:
 
-    def __init__(self, pre_submit_func, sbatch_command, post_submit_func, task_keys):
+    def __init__(self, array_task_manager, pre_submit_func, sbatch_command, post_submit_func, task_keys):
+        self.array_task_manager = array_task_manager
         self.sbatch_command = sbatch_command
         self.pre_submit_func = pre_submit_func
         self.post_submit_func = post_submit_func
@@ -260,9 +262,12 @@ class SlurmArrayBatchSubmit:
         if fake_job_id is not None:
             job_id = fake_job_id
         else:
-            with PortablePopen(self.sbatch_command) as p:
-                p.wait_and_raise_if_non_zero()
-                job_id = p.stdout_as_string().strip()
+            if self.array_task_manager.for_dry_run:
+                self.array_task_manager.logger.info(f"DRY RUN inhibited command: {' '.join(self.sbatch_command)}")
+            else:
+                with PortablePopen(self.sbatch_command) as p:
+                    p.wait_and_raise_if_non_zero()
+                    job_id = p.stdout_as_string().strip()
 
         self.post_submit_func(job_id)
 
@@ -346,10 +351,12 @@ class ArrayTaskManager:
                 sacct_output, rows = p.invoke(",".join(child_job_ids), logger=self.logger())
                 self.child_task_sacct_rows = rows
 
-                self.logger().debug("array has spawned %s non array jobs, sacct output: %s", len(child_job_ids), sacct_output)
+                self.info().debug("array has spawned %s non array jobs", len(child_job_ids))
+                self.logger().debug("sacct output for spawned non array jobs: %s", sacct_output)
 
-                for r in self.child_task_sacct_rows:
-                    self.logger().debug(r.__str__())
+                if self.is_log_level_debug():
+                    for r in self.child_task_sacct_rows:
+                        self.logger().debug(r.__str__())
 
             else:
                 self.child_task_sacct_rows = []
@@ -577,20 +584,22 @@ class ArrayTaskManager:
                 def pre_submit_func():
                     self.logger().info("next array task keys in %s", next_task_key_file)
 
-                    with open(next_task_key_file, "w") as _next_task_key_file:
-                        for task_key in task_keys_for_saving:
-                            _next_task_key_file.write(f"{task_key}\n")
+                    if not self.for_dry_run:
+                        with open(next_task_key_file, "w") as _next_task_key_file:
+                            for task_key in task_keys_for_saving:
+                                _next_task_key_file.write(f"{task_key}\n")
 
                 command_args = self.prepare_sbatch_command(
                     next_task_key_file, len(task_keys), sbatch_options
                 )
 
                 def post_submit_func(job_id):
-                    self.logger().info("array job id: %s", job_id)
-                    with open(self.i_th_submitted_array_file(next_array_number, job_id), "w") as f:
-                        f.write(" ".join(command_args))
+                    if not self.for_dry_run:
+                        self.logger().info("array job id: %s", job_id)
+                        with open(self.i_th_submitted_array_file(next_array_number, job_id), "w") as f:
+                            f.write(" ".join(command_args))
 
-                yield SlurmArrayBatchSubmit(pre_submit_func, command_args, post_submit_func, task_keys)
+                yield SlurmArrayBatchSubmit(self, pre_submit_func, command_args, post_submit_func, task_keys)
 
         return list(g())
 
@@ -601,20 +610,23 @@ class ArrayTaskManager:
         launch_count_this_round = 0
 
         for submit in self.next_submits():
-            if not self.for_dry_run:
-                submit.invoke()
-                launch_count_this_round += len(submit.task_keys)
-            else:
-                c = len(submit.task_keys)
-                self.logger().info("DRY RUN mode, would have launched %s tasks otherwise", c)
-                if self.is_log_level_debug():
-                    s = ','.join(submit.task_keys)
-                    self.logger().debug("not lauched tasks (because of DRY RUN): %s", s)
 
-        return {
+            submit.invoke()
+            launch_count_this_round += len(submit.task_keys)
+
+            #else:
+            #    c = len(submit.task_keys)
+            #    self.logger().info("DRY RUN mode, would have launched %s tasks otherwise", c)
+            #    if self.is_log_level_debug():
+            #        self.logger().debug("not lauched tasks (because of DRY RUN): %s", submit.task_keys)
+
+        res = {
             "launch_count_this_round": launch_count_this_round,
             "total_children_tasks": len(self.children_task_keys()),
             "active_tasks": len(self.active_tasks()),
             "completed_tasks": len(self.completed_tasks()),
             "failed_cancelled_timedout_tasks": len(self.failed_cancelled_timedout_tasks())
         }
+
+        if self.for_dry_run:
+            self.logger().info("DRY run: %s", json.dumps(res))
