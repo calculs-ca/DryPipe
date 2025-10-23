@@ -62,16 +62,20 @@ class StateFileTracker:
                 conf_file.write(latest_json_conf)
                 conf_file.flush()
 
-        src_dir_drypipe = os.path.dirname(__file__)
+        self.copy_drypipe_code(self.pipeline_work_dir)
 
-        dp_dir = Path(self.pipeline_work_dir, "dry_pipe")
+    @classmethod
+    def copy_drypipe_code(cls, pipeline_work_dir):
+
+        src_dir_drypipe = os.path.dirname(__file__)
+        dp_dir = Path(pipeline_work_dir, "dry_pipe")
         dp_dir.mkdir(exist_ok=True)
-        shutil.copy(os.path.join(src_dir_drypipe, "cli"), self.pipeline_work_dir)
+        shutil.copy(os.path.join(src_dir_drypipe, "cli"), pipeline_work_dir)
 
         for py_file in glob.glob(os.path.join(src_dir_drypipe, "*.py")):
             shutil.copy(py_file, dp_dir)
 
-        shutil.copy(os.path.join(src_dir_drypipe, "cli-init.sh"), self.pipeline_work_dir)
+        shutil.copy(os.path.join(src_dir_drypipe, "cli-init.sh"), pipeline_work_dir)
 
     def conf_file(self):
         return Path(self.pipeline_work_dir, "conf.json")
