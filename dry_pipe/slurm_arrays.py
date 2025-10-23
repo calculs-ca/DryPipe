@@ -262,6 +262,7 @@ class SlurmArrayBatchSubmit:
         if fake_job_id is not None:
             job_id = fake_job_id
         else:
+            job_id = None
             if self.array_task_manager.for_dry_run:
                 self.array_task_manager.logger().info(f"DRY RUN inhibited command: {' '.join(self.sbatch_command)}")
             else:
