@@ -819,9 +819,10 @@ class TaskConf:
 
 class AutoRestartManager:
 
-    def __init__(self, auto_restart_condition_regexp_per_log_file, max_restart=3):
+    def __init__(self, auto_restart_condition_regexp_per_log_file, max_restart=3, for_dry_run=False):
 
         self.max_restart = max_restart
+        self.for_dry_run = for_dry_run
 
         if auto_restart_condition_regexp_per_log_file is None:
             self.auto_restart_condition_regexp_per_log_file = None
@@ -896,6 +897,8 @@ class AutoRestartManager:
         return  last_line_of_prev_restarts_per_file, restart_decisions_for_missing_log_files, restart_counter[0]
 
     def _record_restart(self, state_file, log_file_name, line_number, matching_line):
+        if self.for_dry_run:
+            return
         with open(self.restart_file(state_file), "a") as f:
             f.write(f"{log_file_name}\t{line_number}\t{matching_line.strip()}\n")
 

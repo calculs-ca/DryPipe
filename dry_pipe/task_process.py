@@ -48,7 +48,8 @@ class TaskProcess:
             is_python_call=False,
             from_remote=False,
             alternate_logger=None,
-            use_remote_drypipe_log=False
+            use_remote_drypipe_log=False,
+            for_dry_run=False
     ):
 
         self.slurm_job_id = os.environ.get("SLURM_JOB_ID")
@@ -81,6 +82,7 @@ class TaskProcess:
         self.command_before_task_has_run = False
         self.is_on_remote_site = False
         self.use_remote_drypipe_log = use_remote_drypipe_log
+        self.for_dry_run = for_dry_run
 
 
         try:
@@ -105,11 +107,6 @@ class TaskProcess:
             self.task_conf = TaskConf.from_json_file(self.control_dir)
 
             self._override_task_confs_if_applicable()
-
-            module_logger.debug(
-                f"TaskProcess(%s, as_subprocess=%s, wait_for_completion=%s)",
-                self.task_key, self.as_subprocess, self.wait_for_completion
-            )
 
             if self.pipeline_instance_dir == "":
                 raise Exception(f"pipeline_instance_dir can't be empty string")
@@ -225,7 +222,6 @@ class TaskProcess:
     def run(self, array_limit=None, by_pipeline_runner=False):
 
         if not self.as_subprocess:
-            module_logger.debug(f"will run %s INSIDE process", self.task_key)
             self.launch_task(array_limit=array_limit)
         else:
             pipeline_cli = os.path.join(self.pipeline_work_dir, "cli")
@@ -236,9 +232,6 @@ class TaskProcess:
 
             if by_pipeline_runner:
                 cmd.append("--by-runner")
-
-            if module_logger.getEffectiveLevel() == logging.DEBUG:
-                module_logger.debug(f"will launch sub process '%s'", " ".join(cmd))
 
             with PortablePopen(
                 cmd,
@@ -1556,14 +1549,17 @@ class TaskProcess:
 
         arm = None
         if self.task_conf.auto_restart_condition_regexp_per_log_file is not None:
-             arm = AutoRestartManager(self.task_conf.auto_restart_condition_regexp_per_log_file)
+             arm = AutoRestartManager(
+                 self.task_conf.auto_restart_condition_regexp_per_log_file,
+                 for_dry_run=self.for_dry_run
+             )
 
         if self.task_conf.use_squeue:
             parser = SQueueParser()
         else:
             parser = SAcctParser()
 
-        return ArrayTaskManager(self, arm, parser)
+        return ArrayTaskManager(self, arm, parser, for_dry_run=for_dry_run)
 
     def _set_apptainer_bind_in_env(self, env, script=None):
 
@@ -1610,6 +1606,9 @@ class TaskProcess:
 
     def remote_task_helper(self):
         return RemotePipelineSpecs(self)
+
+    def is_task_logger_debug_level(self):
+       return self.task_logger.getEffectiveLevel() == logging.DEBUG
 
     def fetch_remote_state(self):
         if self.is_remote_execution_on_master_site():

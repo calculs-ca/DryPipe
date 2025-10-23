@@ -268,7 +268,7 @@ class SlurmArrayBatchSubmit:
 
 class ArrayTaskManager:
 
-    def __init__(self, task_process, auto_restart_manager=None, sacct_parser=SAcctParser()):
+    def __init__(self, task_process, auto_restart_manager=None, sacct_parser=SAcctParser(), for_dry_run=False):
         self.task_process = task_process
         self.arrays_submitted_sacct_info = None
         self.child_task_sacct_rows = None
@@ -280,6 +280,7 @@ class ArrayTaskManager:
         )
         self.auto_restart_manager = auto_restart_manager
         self.sacct_parser=sacct_parser
+        self.for_dry_run = for_dry_run
 
     def next_array_file_name_and_number(self):
         return self.array_files_sequence.next_file_and_number()
@@ -363,6 +364,9 @@ class ArrayTaskManager:
 
     def logger(self):
         return self.task_process.task_logger
+
+    def is_log_level_debug(self):
+        return self.task_process.is_task_logger_debug_level()
 
     def array_task_control_dir(self):
         return self.task_process.control_dir
@@ -597,8 +601,15 @@ class ArrayTaskManager:
         launch_count_this_round = 0
 
         for submit in self.next_submits():
-            submit.invoke()
-            launch_count_this_round += len(submit.task_keys)
+            if not self.for_dry_run:
+                submit.invoke()
+                launch_count_this_round += len(submit.task_keys)
+            else:
+                c = len(submit.task_keys)
+                self.logger().info("DRY RUN mode, would have launched %s tasks otherwise", c)
+                if self.is_log_level_debug():
+                    s = ','.join(submit.task_keys)
+                    self.logger().debug("not lauched tasks (because of DRY RUN): %s", s)
 
         return {
             "launch_count_this_round": launch_count_this_round,
