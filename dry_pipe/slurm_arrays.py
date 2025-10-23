@@ -542,6 +542,8 @@ class ArrayTaskManager:
                 if is_failed:
                     state_file = self.find_state_file_for_task_key(task_key)
                     if self.auto_restart_manager.should_restart(state_file, logger=self.logger()):
+                        if not self.for_dry_run:
+                            StateFileTracker.transition_to_pre_launch(state_file)
                         yield task_key
                         continue
 
