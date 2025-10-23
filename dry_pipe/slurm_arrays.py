@@ -29,7 +29,7 @@ class SAcctParser:
             cmd = f'sacct -n --format="JobId,State,JobName,ExitCode" --parsable -j {job_id}'
 
             if logger is not None:
-                logger.debug(f'command: %', cmd)
+                logger.debug(f'command: %s', cmd)
 
             with PortablePopen(cmd, shell=True) as p:
                 p.wait_and_raise_if_non_zero()
