@@ -10,7 +10,7 @@ import textwrap
 from os import environ
 from pathlib import Path
 
-from dry_pipe import RemotePipelineSpecs, PortablePopen
+from dry_pipe import PortablePopen
 from dry_pipe.core_lib import func_from_mod_func, is_inside_slurm_job
 from dry_pipe.pipeline_instance import Monitor
 from dry_pipe.task_process import TaskProcess
@@ -204,6 +204,7 @@ class Cli:
 
         self.parser.add_argument(
             '--dry-run',
+            action='store_true', default=False,
             help="don't actualy run, but print what will run (implicit --verbose)",
         )
 
@@ -318,7 +319,8 @@ class Cli:
         if self._has_implicit_pid:
             print(f"implicit --pipeline-instance-dir={self.parsed_args.pipeline_instance_dir}")
         if self._has_implicit_task_key:
-            print(f"implicit --task-key={self.parsed_args.task_key}")
+            if hasattr(self.parsed_args, "task_key"):
+                print(f"implicit --task-key={self.parsed_args.task_key}")
         if self._has_implicit_generator:
             if hasattr(self.parsed_args, "generator"):
                 print(f"implicit --generator={self.parsed_args.generator}")
@@ -453,6 +455,10 @@ class Cli:
                 alternate_logger=logger
             )
             task_process.upload_drypipe_for_remote_instance()
+        elif self.parsed_args.command == 'upgrade-drypipe':
+
+            StateFileTracker.copy_drypipe_code(Path(self.parsed_args.pipeline_instance_dir).joinpath(".drypipe"))
+
         elif self.parsed_args.command == 'watch-array-from-remote':
             control_dir = self._control_dir()
             task_process = TaskProcess(control_dir, use_remote_drypipe_log=True, for_dry_run=self.parsed_args.dry_run)
@@ -601,6 +607,9 @@ class Cli:
 
         self.subparsers = self.parser.add_subparsers(required=True, dest='command')
         self.add_run_args(self.subparsers.add_parser('run'))
+
+        self.subparsers.add_parser('upgrade-drypipe')
+
         self.add_service_args(self.subparsers.add_parser('service'))
         self.add_report_args(self.subparsers.add_parser('report-perf'))
         prepare_parser = self.subparsers.add_parser('prepare')
