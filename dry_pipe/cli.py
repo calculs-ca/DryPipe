@@ -473,7 +473,9 @@ class Cli:
         elif self.parsed_args.command == 'fetch-remote-state':
             task_process = TaskProcess(
                 os.path.join(self.parsed_args.pipeline_instance_dir, ".drypipe", self.parsed_args.task_key),
-                wait_for_completion=self._wait())
+                wait_for_completion=self._wait(),
+                alternate_logger=logger
+            )
             task_process.fetch_remote_state()
         elif self.parsed_args.command == 'sbatch-gen':
             task_process = TaskProcess(self.parsed_args.control_dir, wait_for_completion=self._wait())
