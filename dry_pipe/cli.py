@@ -346,6 +346,9 @@ class Cli:
 
             return pipeline.create_pipeline_instance(self.parsed_args.pipeline_instance_dir)
 
+        if self.parsed_args.dry_run:
+            logger.warning("DryRun !!")
+
         if self.parsed_args.command == 'array-submit':
             task_process = TaskProcess(
                 self._control_dir(),
@@ -465,7 +468,7 @@ class Cli:
 
             use_remote_drypipe_log = True
             alternate_logger = None
-            if self.parsed_args.vv:
+            if self.parsed_args.vv or self.parsed_args.v:
                 use_remote_drypipe_log = False
                 alternate_logger=logger
 
