@@ -204,7 +204,8 @@ class Cli:
 
         self.parser.add_argument(
             '--dry-run',
-            action='store_true', default=False,
+            action='store_true',
+            default=False,
             help="don't actualy run, but print what will run (implicit --verbose)",
         )
 
