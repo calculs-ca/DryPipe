@@ -57,7 +57,6 @@ class TaskProcess:
         self.slurm_array_task_id = os.environ.get("SLURM_ARRAY_TASK_ID")
 
         self.wait_for_completion = wait_for_completion
-        self.record_history = False
         self.tail = tail
         self.tail_all = tail_all
         self.has_ended = False
@@ -863,19 +862,6 @@ class TaskProcess:
             control_dir = self.env["__control_dir"]
         return self.read_task_state_from(control_dir=control_dir, state_file=state_file, non_existant_ok=non_existant_ok)
 
-    def _append_to_history(self, control_dir, state_name, step_number=None):
-        with open(os.path.join(control_dir, "history.tsv"), "a") as f:
-            f.write(state_name)
-            f.write("\t")
-            f.write(datetime.now().strftime('%Y-%m-%dT%H:%M:%S.%f'))
-            f.write("\t")
-            if step_number is None:
-                f.write("")
-            else:
-                f.write(str(step_number))
-            f.write("\n")
-
-
     def rewind_to_step(self, i):
         step_number, control_dir, state_file, state_name = self.read_task_state()
         self.task_logger.info("rewind to step %d", i)
@@ -913,9 +899,6 @@ class TaskProcess:
             state_file,
             next_state_file
         )
-
-        if self.record_history:
-            self._append_to_history(control_dir, next_state_name, step_number)
 
         return next_state_file, next_step_number
 
