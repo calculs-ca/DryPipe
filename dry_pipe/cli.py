@@ -446,6 +446,13 @@ class Cli:
             res = submit_local_array.func(task_process)
             #task_process.task_logger.info("submitted array from remote %s", json.dumps(res))
             print(json.dumps(res))
+        elif self.parsed_args.command == 'upload-drypipe-for-remote-instance':
+            task_process = TaskProcess(
+                os.path.join(self.parsed_args.pipeline_instance_dir, ".drypipe", self.parsed_args.task_key),
+                wait_for_completion=True,
+                alternate_logger=logger
+            )
+            task_process.upload_drypipe_for_remote_instance()
         elif self.parsed_args.command == 'watch-array-from-remote':
             control_dir = self._control_dir()
             task_process = TaskProcess(control_dir, use_remote_drypipe_log=True, for_dry_run=self.parsed_args.dry_run)
@@ -625,6 +632,9 @@ class Cli:
         fetch_remote_state = self.subparsers.add_parser('fetch-remote-state')
         self._add_task_key_parser_arg(fetch_remote_state)
         self.__wait_arg(fetch_remote_state)
+
+        upload_drypipe = self.subparsers.add_parser('upload-drypipe-for-remote-instance')
+        self._add_task_key_parser_arg(upload_drypipe)
 
         self.add_sbatch_args(self.subparsers.add_parser('sbatch'))
         self.add_sbatch_args(self.subparsers.add_parser('sbatch-gen'))

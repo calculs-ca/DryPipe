@@ -1559,7 +1559,7 @@ class TaskProcess:
         else:
             parser = SAcctParser()
 
-        return ArrayTaskManager(self, arm, parser, for_dry_run=for_dry_run)
+        return ArrayTaskManager(self, arm, parser, for_dry_run=self.for_dry_run)
 
     def _set_apptainer_bind_in_env(self, env, script=None):
 
@@ -1620,6 +1620,15 @@ class TaskProcess:
             else:
                 # TODO: implement
                 pass
+
+    def upload_drypipe_for_remote_instance(self):
+        if self.is_remote_execution_on_master_site():
+            remote_task_helper = RemotePipelineSpecs(self)
+            if self.is_slurm_array_parent():
+                remote_task_helper.upsync_drypipe_code()
+                #TODO: implement
+        else:
+            raise Exception(f"{self.task_key} is not a remote task, or not calling from master site")
 
 
 def tail_file(file, delay=1.0):

@@ -530,6 +530,18 @@ class RemotePipelineSpecs:
 
         invoke_rsync(cmd)
 
+    def upsync_drypipe_code(self):
+
+        remote_dst = f"{self.user_at_host}:{self.remote_base_dir}/{self.pid_base_name}/.drypipe/dry_pipe/"
+
+        src = f"{self.task_process.pipeline_work_dir}/dry_pipe/"
+
+        cmd = f"rsync -a --include='*.py' {src} {remote_dst}"
+
+        self.task_logger.debug("rsync upload drypipe code: %s", cmd)
+
+        invoke_rsync(cmd)
+
 
     def remote_exec(self, cmd, args=()):
 
