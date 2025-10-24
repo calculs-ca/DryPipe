@@ -870,7 +870,7 @@ class TaskProcess:
 
     def _transition_state_file(self, state_file, next_state_name, step_number=None, update_slurm_job_name=False):
 
-        self.task_logger.debug("_transition_state_file: %s", state_file)
+        #self.task_logger.debug("_transition_state_file: %s", state_file)
 
         control_dir = os.path.dirname(state_file)
 
@@ -893,7 +893,7 @@ class TaskProcess:
         next_state_file = os.path.join(control_dir, next_state_basename)
 
         self.task_logger.info("will transition to: %s", next_state_basename)
-        self.task_logger.debug("next_state_file: %s", next_state_file)
+        #self.task_logger.debug("next_state_file: %s", next_state_file)
 
         os.rename(
             state_file,

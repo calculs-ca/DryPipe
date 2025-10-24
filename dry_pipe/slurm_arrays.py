@@ -510,7 +510,7 @@ class ArrayTaskManager:
             yield sbatch_options_by_step_number[sbo_idx], set([t[1] for t in sbo_idx_task_keys])
 
 
-    def task_keys_for_next_batch(self):
+    def task_keys_for_next_batch(self, restart_failed=False):
 
         self.logger().debug(f"Task has auto-restart manager: %s ", self.auto_restart_manager is not None)
 
@@ -540,12 +540,20 @@ class ArrayTaskManager:
                     is_failed = True
 
                 if is_failed:
-                    state_file = self.find_state_file_for_task_key(task_key)
-                    if self.auto_restart_manager.should_restart(state_file, logger=self.logger()):
+                    def state_file_if_restart():
+                        if self.auto_restart_manager is not None:
+                            state_file = self.find_state_file_for_task_key(task_key)
+                            if self.auto_restart_manager.should_restart(state_file, logger=self.logger()):
+                                return state_file
+                        elif restart_failed:
+                            return self.find_state_file_for_task_key(task_key)
+
+                    state_file_for_restart = state_file_if_restart()
+                    if state_file_for_restart is not None:
                         if not self.for_dry_run:
-                            StateFileTracker.transition_to_pre_launch(state_file)
+                            StateFileTracker.transition_to_pre_launch(state_file_for_restart)
                         yield task_key
-                        continue
+
 
         return set(g())
 
@@ -574,9 +582,9 @@ class ArrayTaskManager:
         return list(g())
 
 
-    def next_submits(self):
+    def next_submits(self, restart_failed=False):
 
-        next_task_keys = self.task_keys_for_next_batch()
+        next_task_keys = self.task_keys_for_next_batch(restart_failed)
 
         def g():
 
@@ -633,3 +641,5 @@ class ArrayTaskManager:
 
         if self.for_dry_run:
             self.logger().info("DRY run: %s", json.dumps(res))
+
+        return res

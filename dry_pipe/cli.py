@@ -172,6 +172,7 @@ class Cli:
 
     def __init__(self, args, invocation_script=None, env=None):
 
+        self.raw_command_line = " ".join(args)
         args = _cleanup_args(args)
 
         self._has_implicit_generator = False
@@ -449,6 +450,8 @@ class Cli:
         elif self.parsed_args.command == 'submit-array-from-remote':
             control_dir = self._control_dir()
             task_process = TaskProcess(control_dir, use_remote_drypipe_log=True)
+
+            task_process.task_logger.info("raw command line: %s", self.raw_command_line)
             res = submit_local_array.func(task_process)
             #task_process.task_logger.info("submitted array from remote %s", json.dumps(res))
             print(json.dumps(res))

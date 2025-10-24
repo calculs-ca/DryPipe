@@ -11,7 +11,7 @@ from dry_pipe.task_process import TaskProcess
 
 
 @DryPipe.python_call()
-def submit_local_array(__task_process):
+def submit_local_arrayz(__task_process):
 
     array_task_manager = __task_process.create_array_task_manager()
 
@@ -20,6 +20,31 @@ def submit_local_array(__task_process):
     submit.invoke()
 
     return {"array_tasks_submitted": len(submit.task_keys)}
+
+
+@DryPipe.python_call()
+def submit_local_array(__task_process):
+
+    array_task_manager = __task_process.create_array_task_manager()
+
+    array_task_manager.invoke_sacct()
+
+    is_restart = len(array_task_manager.arrays_submitted_sacct_info) > 0
+
+    if is_restart:
+        for restart_file in Path(__task_process.pipeline_work_dir).glob("*/restarts.tsv"):
+            with open(restart_file, "a") as f:
+                f.write("RESET\n")
+
+    launch_count = 0
+
+    for submit in array_task_manager.next_submits(restart_failed=is_restart):
+        submit.invoke()
+        launch_count += len(submit.task_keys)
+
+    atc = len(array_task_manager.active_tasks())
+
+    return {"array_tasks_submitted": atc}
 
 
 @DryPipe.python_call()
