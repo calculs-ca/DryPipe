@@ -35,6 +35,8 @@ class PipelineInstanceAccessor:
             instance_logger=self.pipeline_instance.instance_logger
         )
 
+        self.logger = self.pipeline_instance.instance_logger
+
 
     def task_state_by_key(self, task_key):
         return self.state_machine.state_file_tracker.load_task_from_state_file(task_key)
@@ -132,15 +134,20 @@ class PipelineInstanceAccessor:
         ):
             return list(it)
 
+        return []
+
     def check_if_completed(self):
         if self.pipeline_type.complete_func is None:
             return None
 
+        self.logger.debug("pipeline has compete_func")
         for res, it in self.pipeline_type.complete_func(
             self.pipeline_instance.pipeline_instance_dir()
         ):
+            self.logger.debug("compete_func returned results")
             return res
 
+        self.logger.debug("compete_func returned Nothing")
         return False
 
 
