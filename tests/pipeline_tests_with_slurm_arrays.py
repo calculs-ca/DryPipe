@@ -161,6 +161,7 @@ class PipelineWithSlurmArray(BasePipelineTest):
                     mkdir -p $__task_output_dir/sub2/a
                     echo "123" > $__task_output_dir/sub2/a/b.txt                    
                     echo "123" > $__task_output_dir/a.txt
+                    # sleep 100000
                 """).calls(
                     test_func,
                     sbatch_options=self.sbatch_step2(dsl)

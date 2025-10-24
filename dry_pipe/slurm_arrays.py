@@ -27,7 +27,7 @@ class SAcctParser:
             sacct_output = dedent_lines(sacct_output)
         else:
 
-            cmd = f'sacct -n --format="JobId,State,JobName,ExitCode" --parsable -j {job_id}'
+            cmd = f'sacct -n --format="JobId,State,JobName,ExitCode,Submit,Start,End" --parsable -j {job_id}'
 
             if logger is not None:
                 logger.debug(f'command: %s', cmd)
@@ -41,12 +41,12 @@ class SAcctParser:
                 line = line.strip()
                 if line == "":
                     continue
-                job_id, long_code_state, job_name, exit_code, empty = line.split("|")
+                job_id, long_code_state, job_name, exit_code, submit_time, start_time, end_time, empty = line.split("|")
                 assert empty == ""
                 if job_name in {"batch", "extern"}:
                     continue
 
-                yield SAcctRow(line, job_id, long_code_state, job_name, exit_code)
+                yield SAcctRow(line, job_id, long_code_state, job_name, exit_code, submit_time, start_time, end_time)
 
         return sacct_output, list(g())
 
@@ -73,7 +73,7 @@ class SQueueParser:
                 raise Exception(f'No fake squeue output for job_id {job_id}')
             squeue_output = dedent_lines(squeue_output)
         else:
-            with PortablePopen(f'squeue --noheader --format="%i|%T|%j|0:0|" -j {job_id}', shell=True) as p:
+            with PortablePopen(f'squeue --noheader --format="%i|%T|%j|0:0|%V|%S|%e|" -j {job_id}', shell=True) as p:
                 p.wait_and_raise_if_non_zero()
                 squeue_output = p.stdout_as_string()
 
@@ -82,9 +82,9 @@ class SQueueParser:
                 line = line.strip()
                 if line == "":
                     continue
-                job_id, end, long_code_state, job_name, empty = line.split("|")
+                job_id, end, long_code_state, job_name, submit_time, start_time, end_time, empty = line.split("|")
                 assert empty == ""
-                yield SAcctRow(line, job_id, end, long_code_state, job_name)
+                yield SAcctRow(line, job_id, end, long_code_state, job_name, submit_time, start_time, end_time)
 
         return squeue_output, list(g())
 
@@ -96,9 +96,12 @@ class SyntheticSAcctRow:
         self.dry_pipe_state = dry_pipe_state
         self.dry_pipe_step_number = None
 
+    def timestamp_for_state_override_priority(self):
+        return "9999-11-31T00:23:59"
+
 class SAcctRow:
 
-    def __init__(self, acct_line, job_id, long_code_state, job_name, exit_code_and_signal):
+    def __init__(self, acct_line, job_id, long_code_state, job_name, exit_code_and_signal, submit_time, start_time, end_time):
         self.acct_line = acct_line
         self.exit_code_and_signal = exit_code_and_signal
         self.long_code_state = long_code_state
@@ -109,6 +112,9 @@ class SAcctRow:
         self.dry_pipe_state = None
         self.dry_pipe_step_number = None
         self.child_job_id = None
+        self.submit_time = submit_time
+        self.start_time = start_time
+        self.end_time = end_time
 
         if "_" in job_id:
             self.is_array_task = True
@@ -141,6 +147,16 @@ class SAcctRow:
             if "." in self.dry_pipe_state:
                 self.dry_pipe_step_number = int(self.dry_pipe_state.split(".")[1])
 
+    def timestamp_for_state_override_priority(self):
+        if self.long_code_state == "PENDING":
+            return self.submit_time
+        elif self.long_code_state == "CANCELLED":
+            return self.end_time
+        else:
+            for t in [self.end_time, self.start_time, self.submit_time]:
+                if t is not None and t != "Unknown" and t != "NONE":
+                    return t
+        raise Exception(f"can't assign timestamp to: {self.acct_line}")
 
     def is_child_task(self):
         return self.array_child_idx is not None
@@ -206,7 +222,7 @@ class ArraySubmitInfo:
                 with open(prev_file, "r") as f:
                     prev_output = f.read()
                     if prev_output == self.sacct_output:
-                        self.logger().debug("sacct identical, won't save")
+                        self.logger().debug("sacct identical for job_id %s, won't save", self.job_id)
                         return
 
         with open(file, "w") as f:
@@ -293,32 +309,44 @@ class ArrayTaskManager:
 
     def gen_last_sacct_row_per_task_key(self):
 
-        for array_info in self.arrays_submitted_sacct_info:
-            for sacct_row in array_info.sacct_rows:
-                if sacct_row.is_pending_array_range():
-                    for idx in sacct_row.array_range:
-                        yield array_info.task_keys_per_array_index[idx], sacct_row
+        def g():
 
-        # sacct rows that have child indexes, override synthetic rows ^
-        for array_info in self.arrays_submitted_sacct_info:
-            for sacct_row in array_info.sacct_rows:
-                if sacct_row.is_child_task():
-                    task_key = array_info.task_keys_per_array_index[sacct_row.array_child_idx]
-                    yield task_key, sacct_row
+            for array_info in self.arrays_submitted_sacct_info:
+                for sacct_row in array_info.sacct_rows:
+                    if sacct_row.is_pending_array_range():
+                        for idx in sacct_row.array_range:
+                            yield array_info.task_keys_per_array_index[idx], sacct_row
 
-        for child_task_sacct_row in self.child_task_sacct_rows:
-            yield child_task_sacct_row.task_key, child_task_sacct_row
+            # sacct rows that have child indexes, override synthetic rows ^
+            for array_info in self.arrays_submitted_sacct_info:
+                for sacct_row in array_info.sacct_rows:
+                    if sacct_row.is_child_task():
+                        task_key = array_info.task_keys_per_array_index[sacct_row.array_child_idx]
+                        yield task_key, sacct_row
 
-        if isinstance(self.sacct_parser, SQueueParser):
-            self.logger().warning("Using SQueueParser")
-            for task_key in self.children_task_keys():
-                state_file = self.find_state_file_for_task_key(task_key)
-                if state_file.is_failed():
-                    yield task_key, SyntheticSAcctRow(task_key, SlurmJobStateCodes.FAILED.long_code, state_file.state())
-                elif state_file.is_completed():
-                    yield task_key, SyntheticSAcctRow(task_key, SlurmJobStateCodes.COMPLETED.long_code, state_file.state())
-                elif state_file.is_timed_out():
-                    yield task_key, SyntheticSAcctRow(task_key, SlurmJobStateCodes.TIMEOUT.long_code, state_file.state())
+            for child_task_sacct_row in self.child_task_sacct_rows:
+                yield child_task_sacct_row.task_key, child_task_sacct_row
+
+            if isinstance(self.sacct_parser, SQueueParser):
+                self.logger().warning("Using SQueueParser")
+                for task_key in self.children_task_keys():
+                    state_file = self.find_state_file_for_task_key(task_key)
+                    if state_file.is_failed():
+                        yield task_key, SyntheticSAcctRow(task_key, SlurmJobStateCodes.FAILED.long_code, state_file.state())
+                    elif state_file.is_completed():
+                        yield task_key, SyntheticSAcctRow(task_key, SlurmJobStateCodes.COMPLETED.long_code, state_file.state())
+                    elif state_file.is_timed_out():
+                        yield task_key, SyntheticSAcctRow(task_key, SlurmJobStateCodes.TIMEOUT.long_code, state_file.state())
+
+        def k(t):
+            return t[0]
+
+        for task_key, sacct_rows in  groupby(sorted(g(), key=k), key=k):
+            last_sacct_row = sorted(
+                sacct_rows,
+                key=lambda r: r[1].timestamp_for_state_override_priority()
+            )[-1][1]
+            yield task_key, last_sacct_row
 
 
     def list_array_states(self):
@@ -353,7 +381,6 @@ class ArrayTaskManager:
                 self.child_task_sacct_rows = rows
 
                 self.logger().info("array has spawned %s non array jobs", len(child_job_ids))
-                self.logger().debug("sacct output for spawned non array jobs: %s", sacct_output)
 
                 if self.is_log_level_debug():
                     for r in self.child_task_sacct_rows:
