@@ -1537,7 +1537,7 @@ class TaskProcess:
                  for_dry_run=self.for_dry_run
              )
 
-        if self.task_conf.use_squeue:
+        if self.task_conf.use_squeue or os.environ.get("DRYPIPE_USE_SQUEUE") == "True":
             parser = SQueueParser()
         else:
             parser = SAcctParser()

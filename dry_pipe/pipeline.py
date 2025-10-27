@@ -95,32 +95,46 @@ class Pipeline:
 
 class PipelineType:
 
-    def __init__(
-        self, name, pipeline, validator, spartan_schema, default_args,
-        complete_func, post_run_validator=None, init_func=None, pre_run_filters=[]
-    ):
-        self.name = name
-        self.pipeline = pipeline
-        self.validator = validator
-        self.spartan_schema = spartan_schema
-        self.default_args = default_args
-        self.complete_func = complete_func
-        self.post_run_validator = post_run_validator
-        self.init_func = init_func
-        self.pre_run_filters = pre_run_filters
-
     def as_dict(self):
         return {
-            "name": self.name,
-            "spartan_schema": self.spartan_schema,
-            "default_args" : self.default_args
+            "name": self.name(),
+            "spartan_schema": self.spartan_schema(),
+            "default_args" : self.default_args(),
+            "type": self.name()
         }
 
-    def task_sort_key(self, state_file):
-        return state_file.task_key
+    def default_args(self):
+        return {}
+
+    def task_sort_key(self, task_key):
+        return task_key
 
     def array_grouper(self, task_key):
         return None
 
     def doc_root(self):
         return None
+
+    def spartan_schema(self):
+        return None
+
+    def pipeline(self):
+        raise NotImplementedError()
+
+    def name(self):
+        raise NotImplementedError()
+
+    def init_instance(self, pipeline_instance_dir):
+        return
+
+    def pre_run_filters(self):
+        return []
+
+    def is_complete(self):
+        return None
+
+    def result_files(self):
+        return []
+
+    def validate_before_run(self, pipeline_instance_dir):
+        return {}, None

@@ -26,7 +26,7 @@ class PipelineInstanceAccessor:
     def __init__(self, pipeline_type, pipeline_state_file, logger=None):
         self.pipeline_type= pipeline_type
         self.pipeline_state_file = pipeline_state_file
-        self.pipeline_instance = pipeline_type.pipeline.create_pipeline_instance(
+        self.pipeline_instance = pipeline_type.pipeline().create_pipeline_instance(
             Path(pipeline_state_file).parent.parent, logger
         )
         self.state_machine = StateMachine(
@@ -89,7 +89,7 @@ class PipelineInstanceAccessor:
 
     def start(self):
 
-        error_messages_by_error_code, _ = self.pipeline_type.validator(self.instance_dir())
+        error_messages_by_error_code, _ = self.pipeline_type.validate_before_run(self.instance_dir())
 
         if bool(error_messages_by_error_code):
             return {"status": "error", "error_messages_by_error_code": error_messages_by_error_code}
@@ -126,29 +126,13 @@ class PipelineInstanceAccessor:
         self.pipeline_instance.state_file_tracker.save_args_as_json(json_args)
 
     def completed_files(self):
-        if self.pipeline_type.complete_func is None:
-            return []
-
-        for res, it in self.pipeline_type.complete_func(
-            self.pipeline_instance.pipeline_instance_dir()
-        ):
-            return list(it)
-
-        return []
+        return self.pipeline_type.result_files()
 
     def check_if_completed(self):
-        if self.pipeline_type.complete_func is None:
+        if self.pipeline_type.is_complete() is None:
             return None
 
-        self.logger.debug("pipeline has compete_func")
-        for res, it in self.pipeline_type.complete_func(
-            self.pipeline_instance.pipeline_instance_dir()
-        ):
-            self.logger.debug("compete_func returned results")
-            return res
-
-        self.logger.debug("compete_func returned Nothing")
-        return False
+        return self.pipeline_type.is_complete()
 
 
 class PipelineRunner:
@@ -191,8 +175,7 @@ class PipelineRunner:
                     with open(Path(pipeline_instance_dir, "args.json"), "w") as f:
                         json.dump(args, f, indent=4, sort_keys=True)
 
-                    if pipeline_type.init_func is not None:
-                        pipeline_type.init_func(pipeline_instance_dir)
+                    pipeline_type.init_instance(pipeline_instance_dir)
 
                     return {"pid": str(pipeline_instance_dir)}
 
@@ -212,7 +195,7 @@ class PipelineRunner:
 
     def get_pipeline_type(self, type_name):
         for instances_dir, pipeline_type in self.instances_dir_to_pipeline_types.items():
-            if pipeline_type.name == type_name:
+            if pipeline_type.name() == type_name:
                 return pipeline_type
 
         return None

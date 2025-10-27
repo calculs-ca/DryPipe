@@ -18,9 +18,9 @@ tests/single.py
 /ui/node_modules/
 dist
 /ui/dist
-tests/containers/*.sif
-/tests/sandboxes/bak/todo.md
-/tests/sandboxes/
+dry_pipe_tests/containers/*.sif
+/dry_pipe_tests/sandboxes/bak/todo.md
+/dry_pipe_tests/sandboxes/
 /dry_pipe/ui
 
 

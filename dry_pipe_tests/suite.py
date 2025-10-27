@@ -1,0 +1,180 @@
+import sys
+
+from unittest import TextTestRunner, TestSuite, defaultTestLoader
+
+import pipeline_tests_with_single_tasks
+import pipeline_tests_with_multiple_tasks
+import task_launch_tests
+import test_core_lib
+from cli_tests import CliArrayTests1, CliTestsPipelineWithSlurmArray, CliTestScenario2
+from dsl_tests import TaskChangeTrackingTests
+from pipeline_tests_with_slurm_arrays import PipelineWithSlurmArray2StepsWith2Sbatch
+from pipeline_tests_with_slurm_mockup import all_low_level_tests_with_mockup_slurm
+from test_state_machine import StateMachineTests, StateFileTrackerTest, MockupStateFileTrackerTest
+
+from dry_pipe_tests.pipeline_tests_with_local_slurm import all_with_local_slurm
+from dry_pipe_tests import pipeline_tests_with_slurm_arrays
+from dry_pipe_tests.pipeline_tests_with_remote_slurm_arrays import \
+    RemoteArrayTaskFullyAutomatedRun, RemoteArrayTaskFullyAutomatedRun2Steps2Sbatches, RemotePipelineWithAutoRestart1, \
+    RemotePipelineWithAutoRestart2, PipelineWithPartialArrayMatchRemote
+from dry_pipe_tests.pipeline_tests_with_remote_tasks import RemoteTestFileSet, RemoteTestFileSetWithDataDirVar, \
+    RemoteTestFileSetWithGlobus
+from dry_pipe_tests.service_runner_tests import ServiceRunnerTest1
+
+
+#from dry_pipe_tests.pipeline_tests_with_remote_slurm_arrays import CliTestsPipelineWithSlurmArrayRemote
+
+
+def ad_hoc():
+    return [
+        PipelineWithSlurmArray2StepsWith2Sbatch,
+        RemotePipelineWithAutoRestart1
+    ]
+
+def local_array_tests():
+    return [
+        CliArrayTests1,
+        CliTestsPipelineWithSlurmArray,
+        CliTestScenario2,
+        pipeline_tests_with_slurm_arrays.all_tests
+    ]
+
+def remote_array_tests():
+    return [
+        RemoteArrayTaskFullyAutomatedRun,
+        RemoteArrayTaskFullyAutomatedRun2Steps2Sbatches,
+        RemotePipelineWithAutoRestart1,
+        RemotePipelineWithAutoRestart2,
+        PipelineWithPartialArrayMatchRemote
+    ]
+
+def local_and_remote_array_tests():
+    return local_array_tests() + remote_array_tests()
+
+def remote_task_tests():
+    return [
+        pipeline_tests_with_single_tasks.TestFileSet,
+        # ^ not remote, but useful, since it's the basis of the two following tests
+        RemoteTestFileSetWithDataDirVar,
+        RemoteTestFileSet
+    ]
+
+def globus_tests():
+    return [
+        RemoteTestFileSetWithGlobus
+    ]
+
+def all_remote_tests():
+    return remote_task_tests() + remote_array_tests() + globus_tests()
+
+def cli_tests():
+    return [
+        CliArrayTests1,
+        CliTestsPipelineWithSlurmArray,
+        CliTestScenario2,
+    ]
+
+
+def quick_sanity_tests():
+    return [
+        MockupStateFileTrackerTest,
+        StateFileTrackerTest,
+        StateMachineTests,
+        task_launch_tests.all_launch_tests(),
+        pipeline_tests_with_multiple_tasks.PipelineWithVariablePassing,
+        pipeline_tests_with_single_tasks.PipelineWith4MixedStepsCrash,
+        pipeline_tests_with_single_tasks.PipelineWithSinglePythonTask,
+        pipeline_tests_with_single_tasks.PipelineWithVarAndFileOutput,
+        all_low_level_tests_with_mockup_slurm(),
+        test_core_lib.all_tests
+    ]
+
+def low_level_tests():
+    return [
+        MockupStateFileTrackerTest,
+        StateFileTrackerTest,
+        StateMachineTests,
+        task_launch_tests.all_launch_tests(),
+        pipeline_tests_with_single_tasks.all_tests(),
+        pipeline_tests_with_multiple_tasks.all_basic_tests(),
+        all_low_level_tests_with_mockup_slurm(),
+        TaskChangeTrackingTests,
+        CliArrayTests1,
+        all_with_local_slurm(),
+        ServiceRunnerTest1,
+        test_core_lib.all_tests
+    ]
+
+def all_local_tests():
+    return low_level_tests() + local_array_tests()
+
+def exhaustive_test_suite():
+    return low_level_tests() + local_array_tests() + all_remote_tests()
+
+
+if __name__ == '__main__':
+
+    #log_4_debug_daemon_mode()
+
+    suite_to_test = "exhaustive_except_for_non_portable_tests"
+
+    if len(sys.argv) >= 2:
+        suite_to_test = sys.argv[1]
+
+    suite_funcs = {
+        "low_level_tests": low_level_tests,
+        "quick_sanity_tests": quick_sanity_tests,
+        "task_launch_tests": task_launch_tests.all_launch_tests,
+        "ad_hoc": ad_hoc,
+        "local_array_tests": local_array_tests,
+        "all_local_tests": all_local_tests,
+        "remote_task_tests": remote_task_tests,
+        "local_and_remote_array_tests": local_and_remote_array_tests,
+        "exhaustive_test_suite": exhaustive_test_suite,
+        "remote_array_tests": remote_array_tests,
+        "all_remote_tests": all_remote_tests,
+        "cli_tests": cli_tests,
+        "globus_tests": globus_tests
+    }
+
+    def gen_test_classes(test_classes_or_list_of_test_classes):
+
+        def fullname(klass):
+            module = klass.__module__
+            if module == 'builtins':
+                return klass.__qualname__  # avoid outputs like 'builtins.str'
+            return module + '.' + klass.__qualname__
+
+        def g():
+            for t in test_classes_or_list_of_test_classes:
+                if isinstance(t, list):
+                    for t0 in t:
+                        yield fullname(t0), defaultTestLoader.loadTestsFromTestCase(t0)
+                else:
+                    yield fullname(t), defaultTestLoader.loadTestsFromTestCase(t)
+
+        # remove duplicate classes:
+        d = {
+            qn: t for qn, t in g()
+        }
+
+        yield from d.values()
+
+    def build_suite(test_classes):
+        suite = TestSuite()
+        for test_suite in gen_test_classes(test_classes):
+            suite.addTests(test_suite)
+        return suite
+
+    chosen_suite_func = suite_funcs[suite_to_test]()
+
+    failfast = False
+
+    if suite_to_test == "remote_tests":
+        failfast = True
+
+    result = TextTestRunner(verbosity=2, failfast=failfast, durations=25).run(
+        build_suite(chosen_suite_func)
+    )
+
+    sys.exit(not result.wasSuccessful())

@@ -154,7 +154,7 @@ class SAcctRow:
             return self.end_time
         else:
             for t in [self.end_time, self.start_time, self.submit_time]:
-                if t is not None and t != "Unknown" and t != "NONE":
+                if t is not None and t != "Unknown" and t != "NONE" and t != "N/A":
                     return t
         raise Exception(f"can't assign timestamp to: {self.acct_line}")
 
