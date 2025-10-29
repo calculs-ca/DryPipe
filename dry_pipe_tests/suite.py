@@ -2,15 +2,15 @@ import sys
 
 from unittest import TextTestRunner, TestSuite, defaultTestLoader
 
-import pipeline_tests_with_single_tasks
-import pipeline_tests_with_multiple_tasks
-import task_launch_tests
-import test_core_lib
-from cli_tests import CliArrayTests1, CliTestsPipelineWithSlurmArray, CliTestScenario2
-from dsl_tests import TaskChangeTrackingTests
-from pipeline_tests_with_slurm_arrays import PipelineWithSlurmArray2StepsWith2Sbatch
-from pipeline_tests_with_slurm_mockup import all_low_level_tests_with_mockup_slurm
-from test_state_machine import StateMachineTests, StateFileTrackerTest, MockupStateFileTrackerTest
+from dry_pipe_tests import pipeline_tests_with_single_tasks
+from dry_pipe_tests import pipeline_tests_with_multiple_tasks
+from dry_pipe_tests import task_launch_tests
+from dry_pipe_tests import test_core_lib
+from dry_pipe_tests.cli_tests import CliArrayTests1, CliTestsPipelineWithSlurmArray, CliTestScenario2
+from dry_pipe_tests.dsl_tests import TaskChangeTrackingTests
+from dry_pipe_tests.pipeline_tests_with_slurm_arrays import PipelineWithSlurmArray2StepsWith2Sbatch
+from dry_pipe_tests.pipeline_tests_with_slurm_mockup import all_low_level_tests_with_mockup_slurm
+from dry_pipe_tests.test_state_machine import StateMachineTests, StateFileTrackerTest, MockupStateFileTrackerTest
 
 from dry_pipe_tests.pipeline_tests_with_local_slurm import all_with_local_slurm
 from dry_pipe_tests import pipeline_tests_with_slurm_arrays
@@ -19,10 +19,6 @@ from dry_pipe_tests.pipeline_tests_with_remote_slurm_arrays import \
     RemotePipelineWithAutoRestart2, PipelineWithPartialArrayMatchRemote
 from dry_pipe_tests.pipeline_tests_with_remote_tasks import RemoteTestFileSet, RemoteTestFileSetWithDataDirVar, \
     RemoteTestFileSetWithGlobus
-from dry_pipe_tests.service_runner_tests import ServiceRunnerTest1
-
-
-#from dry_pipe_tests.pipeline_tests_with_remote_slurm_arrays import CliTestsPipelineWithSlurmArrayRemote
 
 
 def ad_hoc():
@@ -101,7 +97,6 @@ def low_level_tests():
         TaskChangeTrackingTests,
         CliArrayTests1,
         all_with_local_slurm(),
-        ServiceRunnerTest1,
         test_core_lib.all_tests
     ]
 

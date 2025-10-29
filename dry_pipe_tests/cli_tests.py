@@ -29,7 +29,7 @@ def test_cli(*args, **kwargs):
 
     args = args[1:]
 
-    Cli(args, env=env).invoke(test_mode=True)
+    Cli(args, env=env, test_mode=True).invoke()
 
 def pipeline_with_slurm_array_1():
     t = PipelineWithSlurmArrayForRealSlurmTest()
@@ -68,9 +68,9 @@ class CliArrayTests1(PipelineWithSlurmArrayForRealSlurmTest):
 
         test_cli(
             self,
-            f'--pipeline-instance-dir={d.sandbox_dir}',
             'run',
-            f'--generator=cli_tests:pipeline_with_slurm_array_1'
+            f'--pipeline-instance-dir={d.sandbox_dir}',
+            f'--generator=dry_pipe_tests.cli_tests:pipeline_with_slurm_array_1'
         )
 
         pipeline_instance = self.create_pipeline_instance(d.sandbox_dir)
@@ -82,11 +82,11 @@ class CliArrayTests1(PipelineWithSlurmArrayForRealSlurmTest):
 
         d = TestSandboxDir(self)
 
-        pipeline_with_slurm_array_1_modfunc = 'cli_tests:pipeline_with_slurm_array_1'
+        pipeline_with_slurm_array_1_modfunc = 'dry_pipe_tests.cli_tests:pipeline_with_slurm_array_1'
         test_cli(
             self,
-            f'--pipeline-instance-dir={d.sandbox_dir}',
             'prepare',
+            f'--pipeline-instance-dir={d.sandbox_dir}',
             f'--generator={pipeline_with_slurm_array_1_modfunc}'
         )
 
@@ -100,8 +100,8 @@ class CliArrayTests1(PipelineWithSlurmArrayForRealSlurmTest):
 
         test_cli(
             self,
-            f'--pipeline-instance-dir={pipeline_instance.state_file_tracker.pipeline_instance_dir}',
             'array-submit',
+            f'--pipeline-instance-dir={pipeline_instance.state_file_tracker.pipeline_instance_dir}',
             '--task-key=array-parent'
         )
 
@@ -117,8 +117,8 @@ class CliArrayTests1(PipelineWithSlurmArrayForRealSlurmTest):
 
         test_cli(
             self,
-            '--pipeline-instance-dir', pipeline_instance.state_file_tracker.pipeline_instance_dir,
             'array-submit',
+            '--pipeline-instance-dir', pipeline_instance.state_file_tracker.pipeline_instance_dir,
             '--task-key', 'array-parent',
             '--limit', '1'
         )
@@ -148,8 +148,8 @@ class CliArrayTests1(PipelineWithSlurmArrayForRealSlurmTest):
         for _ in [1, 1, 1]:
             test_cli(
                 self,
-                '--pipeline-instance-dir', pipeline_instance.state_file_tracker.pipeline_instance_dir,
                 'array-submit',
+                '--pipeline-instance-dir', pipeline_instance.state_file_tracker.pipeline_instance_dir,
                 '--task-key', 'array-parent',
                 '--limit=1'
             )
@@ -175,8 +175,8 @@ class CliTestsPipelineWithSlurmArrayForRestarts(PipelineWithSlurmArrayForRestart
         pid = pipeline_instance.state_file_tracker.pipeline_instance_dir
         test_cli(
             self,
-            f'--pipeline-instance-dir={pid}',
             'array-submit',
+            f'--pipeline-instance-dir={pid}',
             '--task-key=array_parent'
         )
 
@@ -187,8 +187,8 @@ class CliTestsPipelineWithSlurmArrayForRestarts(PipelineWithSlurmArrayForRestart
 
         test_cli(
             self,
-            f'--pipeline-instance-dir={pid}',
             'restart-failed-array-tasks',
+            f'--pipeline-instance-dir={pid}',
             '--task-key=array_parent',
             '--include-pre-launch',
             '--wait'
@@ -207,8 +207,8 @@ class CliTestsPipelineWithSlurmArrayForRestarts(PipelineWithSlurmArrayForRestart
 
         test_cli(
             self,
-            f'--pipeline-instance-dir={pid}',
             'restart-failed-array-tasks',
+            f'--pipeline-instance-dir={pid}',
             '--task-key=array_parent',
             '--wait'
         )
@@ -243,8 +243,8 @@ class CliTestsPipelineWithSlurmArray(PipelineWithSlurmArray):
         def create_parent_task(parent_task_key, match):
             test_cli(
                 self,
-                '--pipeline-instance-dir', pipeline_instance.state_file_tracker.pipeline_instance_dir,
                 'create-array-parent',
+                '--pipeline-instance-dir', pipeline_instance.state_file_tracker.pipeline_instance_dir,
                 parent_task_key, match,
                 '--slurm-account=dummy', '--force'
             )
@@ -253,8 +253,8 @@ class CliTestsPipelineWithSlurmArray(PipelineWithSlurmArray):
 
         test_cli(
             self,
-            '--pipeline-instance-dir', pipeline_instance.state_file_tracker.pipeline_instance_dir,
             'task',
+            '--pipeline-instance-dir', pipeline_instance.state_file_tracker.pipeline_instance_dir,
             f'{pipeline_instance.state_file_tracker.pipeline_instance_dir}/.drypipe/z',
             '--wait'
         )
@@ -274,8 +274,8 @@ class CliTestsPipelineWithSlurmArray(PipelineWithSlurmArray):
         def run_parent_task(parent_task_key):
             test_cli(
                 self,
-                '--pipeline-instance-dir', pipeline_instance.state_file_tracker.pipeline_instance_dir,
                 'task',
+                '--pipeline-instance-dir', pipeline_instance.state_file_tracker.pipeline_instance_dir,
                 f'{pipeline_instance.state_file_tracker.pipeline_instance_dir}/.drypipe/{parent_task_key}',
                 '--wait'
             )
@@ -291,16 +291,16 @@ class CliTestsPipelineWithSlurmArray(PipelineWithSlurmArray):
 
         test_cli(
             self,
-            f'--pipeline-instance-dir={pipeline_instance.state_file_tracker.pipeline_instance_dir}',
             'array-submit',
+            f'--pipeline-instance-dir={pipeline_instance.state_file_tracker.pipeline_instance_dir}',
             '--task-key=p2',
             '--limit=1'
         )
 
         test_cli(
             self,
-            f'--pipeline-instance-dir={pipeline_instance.state_file_tracker.pipeline_instance_dir}',
             'array-submit',
+            f'--pipeline-instance-dir={pipeline_instance.state_file_tracker.pipeline_instance_dir}',
             '--task-key=p2',
             '--limit=1'
         )
@@ -324,8 +324,8 @@ class CliTestScenario2(PipelineWithSlurmArray):
 
         test_cli(
             self,
-            '--pipeline-instance-dir', d.sandbox_dir,
             'run',
-            '--generator', 'cli_tests:pipeline_with_slurm_array_2',
+            '--pipeline-instance-dir', d.sandbox_dir,
+            '--generator', 'dry_pipe_tests.cli_tests:pipeline_with_slurm_array_2',
             '--until', 't_a*'
         )

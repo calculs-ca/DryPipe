@@ -170,15 +170,17 @@ def _cleanup_args(args):
 
 class Cli:
 
-    def __init__(self, args, invocation_script=None, env=None):
+    def __init__(self, args, env=None, test_mode=False):
 
         self.raw_command_line = " ".join(args)
-        args = _cleanup_args(args)
+        self.args = _cleanup_args(args)
 
         self._has_implicit_generator = False
         self._has_implicit_control_dir = False
         self._has_implicit_pid = False
         self._has_implicit_task_key = False
+
+        self.test_mode = test_mode
 
         if env is None:
             self.env = os.environ
@@ -190,8 +192,6 @@ class Cli:
         self.parser = argparse.ArgumentParser(
             description="DryPipe CLI"
         )
-
-        self._add_pipeline_instance_dir_arg(self.parser)
 
         self.parser.add_argument(
             '--v', '-v',
@@ -210,122 +210,32 @@ class Cli:
             help="don't actualy run, but print what will run (implicit --verbose)",
         )
 
-        self._sub_parsers()
+        self.command_names_to_method = {}
+
+        for command in self._enumerate_commands():
+            method_name = command.name.replace("-", "_")
+            m = getattr(self, method_name)
+            if m is None:
+                raise Exception(f"method {method_name} should exist, for command {command.name}")
+            else:
+                self.command_names_to_method[command.name] = m
+
+
+    def invoke(self):
 
         if is_inside_slurm_job():
-            args = ["task", os.environ["DRYPIPE_TASK_CONTROL_DIR"]]
 
-        self.parsed_args = self.parser.parse_args(args)
+            tcd = Path(os.environ["DRYPIPE_TASK_CONTROL_DIR"])
+            task_key = tcd.name.__str__()
+            pid = tcd.parent.parent.__str__()
 
-    def _add_pipeline_instance_dir_arg(self, parser):
-
-        default_pid = self.env.get("DRYPIPE_PIPELINE_INSTANCE_DIR")
-
-        if default_pid is None:
-            control_dir = self._guess_control_dir_from_cwd()
-
-            if control_dir is not None:
-                default_pid = os.path.dirname(os.path.dirname(control_dir))
-
-        if default_pid is None:
-            if Path(__file__).name == "cli":
-                default_pid = Path(__file__).parent.parent.parent
-            elif Path(__file__).name == "cli.py" and Path(__file__).parent.parent.name == ".drypipe":
-                default_pid = Path(__file__).parent.parent.parent
-
-        if default_pid is not None:
-            self._has_implicit_pid = True
-
-        parser.add_argument(
-            '--pipeline-instance-dir',
-            help='pipeline instance directory, can also be set with environment var DRYPIPE_PIPELINE_INSTANCE_DIR',
-            default=default_pid
-        )
-
-    def _guess_control_dir_from_cwd(self):
-        cwd = Path.cwd()
-        task_conf = os.path.join(cwd, "task-conf.json")
-        if os.path.exists(task_conf):
-            return cwd
+            self.parsed_args = self.parser.parse_args([
+                "task",
+                f"--pipeline-instance-dir={pid}",
+                f"--task-key={task_key}"
+            ])
         else:
-            return None
-
-    def _implicit_control_dir(self):
-        DRYPIPE_DP_HINT_DIR = os.environ.get("DRYPIPE_DP_HINT_DIR")
-        if DRYPIPE_DP_HINT_DIR is not None:
-            icd = Path(DRYPIPE_DP_HINT_DIR)
-            if icd.parent.name == ".drypipe":
-                self._has_implicit_control_dir = True
-                return icd
-
-        return None
-
-    def _add_task_key_parser_arg(self, parser):
-
-        icd = self._implicit_control_dir()
-
-        if icd is not None:
-            implicit_task_key = icd.name
-            self._has_implicit_task_key = True
-        else:
-            control_dir = self._guess_control_dir_from_cwd()
-            if control_dir is not None:
-                implicit_task_key = os.path.basename(control_dir)
-                self._has_implicit_task_key = True
-            else:
-                implicit_task_key = None
-
-        parser.add_argument(
-            '--task-key',
-            default=implicit_task_key
-        )
-
-    def _control_dir(self):
-        pipeline_instance_dir = self.parsed_args.pipeline_instance_dir
-        task_key = self.parsed_args.task_key
-        return os.path.join(pipeline_instance_dir, ".drypipe", task_key)
-
-    def _complete_control_dir(self, maybe_partial_control_dir):
-        if os.path.exists(maybe_partial_control_dir):
-            return os.path.abspath(maybe_partial_control_dir)
-
-        cd = os.path.join(os.getcwd(), maybe_partial_control_dir)
-
-        if os.path.exists(cd):
-            return cd
-
-        raise Exception(f"directory not found {cd}")
-
-    def _wait(self):
-        return self.parsed_args.wait
-
-    def _tail(self):
-        return self.parsed_args.tail
-
-    def _tail_all(self):
-        return self.parsed_args.tail_all
-
-    def get_ssh_remote_dest_or_none(self, task_conf):
-        ssh_remote_dest = task_conf.get("ssh_remote_dest")
-        if ssh_remote_dest is None:
-            if self.parsed_args.ssh_remote_dest is None:
-                raise Exception(
-                    f"--ssh-remote-dest is required for 'array-upload', OR must be defined with " +
-                    " .task(task_conf=TaskConf(ss_remote_dest=...)"
-                )
-            else:
-                ssh_remote_dest = self.parsed_args.ssh_remote_dest
-
-    def invoke(self, test_mode=False):
-
-        if self._has_implicit_pid:
-            print(f"implicit --pipeline-instance-dir={self.parsed_args.pipeline_instance_dir}")
-        if self._has_implicit_task_key:
-            if hasattr(self.parsed_args, "task_key"):
-                print(f"implicit --task-key={self.parsed_args.task_key}")
-        if self._has_implicit_generator:
-            if hasattr(self.parsed_args, "generator"):
-                print(f"implicit --generator={self.parsed_args.generator}")
+            self.parsed_args = self.parser.parse_args(self.args)
 
 
         if self.parsed_args.v:
@@ -333,564 +243,487 @@ class Cli:
         elif self.parsed_args.vv:
             setup_verbose2()
 
-        def pipeline_instance_from_args():
-            g = self.parsed_args.generator
-            if g is None:
-                raise Exception(f"--generator is required")
-            pipeline = func_from_mod_func(g)()
+        method = self.command_names_to_method.get(self.parsed_args.command)
 
-            if self.parsed_args.pipeline_instance_dir is None:
-                raise Exception(
-                    f"--pipeline-instance-dir is required, " +
-                    "or DRYPIPE_PIPELINE_INSTANCE_DIR environment variable must be set"
-                )
+        if method is None:
+            raise Exception(f"method {method} should exist, for command {self.parsed_args.command}")
 
-            return pipeline.create_pipeline_instance(self.parsed_args.pipeline_instance_dir)
+        method()
 
-        if self.parsed_args.dry_run:
-            logger.warning("DryRun !!")
 
-        if self.parsed_args.command == 'array-submit':
-            task_process = TaskProcess(
-                self._control_dir(),
-                as_subprocess=not test_mode,
-                test_mode=test_mode
-            )
-            task_process.run(
-                array_limit=self.parsed_args.limit
-            )
-        elif self.parsed_args.command == 'run':
-            pipeline_instance = pipeline_instance_from_args()
-            pipeline_instance.prepare_instance_dir()
-            if not test_mode:
-                pipeline_instance.monitor = CliMonitor(pipeline_instance, self.parsed_args.generator)
-
-            pipeline_instance.run(
-                until_patterns=self.parsed_args.until,
-                restart_failed=self.parsed_args.restart_failed,
-                reset_failed=self.parsed_args.reset_failed,
-                sleep_schedule=self.parsed_args.sleep_schedule
-            )
-        elif self.parsed_args.command == 'service':
-
-
-            init_logging(self.parsed_args.log_conf, verbose=self.parsed_args.v)
-
-            cg = self.parsed_args.config_generator
-
-            logging.info("will load config %s", cg)
-
-            logging.debug("sleep schedule: %s", self.parsed_args.sleep_schedule)
-
-            g = list(func_from_mod_func(cg)())
-
-            pipeline_runner = PipelineRunner(
-                g,
-                run_sync=False,
-                run_tasks_in_process=False,
-                sleep_schedule=self.parsed_args.sleep_schedule
-            )
-
-            logging.info("starting drypipe service")
-
-            for suggested_sleep in pipeline_runner.iterate_work():
-                if suggested_sleep > 0:
-                    logging.debug("will sleep for %s", suggested_sleep)
-                    time.sleep(suggested_sleep)
-
-        elif self.parsed_args.command == 'prepare':
-            pipeline_instance = pipeline_instance_from_args()
-            pipeline_instance.prepare_instance_dir()
-            pipeline_instance.run_sync(["*"], sleep_schedule=self.parsed_args.sleep_schedule)
-        elif self.parsed_args.command == 'call':
-
-            call(self.parsed_args.module_function)
-
-        elif self.parsed_args.command == 'task':
-            task_process = TaskProcess(
-                self._complete_control_dir(self.parsed_args.control_dir),
-                wait_for_completion=self._wait(),
-                test_mode=test_mode,
-                as_subprocess=not test_mode,
-                tail=self._tail(),
-                tail_all=self._tail_all(),
-                from_remote=self.parsed_args.from_remote
-            )
-
-            if self.parsed_args.ssh_remote_dest is not None:
-                task_process.task_conf.ssh_remote_dest = self.parsed_args.ssh_remote_dest
-            elif task_process.task_conf.executer_type == "slurm":
-                if self.parsed_args.by_runner and not task_process.task_conf.is_slurm_parent:
-                    task_process.submit_sbatch_task()
-                    return
-
-            task_process.launch_task()
-
-        elif self.parsed_args.command == 'remote-exec':
-            control_dir = self._control_dir()
-            task_process = TaskProcess(
-                control_dir,
-                wait_for_completion=False,
-                test_mode=test_mode,
-                as_subprocess=not test_mode,
-            )
-
-            s = list(Path(control_dir).glob("state.*"))
-
-            if len(s) == 0:
-                Path(control_dir, "state.waiting").touch(exist_ok=False)
-            elif len(s) > 1:
-                raise Exception(f"multiple state files in {control_dir}")
-
-            if task_process.task_conf.executer_type == "slurm":
-                task_process.submit_sbatch_task()
-            else:
-                task_process.launch_task()
-
-        elif self.parsed_args.command == 'submit-array-from-remote':
-            control_dir = self._control_dir()
-            task_process = TaskProcess(control_dir, use_remote_drypipe_log=True)
-
-            task_process.task_logger.info("raw command line: %s", self.raw_command_line)
-            res = submit_local_array.func(task_process)
-            #task_process.task_logger.info("submitted array from remote %s", json.dumps(res))
-            print(json.dumps(res))
-        elif self.parsed_args.command == 'upload-drypipe-for-remote-instance':
-            task_process = TaskProcess(
-                os.path.join(self.parsed_args.pipeline_instance_dir, ".drypipe", self.parsed_args.task_key),
-                wait_for_completion=True,
-                alternate_logger=logger
-            )
-            task_process.upload_drypipe_for_remote_instance()
-        elif self.parsed_args.command == 'upgrade-drypipe':
-
-            StateFileTracker.copy_drypipe_code(Path(self.parsed_args.pipeline_instance_dir).joinpath(".drypipe"))
-
-        elif self.parsed_args.command == 'watch-array-from-remote':
-            control_dir = self._control_dir()
-
-            use_remote_drypipe_log = True
-            alternate_logger = None
-            if self.parsed_args.vv or self.parsed_args.v:
-                use_remote_drypipe_log = False
-                alternate_logger=logger
-
-            task_process = TaskProcess(
-                control_dir, use_remote_drypipe_log=use_remote_drypipe_log,
-                for_dry_run=self.parsed_args.dry_run,
-                alternate_logger=alternate_logger
-            )
-            atm = task_process.create_array_task_manager()
-            report = atm.manage_auto_restarts_from_remote()
-            print(json.dumps(report))
-        elif self.parsed_args.command == 'poll-task':
-            control_dir = self._control_dir()
-            task_process = TaskProcess(control_dir, no_logger=True)
-
-            s = list(Path(control_dir).glob("state.*"))
-
-            if len(s) == 0:
-                raise Exception(f"no state file in {control_dir}")
-            elif len(s) > 1:
-                raise Exception(f"multiple state files in {control_dir}")
-
-            state_file = s[0]
-            print(f"{state_file.absolute()}")
-
-        elif self.parsed_args.command == 'sbatch':
-            task_process = TaskProcess(self.parsed_args.control_dir, wait_for_completion=self._wait())
-            task_process.submit_sbatch_task()
-
-        elif self.parsed_args.command == 'fetch-remote-state':
-            task_process = TaskProcess(
-                os.path.join(self.parsed_args.pipeline_instance_dir, ".drypipe", self.parsed_args.task_key),
-                wait_for_completion=self._wait(),
-                alternate_logger=logger
-            )
-            task_process.fetch_remote_state()
-        elif self.parsed_args.command == 'sbatch-gen':
-            task_process = TaskProcess(self.parsed_args.control_dir, wait_for_completion=self._wait())
-            print(" ".join(task_process.sbatch_cmd_lines()))
-
-        elif self.parsed_args.command == 'array-upload':
-
-            task_process = TaskProcess(self._control_dir())
-
-            if self.parsed_args.ssh_remote_dest is not None:
-                task_process.task_conf.ssh_remote_dest = self.parsed_args.ssh_remote_dest
-
-            array_parent_task = SlurmArrayParentTask(task_process)
-
-            array_parent_task._upload_array()
-
-        elif self.parsed_args.command == 'array-download':
-
-            task_process = TaskProcess(
-                os.path.join(self.parsed_args.pipeline_instance_dir, ".drypipe", self.parsed_args.task_key),
-                alternate_logger=logger
-            )
-
-            if self.parsed_args.ssh_remote_dest is not None:
-                task_process.task_conf.ssh_remote_dest = self.parsed_args.ssh_remote_dest
-
-            array_parent_task = SlurmArrayParentTask(task_process)
-
-            array_parent_task._download_array()
-
-        elif self.parsed_args.command == 'reconcile-with-squeue':
-
-            task_process = TaskProcess(
-                os.path.join(self.parsed_args.pipeline_instance_dir, ".drypipe", self.parsed_args.task_key),
-                alternate_logger=logger
-            )
-
-            array_parent_task = SlurmArrayParentTask(task_process)
-
-            for k, v in array_parent_task.compare_and_reconcile_squeue_with_state_files().items():
-                print(f"{k}: {v}")
-
-
-        elif self.parsed_args.command == 'create-array-parent':
-
-            new_task_key = self.parsed_args.new_task_key
-            matcher = self.parsed_args.matcher
-
-            SlurmArrayParentTask.create_array_parent(
-                self.parsed_args.pipeline_instance_dir,
-                new_task_key,
-                matcher,
-                self.parsed_args.slurm_account,
-                split_into=self.parsed_args.split,
-                extra_env=self.env
-            )
-        elif self.parsed_args.command == 'list-states':
-            task_process = TaskProcess(
-                self._control_dir(),
-                no_logger=True
-            )
-
-            if self.parsed_args.gen_rsync_list:
-                task_process.generate_rsync_list_for_file_sets()
-
-            def p():
-                if task_process.is_slurm_array_parent():
-                    array_parent_task = SlurmArrayParentTask(task_process)
-                    for task_key, state in array_parent_task.list_array_states():
-                        yield task_key, state
-
-                else:
-                    state_file_path = StateFileTracker.find_state_file_path_if_exists(task_process.control_dir)
-                    if state_file_path is not None:
-                        yield task_process.task_key, state_file_path.name
-
-            for task_key, state in p():
-                print(f"{task_key}/{state}")
-
-        elif self.parsed_args.command == 'restart':
-            self.restart_task()
-        elif self.parsed_args.command == 'reset':
-            self.reset_task()
-        elif self.parsed_args.command == 'restart-failed-array-tasks':
-            task_process = TaskProcess(
-                os.path.join(self.parsed_args.pipeline_instance_dir, ".drypipe", self.parsed_args.task_key),
-                alternate_logger=logger
-            )
-
-            if self._wait():
-                task_process.wait_for_completion = True
-
-            array_parent_task = SlurmArrayParentTask(task_process)
-
-            array_parent_task.prepare_and_launch_next_array(
-                restart_failed=True,
-                include_pre_launch=self.parsed_args.include_pre_launch
-            )
-
-        elif self.parsed_args.command == 'report-perf':
-
-            if self.parsed_args.pipeline_instance_dir is None:
-                raise Exception(f"--pipeline-instance-dir must be specified")
-
-
-            if self.parsed_args.task_key is not None and self.parsed_args.filter == "*":
-                f = self.parsed_args.task_key
-            else:
-                f = self.parsed_args.filter
-
-            for task_key, timer_label, hms, s in timers_for_tasks(self.parsed_args.pipeline_instance_dir, f):
-                print(f"{timer_label}\t{task_key}\t{hms}\t{s}")
-
-    def _sub_parsers(self):
-
-
-        self.subparsers = self.parser.add_subparsers(required=True, dest='command')
-        self.add_run_args(self.subparsers.add_parser('run'))
-
-        self.subparsers.add_parser('upgrade-drypipe')
-
-        self.add_service_args(self.subparsers.add_parser('service'))
-        self.add_report_args(self.subparsers.add_parser('report-perf'))
-        prepare_parser = self.subparsers.add_parser('prepare')
-        self.add_generator_arg(prepare_parser)
-        self._add_sleep_schedule_args(prepare_parser)
-        self.add_call_args(self.subparsers.add_parser('call'))
-        self.add_task_args(self.subparsers.add_parser('task'))
-        self.add_task_args(self.subparsers.add_parser('reset'))
-        restart_cmd = self.subparsers.add_parser('restart')
-        self.add_task_args(restart_cmd)
-        restart_cmd.add_argument(
-            '--reset',
-            help='restart the task from the first step, clears the results directory if exists',
-            action='store_true'
-        )
-        restart_cmd.add_argument(
-            '--at-step',
-            type=int,
-            help='restarts the task at the specified step (zero based).',
-            default=None
-        )
-
-
-        self.add_task_args(self.subparsers.add_parser('poll-task'))
-        self.add_task_args(self.subparsers.add_parser('remote-exec'))
-        self.add_task_args(self.subparsers.add_parser("submit-array-from-remote"))
-        self.add_task_args(self.subparsers.add_parser("watch-array-from-remote"))
-
-        fetch_remote_state = self.subparsers.add_parser('fetch-remote-state')
-        self._add_task_key_parser_arg(fetch_remote_state)
-        self.__wait_arg(fetch_remote_state)
-
-        upload_drypipe = self.subparsers.add_parser('upload-drypipe-for-remote-instance')
-        self._add_task_key_parser_arg(upload_drypipe)
-
-        self.add_sbatch_args(self.subparsers.add_parser('sbatch'))
-        self.add_sbatch_args(self.subparsers.add_parser('sbatch-gen'))
-        self.add_array_args(self.subparsers.add_parser('array-submit'))
-        self.add_upload_download_array_args(self.subparsers.add_parser('array-upload'))
-        self.add_upload_download_array_args(self.subparsers.add_parser('array-download'))
-        self.add_create_array_parent_args(self.subparsers.add_parser('create-array-parent'))
-        self.add_upload_download_array_args(self.subparsers.add_parser('array-zombies'))
-        list_state_parser = self.subparsers.add_parser('list-states')
-        self._add_task_key_parser_arg(list_state_parser)
-
-        list_state_parser.add_argument(
-            '--gen-rsync-list',
-            help='generate rsync list for file sets',
-            action='store_true',
-            default=False
-        )
-
-        restart_array = self.subparsers.add_parser('restart-failed-array-tasks')
-        gen_array_rsync_list = self.subparsers.add_parser('array-rsync-list')
-        self._add_task_key_parser_arg(gen_array_rsync_list)
-
-        #self._add_task_key_parser_arg(restart_array)
-        self.add_array_args(restart_array)
-
-        restart_array.add_argument(
-            '--include-pre-launch',
-            help='Also restart tasks that have failed to launch (useful after scancel on an array)',
-            action='store_true',
-            default=False
-        )
-
-
-    def add_status_args(self):
-        pass
-
-    def add_generator_arg(self, parser):
-
-        ig = self.env.get("DRYPIPE_PIPELINE_GENERATOR")
-
-        if ig is not None:
-            self._has_implicit_generator = True
-
-        parser.add_argument(
-            '--generator',
-            help='<module>:<function> task generator function, can also be set with environment var DRYPIPE_PIPELINE_GENERATOR',
-            metavar="GENERATOR",
-            default=ig
-        )
-
-    def add_report_args(self, report_parser):
-        report_parser.add_argument(
-            '--filter',
-            help='glob expression to filter tasks',
-            default='*'
-        )
-
-        self._add_task_key_parser_arg(report_parser)
-
-        self._add_pipeline_instance_dir_arg(report_parser)
-
-
-    def add_run_args(self, run_parser):
-
-        self.add_generator_arg(run_parser)
-
-        run_parser.add_argument(
-            '--until', help='tasks matching PATTERN will not be started',
-            action='append',
-            metavar='PATTERN'
-        )
-
-        self._add_task_key_parser_arg(run_parser)
-
-        self._add_restart_failed_args(run_parser)
-        self._add_sleep_schedule_args(run_parser)
-
-
-    def _add_sleep_schedule_args(self, parser):
+    def _enumerate_commands(self):
 
         class ListOfInts:
             def __call__(self, txt):
                 return [int(s) for s in txt.split(",")]
 
-        parser.add_argument(
-            "--sleep-schedule",
-            action=EnvDefault,
-            envvar="DRYPIPE_SERVICE_SLEEP_SCHEDULE",
-            env=self.env,
-            help="a list of sleep times in seconds, for the main loop of the service, can also be set with environment var DRYPIPE_SERVICE_SLEEP_SCHEDULE",
-            default="0,1,3,5,10,15,20",
-            type=ListOfInts()
+
+
+        def pipeline_instance_dir(parser):
+            parser.add_argument(
+                '--pipeline-instance-dir',
+                help='pipeline instance directory, can also be set with environment var DRYPIPE_PIPELINE_INSTANCE_DIR',
+                action=EnvDefault,
+                envvar="DRYPIPE_PIPELINE_INSTANCE_DIR",
+                env=self.env
+            )
+
+        def task_key(parser):
+            pipeline_instance_dir(parser)
+            parser.add_argument('--task-key')
+
+        def limit(parser):
+            parser.add_argument(
+                '--limit', type=int, help='limit submitted array size to N tasks', metavar='N'
+            )
+
+        def by_runner(parser):
+            parser.add_argument("--by-runner", dest="by_runner", action="store_true")
+            parser.set_defaults(by_runner=False)
+
+        def until(parser):
+            parser.add_argument(
+                '--until', help='tasks matching PATTERN will not be started',
+                action='append',
+                metavar='PATTERN'
+            )
+
+        def ssh_remote_dest(parser):
+            parser.add_argument(
+                '--ssh-remote-dest',
+                help=textwrap.dedent(
+                """
+                    example:`me@myhost.example.com:/my-directory`            
+                """)
+            )
+
+        def tail(parser):
+            parser.add_argument("--tail", dest="tail", action="store_true")
+
+        def from_remote(parser):
+            parser.add_argument("--from-remote", dest="from_remote", action="store_true")
+
+        def reset(parser):
+            parser.add_argument(
+                '--reset',
+                help='restart the task from the first step, clears the results directory if exists',
+                action='store_true'
+            )
+
+        def generator(parser):
+            parser.add_argument(
+                '--generator',
+                help='<module>:<function> task generator function, can also be set with environment var DRYPIPE_PIPELINE_GENERATOR',
+                action=EnvDefault,
+                envvar="DRYPIPE_PIPELINE_GENERATOR",
+                metavar="GENERATOR",
+                env=self.env
+            )
+
+        def at_step(parser):
+            parser.add_argument(
+                '--at-step',
+                type=int,
+                help='restarts the task at the specified step (zero based).',
+                default=None
+            )
+
+        def wait(parser):
+            parser.add_argument(
+                '--wait',
+                dest='wait',
+                action='store_true',
+                help="wait for task to complete before exiting"
+            )
+            parser.set_defaults(wait=False)
+
+        def gen_rsync_list(parser):
+            parser.add_argument(
+                '--gen-rsync-list',
+                help='generate rsync list for file sets',
+                action='store_true',
+                default=False
+            )
+
+        def include_pre_launch(parser):
+            parser.add_argument(
+                '--include-pre-launch',
+                help='Also restart tasks that have failed to launch (useful after scancel on an array)',
+                action='store_true',
+                default=False
+            )
+
+        def restart_failed(parser):
+            parser.add_argument(
+                '--restart-failed',
+                help='failed tasks will be restarted',
+                action='store_true',
+                default=False
+            )
+
+        def reset_failed(parser):
+            parser.add_argument(
+                '--reset-failed',
+                help='failed tasks will be reset and then restarted',
+                action='store_true',
+                default=False
+            )
+
+        def sleep_schedule(parser):
+            parser.add_argument(
+                "--sleep-schedule",
+                action=EnvDefault,
+                envvar="DRYPIPE_SERVICE_SLEEP_SCHEDULE",
+                env=self.env,
+                help="a list of sleep times in seconds, for the main loop of the service, can also be set with environment var DRYPIPE_SERVICE_SLEEP_SCHEDULE",
+                default="0,1,3,5,10,15,20",
+                type=ListOfInts()
+            )
+
+        def config_generator(parser):
+            parser.add_argument(
+                "--config-generator",
+                action=EnvDefault,
+                envvar="DRYPIPE_SERVICE_CONFIG_GENERATOR",
+                env=self.env,
+                help="""a function that yields instances of dry_pipe.pipeline.PipelineType, 
+                        can also be set with environment var DRYPIPE_SERVICE_CONFIG_GENERATOR""",
+            )
+
+        _s = self.parser.add_subparsers(required=True, dest='command')
+        self.subparsers = _s
+
+        class Command:
+            def __init__(self, name, *args):
+                self.name = name
+                sub_parser = _s.add_parser(name)
+                for a in args:
+                    try:
+                        a(sub_parser)
+                    except Exception as e:
+                        raise Exception(f"arg {a.__name__}  on command {name} failed with exception {e}")
+
+
+        yield Command('run', pipeline_instance_dir, generator, until, restart_failed, reset_failed, sleep_schedule)
+        yield Command('prepare', pipeline_instance_dir, generator, until, sleep_schedule)
+        yield Command('service', pipeline_instance_dir, config_generator, sleep_schedule)
+        yield Command('upgrade-drypipe', pipeline_instance_dir)
+        yield Command('restart-failed-array-tasks', pipeline_instance_dir, include_pre_launch)
+
+        yield Command('task', task_key, wait, tail, by_runner, from_remote, ssh_remote_dest)
+        yield Command('restart', task_key, at_step, reset, wait, from_remote)
+        yield Command('poll-task', task_key)
+        yield Command('remote-exec', task_key, wait)
+        yield Command("submit-array-from-remote", task_key, wait)
+        yield Command("watch-array-from-remote", task_key, wait)
+        yield Command('fetch-remote-state', task_key)
+        yield Command('upload-drypipe-for-remote-instance', task_key)
+        yield Command('sbatch', task_key, wait)
+        yield Command('sbatch-gen', task_key)
+        yield Command('array-submit', task_key, limit)
+        yield Command('array-upload', task_key)
+        yield Command('array-download', task_key)
+        yield Command('create-array-parent', task_key)
+        yield Command('list-states', task_key, gen_rsync_list)
+        yield Command('array-rsync-list', task_key)
+
+
+        def module_function(parser):
+            parser.add_argument('module_function', type=str)
+
+        yield Command('call', module_function, task_key)
+
+
+    def pipeline_instance_from_args(self):
+
+        g = self.parsed_args.generator
+        if g is None:
+            raise Exception(f"--generator is required")
+        pipeline = func_from_mod_func(g)()
+
+        if self.parsed_args.pipeline_instance_dir is None:
+            raise Exception(
+                f"--pipeline-instance-dir is required, " +
+                "or DRYPIPE_PIPELINE_INSTANCE_DIR environment variable must be set"
+            )
+
+        return pipeline.create_pipeline_instance(self.parsed_args.pipeline_instance_dir)
+
+    def run(self):
+        pipeline_instance = self.pipeline_instance_from_args()
+        pipeline_instance.prepare_instance_dir()
+        if not self.test_mode:
+            pipeline_instance.monitor = CliMonitor(pipeline_instance, self.parsed_args.generator)
+
+        pipeline_instance.run(
+            until_patterns=self.parsed_args.until,
+            restart_failed=self.parsed_args.restart_failed,
+            reset_failed=self.parsed_args.reset_failed,
+            sleep_schedule=self.parsed_args.sleep_schedule
         )
 
-    def add_service_args(self, service_parser):
-        service_parser.add_argument(
-            "--config-generator",
-            action=EnvDefault,
-            envvar="DRYPIPE_SERVICE_CONFIG_GENERATOR",
-            env=self.env,
-            help="""a function that yields instances of dry_pipe.pipeline.PipelineType, 
-                    can also be set with environment var DRYPIPE_SERVICE_CONFIG_GENERATOR""",
+    def call(self):
+        call(self.parsed_args.module_function)
+
+
+    def prepare(self):
+        pipeline_instance = self.pipeline_instance_from_args()
+        pipeline_instance.prepare_instance_dir()
+        pipeline_instance.run_sync(["*"], sleep_schedule=self.parsed_args.sleep_schedule)
+
+    def service(self):
+        init_logging(self.parsed_args.log_conf, verbose=self.parsed_args.v)
+
+        cg = self.parsed_args.config_generator
+
+        logging.info("will load config %s", cg)
+
+        logging.debug("sleep schedule: %s", self.parsed_args.sleep_schedule)
+
+        g = list(func_from_mod_func(cg)())
+
+        pipeline_runner = PipelineRunner(
+            g,
+            run_sync=False,
+            run_tasks_in_process=False,
+            sleep_schedule=self.parsed_args.sleep_schedule
         )
 
-        self._add_sleep_schedule_args(service_parser)
+        logging.info("starting drypipe service")
 
-        service_parser.add_argument(
-            "--log-conf",
-            action=EnvDefault,
-            envvar="DRYPIPE_LOGGING_CONF",
-            env=self.env,
-            help="the path to a logging configuration file, can also be set with environment var DRYPIPE_LOGGING_CONF",
-            required=False
+        for suggested_sleep in pipeline_runner.iterate_work():
+            if suggested_sleep > 0:
+                logging.debug("will sleep for %s", suggested_sleep)
+                time.sleep(suggested_sleep)
+
+
+    def upgrade_drypipe(self):
+        StateFileTracker.copy_drypipe_code(Path(self.parsed_args.pipeline_instance_dir).joinpath(".drypipe"))
+
+    def restart_failed_array_tasks(self):
+        task_process = TaskProcess(
+            os.path.join(self.parsed_args.pipeline_instance_dir, ".drypipe", self.parsed_args.task_key),
+            alternate_logger=logger
         )
 
-    def add_upload_download_array_args(self, upload_array_parser):
+        if self._wait():
+            task_process.wait_for_completion = True
 
-        self.upload_array_parser = upload_array_parser
+        array_parent_task = SlurmArrayParentTask(task_process)
 
-        self.add_ssh_remote_dest_arg(upload_array_parser)
-        self._add_task_key_parser_arg(upload_array_parser)
-
-    def add_ssh_remote_dest_arg(self, parser):
-        parser.add_argument(
-            '--ssh-remote-dest',
-            help=textwrap.dedent(
-            """
-                example:`me@myhost.example.com:/my-directory`            
-            """)
+        array_parent_task.prepare_and_launch_next_array(
+            restart_failed=True,
+            include_pre_launch=self.parsed_args.include_pre_launch
         )
 
-    def add_array_args(self, run_parser):
-        run_parser.add_argument(
-            '--filter',
-            help=textwrap.dedent(
-            """
-            reduce the set of task that will run, with task-key match pattern: TASK_KEY(:STEP_NUMBER)?
-            ex:
-                --filter=my_taskABC
-                --filter=my_taskABC:3            
-            """)
+    def _tail(self):
+        return self.parsed_args.tail
+
+    def _wait(self):
+        return self.parsed_args.wait
+
+    def task(self):
+
+        #raise Exception(f">>> {self._control_dir()}")
+        task_process = TaskProcess(
+            self._control_dir(),
+            wait_for_completion=self._wait(),
+            test_mode=self.test_mode,
+            as_subprocess=not self.test_mode,
+            tail=self._tail(),
+            from_remote=self.parsed_args.from_remote
         )
 
-        run_parser.add_argument(
-            '--limit', type=int, help='limit submitted array size to N tasks', metavar='N'
+        if self.parsed_args.ssh_remote_dest is not None:
+            task_process.task_conf.ssh_remote_dest = self.parsed_args.ssh_remote_dest
+        elif task_process.task_conf.executer_type == "slurm":
+            if self.parsed_args.by_runner and not task_process.task_conf.is_slurm_parent:
+                task_process.submit_sbatch_task()
+                return
+
+        task_process.launch_task()
+
+    def poll_task(self):
+        control_dir = self._control_dir()
+        task_process = TaskProcess(control_dir, no_logger=True)
+
+        s = list(Path(control_dir).glob("state.*"))
+
+        if len(s) == 0:
+            raise Exception(f"no state file in {control_dir}")
+        elif len(s) > 1:
+            raise Exception(f"multiple state files in {control_dir}")
+
+        state_file = s[0]
+        print(f"{state_file.absolute()}")
+
+    def remote_exec(self):
+        control_dir = self._control_dir()
+        task_process = TaskProcess(
+            control_dir,
+            wait_for_completion=False,
+            test_mode=self.test_mode,
+            as_subprocess=not self.test_mode,
         )
 
-        self._add_slurm_account_arg(run_parser)
+        s = list(Path(control_dir).glob("state.*"))
 
-        self._add_task_key_parser_arg(run_parser)
+        if len(s) == 0:
+            Path(control_dir, "state.waiting").touch(exist_ok=False)
+        elif len(s) > 1:
+            raise Exception(f"multiple state files in {control_dir}")
 
-        run_parser.add_argument(
-            '--slurm-args',
-            help="string that will be passed as argument to the sbatch invocation"
+        if task_process.task_conf.executer_type == "slurm":
+            task_process.submit_sbatch_task()
+        else:
+            task_process.launch_task()
+
+
+    def submit_array_from_remote(self):
+        control_dir = self._control_dir()
+        task_process = TaskProcess(control_dir, use_remote_drypipe_log=True)
+
+        task_process.task_logger.info("raw command line: %s", self.raw_command_line)
+        res = submit_local_array.func(task_process)
+        # task_process.task_logger.info("submitted array from remote %s", json.dumps(res))
+        print(json.dumps(res))
+
+    def watch_array_from_remote(self):
+
+        control_dir = self._control_dir()
+
+        use_remote_drypipe_log = True
+        alternate_logger = None
+        if self.parsed_args.vv or self.parsed_args.v:
+            use_remote_drypipe_log = False
+            alternate_logger = logger
+
+        task_process = TaskProcess(
+            control_dir, use_remote_drypipe_log=use_remote_drypipe_log,
+            for_dry_run=self.parsed_args.dry_run,
+            alternate_logger=alternate_logger
+        )
+        atm = task_process.create_array_task_manager()
+        report = atm.manage_auto_restarts_from_remote()
+        print(json.dumps(report))
+
+    def fetch_remote_state(self):
+        task_process = TaskProcess(
+            os.path.join(self.parsed_args.pipeline_instance_dir, ".drypipe", self.parsed_args.task_key),
+            wait_for_completion=self._wait(),
+            alternate_logger=logger
+        )
+        task_process.fetch_remote_state()
+
+    def upload_drypipe_for_remote_instance(self):
+        task_process = TaskProcess(
+            os.path.join(self.parsed_args.pipeline_instance_dir, ".drypipe", self.parsed_args.task_key),
+            wait_for_completion=True,
+            alternate_logger=logger
+        )
+        task_process.upload_drypipe_for_remote_instance()
+
+    def sbatch(self):
+        task_process = TaskProcess(self.parsed_args.control_dir, wait_for_completion=self._wait())
+        task_process.submit_sbatch_task()
+
+    def sbatch_gen(self):
+        task_process = TaskProcess(self.parsed_args.control_dir, wait_for_completion=self._wait())
+        print(" ".join(task_process.sbatch_cmd_lines()))
+
+    def array_submit(self):
+        task_process = TaskProcess(
+            self._control_dir(),
+            as_subprocess=not self.test_mode,
+            test_mode=self.test_mode
+        )
+        task_process.run(
+            array_limit=self.parsed_args.limit
         )
 
-        run_parser.add_argument(
-            '--restart-at-step',
-            help='task key',
+
+    def array_upload(self):
+        task_process = TaskProcess(self._control_dir())
+
+        if self.parsed_args.ssh_remote_dest is not None:
+            task_process.task_conf.ssh_remote_dest = self.parsed_args.ssh_remote_dest
+
+        array_parent_task = SlurmArrayParentTask(task_process)
+
+        array_parent_task._upload_array()
+
+    def array_download(self):
+        task_process = TaskProcess(
+            os.path.join(self.parsed_args.pipeline_instance_dir, ".drypipe", self.parsed_args.task_key),
+            alternate_logger=logger
         )
 
-        self._add_restart_failed_args(run_parser)
+        if self.parsed_args.ssh_remote_dest is not None:
+            task_process.task_conf.ssh_remote_dest = self.parsed_args.ssh_remote_dest
 
-        self.__wait_arg(run_parser)
+        array_parent_task = SlurmArrayParentTask(task_process)
 
-    def _add_restart_failed_args(self, parser):
-        parser.add_argument(
-            '--restart-failed',
-            action='store_true', default=False,
-            help='re submit failed tasks in array, restart from last failed step, keep previous output'
+        array_parent_task._download_array()
+
+    def create_array_parent(self):
+
+        new_task_key = self.parsed_args.new_task_key
+        matcher = self.parsed_args.matcher
+
+        SlurmArrayParentTask.create_array_parent(
+            self.parsed_args.pipeline_instance_dir,
+            new_task_key,
+            matcher,
+            self.parsed_args.slurm_account,
+            split_into=self.parsed_args.split,
+            extra_env=self.env
         )
 
-        parser.add_argument(
-            '--reset-failed',
-            action='store_true', default=False,
-            help='delete and re submit failed tasks in array'
+
+    def array_rsync_list(self):
+        return
+
+    def list_states(self):
+
+
+        task_process = TaskProcess(
+            self._control_dir(),
+            no_logger=True
         )
 
+        if self.parsed_args.gen_rsync_list:
+            task_process.generate_rsync_list_for_file_sets()
 
-    def add_create_array_parent_args(self, parser):
-        parser.add_argument('new_task_key', type=str)
-        parser.add_argument(
-            'matcher', type=str,
-            help="a glob expression to match the tasks that will become children of created parent"
-        )
+        def p():
+            if task_process.is_slurm_array_parent():
+                array_parent_task = SlurmArrayParentTask(task_process)
+                for task_key, state in array_parent_task.list_array_states():
+                    yield task_key, state
 
-        parser.add_argument(
-            '--split', type=int, default=1,
-            help="create N parent Tasks, and distribute the children evenly tasks among parents"
-        )
-
-        parser.add_argument('--force', action='store_true')
-
-        self._add_slurm_account_arg(parser)
-
-    def _add_slurm_account_arg(self, parser):
-        parser.add_argument(
-            '--slurm-account'
-        )
-
-    def __wait_arg(self, parser):
-        parser.add_argument(
-            '--wait',
-            dest='wait',
-            action='store_true',
-            help="wait for task to complete before exiting"
-        )
-        parser.set_defaults(wait=False)
-
-    def add_task_args(self, parser):
-        parser.add_argument('control_dir', type=str, nargs='?', default=str(self._implicit_control_dir()))
-        self._add_task_key_parser_arg(parser)
-        self.__wait_arg(parser)
-        parser.add_argument("--by-runner", dest="by_runner", action="store_true")
-        parser.set_defaults(by_runner=False)
-        self.add_ssh_remote_dest_arg(parser)
-        parser.add_argument("--tail", dest="tail", action="store_true")
-        parser.add_argument("--tail-all", dest="tail_all", action="store_true")
-        parser.add_argument("--from-remote", dest="from_remote", action="store_true")
+            else:
+                state_file_path = StateFileTracker.find_state_file_path_if_exists(task_process.control_dir)
+                if state_file_path is not None:
+                    yield task_process.task_key, state_file_path.name
 
 
-    def add_sbatch_args(self, parser):
-        self.add_task_args(parser)
+        for task_key, state in p():
+            print(f"{task_key}/{state}")
 
-    def add_call_args(self, parser):
-        parser.add_argument('module_function', type=str)
-        self._add_task_key_parser_arg(parser)
 
-    def restart_task(self):
+    def report_perf(self):
+
+        if self.parsed_args.pipeline_instance_dir is None:
+            raise Exception(f"--pipeline-instance-dir must be specified")
+
+        if self.parsed_args.task_key is not None and self.parsed_args.filter == "*":
+            f = self.parsed_args.task_key
+        else:
+            f = self.parsed_args.filter
+
+        for task_key, timer_label, hms, s in timers_for_tasks(self.parsed_args.pipeline_instance_dir, f):
+            print(f"{timer_label}\t{task_key}\t{hms}\t{s}")
+
+    def restart(self):
 
         task_process = TaskProcess(
             self._control_dir(),
@@ -933,6 +766,10 @@ class Cli:
         if Path(task_process.task_output_dir).exists():
             shutil.rmtree(task_process.task_output_dir)
         task_process.rewind_to_step(0)
+
+    def _control_dir(self):
+        return Path(self.parsed_args.pipeline_instance_dir, ".drypipe", self.parsed_args.task_key).__str__()
+
 
 def run_cli():
     handle_script_lib_main()

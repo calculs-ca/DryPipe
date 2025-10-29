@@ -66,6 +66,9 @@ class PipelineWithSinglePythonTaskWithSlurm(PipelineWithSinglePythonTask):
     def is_log_level_debug(self):
         return True
 
+    def launches_tasks_in_process(self):
+        return False
+
 class PipelineWithSingleBashTaskWithSlurm(PipelineWithSingleBashTask):
 
     def task_conf(self):

@@ -835,7 +835,6 @@ class PipelineWithPartialArrayMatch(BasePipelineTest):
 
         self.assertEqual(digest.outputs.results.content_as_string_if_exists(), "t_0,t_1,t_2")
 
-        from cli_tests import test_cli
 
         #test_cli(
         #    self,
@@ -844,8 +843,8 @@ class PipelineWithPartialArrayMatch(BasePipelineTest):
         #    '--task-key', 'array_parent', '--wait'
         #)
         with cli_in_sub_process([
-            '--pipeline-instance-dir', self.pipeline_instance_dir,
             'restart',
+            '--pipeline-instance-dir', self.pipeline_instance_dir,
             '--task-key', 'array_parent', '--wait'
         ]) as p:
             p.wait_and_raise_if_non_zero()
@@ -859,8 +858,8 @@ class PipelineWithPartialArrayMatch(BasePipelineTest):
         self.assertEqual(t_4.outputs.f.content_as_string_if_exists(), None)
 
         with cli_in_sub_process([
-            '--pipeline-instance-dir', self.pipeline_instance_dir,
             'restart',
+            '--pipeline-instance-dir', self.pipeline_instance_dir,
             '--task-key', 'array_parent', '--wait'
         ]) as p:
             p.wait_and_raise_if_non_zero()

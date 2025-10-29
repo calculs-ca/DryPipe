@@ -224,10 +224,10 @@ class TaskProcess:
             self.launch_task(array_limit=array_limit)
         else:
             pipeline_cli = os.path.join(self.pipeline_work_dir, "cli")
+            pid = self.pipeline_instance_dir
+            cmd = [pipeline_cli, "task", f"--pipeline-instance-dir={pid}", f"--task-key={self.task_key}"]
             if self.wait_for_completion:
-                cmd = [pipeline_cli, "task", self.control_dir, "--wait"]
-            else:
-                cmd = [pipeline_cli, "task", self.control_dir]
+                cmd.append("--wait")
 
             if by_pipeline_runner:
                 cmd.append("--by-runner")
@@ -690,7 +690,9 @@ class TaskProcess:
             "-m",
             "dry_pipe.cli",
             "call",
-            mod_func
+            mod_func,
+            f"--pipeline-instance-dir={self.pipeline_instance_dir}",
+            f"--task-key={self.task_key}"
         ]
 
         if container is not None:

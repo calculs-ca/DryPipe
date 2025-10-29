@@ -1,7 +1,7 @@
 
 from dry_pipe.core_lib import UpstreamTasksNotCompleted
-import pipeline_tests_with_single_tasks
-import pipeline_tests_with_multiple_tasks
+from dry_pipe_tests import pipeline_tests_with_single_tasks
+from dry_pipe_tests import pipeline_tests_with_multiple_tasks
 from dry_pipe.task_process import TaskProcess
 
 

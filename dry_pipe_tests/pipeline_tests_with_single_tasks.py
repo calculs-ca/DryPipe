@@ -277,8 +277,10 @@ class PipelineWithCrashOnFirstRun(BasePipelineTest):
         self.assertTrue(tasks_by_keys["t"].is_failed())
 
         Cli([
-            "task", f"{self.pipeline_instance_dir}/.drypipe/t"
-        ]).invoke(test_mode=True)
+            "task",
+            f"--pipeline-instance-dir={self.pipeline_instance_dir}",
+            "--task-key=t"
+        ], test_mode=True).invoke()
 
         tasks_by_keys = {
             t.key: t

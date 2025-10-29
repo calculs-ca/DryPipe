@@ -550,8 +550,8 @@ class RemotePipelineSpecs:
         def g():
             yield "python3"
             yield remote_cli
-            yield f"--pipeline-instance-dir={self.remote_pid}"
             yield cmd
+            yield f"--pipeline-instance-dir={self.remote_pid}"
             yield f"--task-key={self.task_process.task_key}"
             yield from args
 
