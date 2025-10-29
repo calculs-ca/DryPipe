@@ -170,10 +170,11 @@ def _cleanup_args(args):
 
 class Cli:
 
-    def __init__(self, args, env=None, test_mode=False):
+    def __init__(self, args, env=None, test_mode=False, output=sys.stdout):
 
         self.raw_command_line = " ".join(args)
         self.args = _cleanup_args(args)
+        self.output = output
 
         self._has_implicit_generator = False
         self._has_implicit_control_dir = False
@@ -251,6 +252,9 @@ class Cli:
         method()
 
 
+    def invoke_in_subprocess(self):
+        return cli_in_sub_process(self.args)
+
     def _enumerate_commands(self):
 
         class ListOfInts:
@@ -302,6 +306,13 @@ class Cli:
 
         def from_remote(parser):
             parser.add_argument("--from-remote", dest="from_remote", action="store_true")
+
+        def filter(parser):
+            parser.add_argument(
+                '--filter',
+                help='glob expression to filter tasks',
+                default='*'
+            )
 
         def reset(parser):
             parser.add_argument(
@@ -409,6 +420,8 @@ class Cli:
         yield Command('service', pipeline_instance_dir, config_generator, sleep_schedule)
         yield Command('upgrade-drypipe', pipeline_instance_dir)
         yield Command('restart-failed-array-tasks', pipeline_instance_dir, include_pre_launch)
+
+        yield Command('report-execution-times', task_key, filter)
 
         yield Command('task', task_key, wait, tail, by_runner, from_remote, ssh_remote_dest)
         yield Command('restart', task_key, at_step, reset, wait, from_remote)
@@ -555,7 +568,7 @@ class Cli:
             raise Exception(f"multiple state files in {control_dir}")
 
         state_file = s[0]
-        print(f"{state_file.absolute()}")
+        print(f"{state_file.absolute()}", file=self.output)
 
     def remote_exec(self):
         control_dir = self._control_dir()
@@ -586,7 +599,7 @@ class Cli:
         task_process.task_logger.info("raw command line: %s", self.raw_command_line)
         res = submit_local_array.func(task_process)
         # task_process.task_logger.info("submitted array from remote %s", json.dumps(res))
-        print(json.dumps(res))
+        print(json.dumps(res), file=self.output)
 
     def watch_array_from_remote(self):
 
@@ -605,7 +618,7 @@ class Cli:
         )
         atm = task_process.create_array_task_manager()
         report = atm.manage_auto_restarts_from_remote()
-        print(json.dumps(report))
+        print(json.dumps(report), file=self.output)
 
     def fetch_remote_state(self):
         task_process = TaskProcess(
@@ -629,7 +642,7 @@ class Cli:
 
     def sbatch_gen(self):
         task_process = TaskProcess(self.parsed_args.control_dir, wait_for_completion=self._wait())
-        print(" ".join(task_process.sbatch_cmd_lines()))
+        print(" ".join(task_process.sbatch_cmd_lines()), file=self.output)
 
     def array_submit(self):
         task_process = TaskProcess(
@@ -707,13 +720,10 @@ class Cli:
 
 
         for task_key, state in p():
-            print(f"{task_key}/{state}")
+            print(f"{task_key}/{state}", file=self.output)
 
 
-    def report_perf(self):
-
-        if self.parsed_args.pipeline_instance_dir is None:
-            raise Exception(f"--pipeline-instance-dir must be specified")
+    def report_execution_times(self):
 
         if self.parsed_args.task_key is not None and self.parsed_args.filter == "*":
             f = self.parsed_args.task_key
@@ -721,7 +731,7 @@ class Cli:
             f = self.parsed_args.filter
 
         for task_key, timer_label, hms, s in timers_for_tasks(self.parsed_args.pipeline_instance_dir, f):
-            print(f"{timer_label}\t{task_key}\t{hms}\t{s}")
+            print(f"{timer_label}\t{task_key}\t{hms}\t{s}", file=self.output)
 
     def restart(self):
 

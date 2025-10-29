@@ -1,3 +1,6 @@
+from io import StringIO
+
+from cli import Cli
 from dry_pipe_tests.base_pipeline_test import BasePipelineTest
 from dry_pipe import DryPipe, TaskConf
 
@@ -41,7 +44,22 @@ class PipelineWithVariablePassing(BasePipelineTest):
         self.assertEqual(int(produce_a_var.outputs.v), 1234)
         self.assertEqual(int(consume_and_produce_a_var.outputs.result), 2468)
 
+        out = StringIO()
 
+        Cli([
+            "report-execution-times",
+            f"--pipeline-instance-dir={self.pipeline_instance_dir}",
+        ], output=out).invoke()
+
+        def g():
+            res = out.getvalue().strip()
+            for line in res.split("\n"):
+                _, task_key, h_m_s, s = line.split("\t")
+                yield task_key, s
+
+        keys = dict(g()).keys()
+        self.assertIn('consume_and_produce_a_var', keys)
+        self.assertIn('produce_a_var', keys)
 
 @DryPipe.python_call()
 def multiply_by_x(x, y, f):
