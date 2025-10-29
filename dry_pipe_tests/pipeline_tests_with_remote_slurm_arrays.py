@@ -104,8 +104,8 @@ class RemoteArrayTaskFullyAutomatedRun(PipelineWithSlurmArray):
 
         test_cli(
             self,
-            f"--pipeline-instance-dir={self.pipeline_instance_dir}",
             "fetch-remote-state",
+            f"--pipeline-instance-dir={self.pipeline_instance_dir}",
             f"--task-key=array_parent",
             "--wait",
         )

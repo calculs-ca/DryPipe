@@ -416,7 +416,7 @@ class Cli:
         yield Command('remote-exec', task_key, wait)
         yield Command("submit-array-from-remote", task_key, wait)
         yield Command("watch-array-from-remote", task_key, wait)
-        yield Command('fetch-remote-state', task_key)
+        yield Command('fetch-remote-state', task_key, wait)
         yield Command('upload-drypipe-for-remote-instance', task_key)
         yield Command('sbatch', task_key, wait)
         yield Command('sbatch-gen', task_key)

@@ -251,6 +251,7 @@ def download_task_outputs_rsync(__task_process):
         "python3",
         remote_cli,
         "list-states",
+        f"--pipeline-instance-dir {remote_helper.remote_pid}",
         "--gen-rsync-list",
         f"--task-key={__task_process.task_key}"
     ])

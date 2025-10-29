@@ -499,6 +499,7 @@ class RemotePipelineSpecs:
             "python3",
             remote_cli,
             "list-states",
+            f"--pipeline-instance-dir={self.remote_pid}",
             f"--task-key={self.task_process.task_key}"
         ])
 
