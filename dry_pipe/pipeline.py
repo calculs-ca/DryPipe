@@ -133,7 +133,7 @@ class PipelineType:
     def is_complete(self):
         return None
 
-    def result_files(self):
+    def result_files(self, pipeline_instance_dir):
         return []
 
     def validate_before_run(self, pipeline_instance_dir):

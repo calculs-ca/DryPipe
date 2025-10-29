@@ -126,12 +126,9 @@ class PipelineInstanceAccessor:
         self.pipeline_instance.state_file_tracker.save_args_as_json(json_args)
 
     def completed_files(self):
-        return self.pipeline_type.result_files()
+        return self.pipeline_type.result_files(self.instance_dir())
 
     def check_if_completed(self):
-        if self.pipeline_type.is_complete() is None:
-            return None
-
         return self.pipeline_type.is_complete()
 
 
