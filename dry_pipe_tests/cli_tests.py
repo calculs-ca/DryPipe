@@ -101,8 +101,8 @@ class CliArrayTests1(PipelineWithSlurmArrayForRealSlurmTest):
         test_cli(
             self,
             'array-submit',
-            f'--pipeline-instance-dir={pipeline_instance.state_file_tracker.pipeline_instance_dir}',
-            '--task-key=array-parent'
+            f'-pid={pipeline_instance.state_file_tracker.pipeline_instance_dir}',
+            '-k=array-parent'
         )
 
         self.do_validate(pipeline_instance)

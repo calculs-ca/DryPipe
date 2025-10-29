@@ -44,16 +44,13 @@ class PipelineWithVariablePassing(BasePipelineTest):
         self.assertEqual(int(produce_a_var.outputs.v), 1234)
         self.assertEqual(int(consume_and_produce_a_var.outputs.result), 2468)
 
-        out = StringIO()
-
-        Cli([
+        lines = Cli.invoke_and_iterate_lines(
             "report-execution-times",
-            f"--pipeline-instance-dir={self.pipeline_instance_dir}",
-        ], output=out).invoke()
+            f"-pid={self.pipeline_instance_dir}"
+        )
 
         def g():
-            res = out.getvalue().strip()
-            for line in res.split("\n"):
+            for line in lines:
                 _, task_key, h_m_s, s = line.split("\t")
                 yield task_key, s
 

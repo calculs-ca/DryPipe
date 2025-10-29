@@ -7,6 +7,7 @@ import logging.config
 import os
 import sys
 import textwrap
+from io import StringIO
 from os import environ
 from pathlib import Path
 
@@ -170,6 +171,25 @@ def _cleanup_args(args):
 
 class Cli:
 
+    @staticmethod
+    def invoke_and_get_str(*args, **kwargs):
+        out = StringIO()
+        kwargs = {
+            **kwargs,
+            **{"output": out}
+        }
+        cli = Cli(args, **kwargs)
+        cli.invoke()
+        return out.getvalue()
+
+    @staticmethod
+    def invoke_and_iterate_lines(*args, **kwargs):
+        s = Cli.invoke_and_get_str(*args, **kwargs)
+        for line in  s.split("\n"):
+            line = line.strip()
+            if line != "":
+                yield line
+
     def __init__(self, args, env=None, test_mode=False, output=sys.stdout):
 
         self.raw_command_line = " ".join(args)
@@ -265,7 +285,7 @@ class Cli:
 
         def pipeline_instance_dir(parser):
             parser.add_argument(
-                '--pipeline-instance-dir',
+                '--pipeline-instance-dir', '-pid',
                 help='pipeline instance directory, can also be set with environment var DRYPIPE_PIPELINE_INSTANCE_DIR',
                 action=EnvDefault,
                 envvar="DRYPIPE_PIPELINE_INSTANCE_DIR",
@@ -274,7 +294,7 @@ class Cli:
 
         def task_key(parser):
             pipeline_instance_dir(parser)
-            parser.add_argument('--task-key')
+            parser.add_argument('--task-key', '-k')
 
         def limit(parser):
             parser.add_argument(
