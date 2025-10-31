@@ -122,6 +122,12 @@ class TaskProcess:
                 #self.task_logger.debug("env var %s = %s", k, v)
                 self.env[k] = v
 
+            for name, i in task_inputs.items():
+                if i.is_constant() and i.type == "str":
+                    v = expandvars_from_dict(i.value, self.env)
+                    i.resolved_value = v
+                    self.env[i.name] = v
+
 
             self.task_logger.debug(f"normal TaskProcess constructor end")
         except Exception as ex:
@@ -317,6 +323,11 @@ class TaskProcess:
         else:
             return None
 
+    def dump_function_call_in_stdout(self, func_log):
+        with open(os.path.join(self.control_dir, "out.log"), mode="a") as out:
+            out.write(f"================ {func_log} ====================\n")
+
+
     def call_python(self, mod_func, python_call):
 
         pythonpath_in_env = os.environ.get("PYTHONPATH")
@@ -398,10 +409,7 @@ class TaskProcess:
         log_msg = f"will invoke PythonCall: {func_log}"
         self.task_logger.info(log_msg)
 
-        with open(os.path.join(self.control_dir, "out.log"), mode="a") as out:
-            out.write(f"================ {func_log} ====================\n")
-            out.write(log_msg)
-            out.write("\n=================================================\n")
+        self.dump_function_call_in_stdout(func_log)
 
         try:
             out_vars = python_call.func(* args, ** kwargs)
@@ -447,7 +455,7 @@ class TaskProcess:
             for i in self.task_conf.inputs:
                 i = TaskInput.from_json(i)
                 if self.task_logger.level == logging.DEBUG:
-                    self.task_logger.debug("%s", i.as_string())
+                    self.task_logger.debug("%s task_input:", i.as_string())
                 if i.is_upstream_output():
 
                     def ensure_upstream_task_is_completed():
@@ -1045,6 +1053,8 @@ class TaskProcess:
         self._set_apptainer_bind_in_env(env)
 
         self.task_logger.info("run_script: %s", " ".join(cmd))
+
+        self.dump_function_call_in_stdout(f"{self.task_key}: {script}")
 
         has_failed = False
         try:
