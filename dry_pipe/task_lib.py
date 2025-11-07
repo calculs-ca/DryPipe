@@ -176,6 +176,9 @@ def upload_task_inputs_rsync(__task_process):
             ff = Path(__task_process.pipeline_instance_dir, f)
             if ff.is_dir() and not f.endswith("/"):
                 yield f"{f}/"
+                for z in ff.glob("**/*"):
+                    a = z.relative_to(__task_process.pipeline_instance_dir)
+                    yield a.__str__()
             else:
                 yield f
 
