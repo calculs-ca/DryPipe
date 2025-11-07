@@ -1067,9 +1067,12 @@ class TaskProcess:
                     task_output_vars = dict(self.iterate_out_vars_from())
                     for o in self.outputs.iterate_non_file_outputs():
                         v = step_output_vars.get(o.name)
-                        self.task_logger.debug("script exported output var %s = %s", o.name, v)
-                        task_output_vars[o.name] = v
+                        prev_value = task_output_vars.get(o.name)
+                        self.task_logger.debug(
+                            "script exported output var %s = %s, previous value %s", o.name, v, prev_value
+                        )
                         if v is not None:
+                            task_output_vars[o.name] = v
                             self.env[o.name] = v
 
                     self.write_out_vars(task_output_vars)
