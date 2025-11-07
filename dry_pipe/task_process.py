@@ -1173,7 +1173,9 @@ class TaskProcess:
             or
                 not self.is_slurm_array_parent()
         ):
-            if not self.is_slurm_array_parent():
+            if self.task_conf.ssh_remote_dest is not None and not self.is_on_remote_site:
+                pass
+            elif not self.is_slurm_array_parent():
                 yield from self.task_conf.step_invocations
                 return
 
