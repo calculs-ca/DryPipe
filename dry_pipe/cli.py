@@ -657,11 +657,11 @@ class Cli:
         task_process.upload_drypipe_for_remote_instance()
 
     def sbatch(self):
-        task_process = TaskProcess(self.parsed_args.control_dir, wait_for_completion=self._wait())
+        task_process = TaskProcess(self._control_dir(), wait_for_completion=self._wait())
         task_process.submit_sbatch_task()
 
     def sbatch_gen(self):
-        task_process = TaskProcess(self.parsed_args.control_dir, wait_for_completion=self._wait())
+        task_process = TaskProcess(self._control_dir(), wait_for_completion=self._wait())
         print(" ".join(task_process.sbatch_cmd_lines()), file=self.output)
 
     def array_submit(self):

@@ -986,26 +986,20 @@ class TaskProcess:
 
     def resolve_container_path(self, container):
 
-        containers_dir = self.env.get('__containers_dir')
-
-        if containers_dir is None:
-            containers_dir = os.path.join(self.env["__pipeline_code_dir"], "containers")
+        if os.path.exists(container):
+            return container
 
         if os.path.isabs(container):
-            if os.path.exists(container):
-                resolved_path = container
-            else:
-                resolved_path = os.path.join(containers_dir, os.path.basename(container))
-        else:
-            resolved_path = os.path.join(containers_dir, container)
-
-        if not os.path.exists(resolved_path):
-            self.task_logger.error(f"container file not found: {resolved_path}, __containers_dir={containers_dir}")
+            self.task_logger.error(f"container file not found: {container}")
             raise TaskFailedException()
 
-        self.task_logger.debug("container: %s resolves to: %s", container, resolved_path)
+        if "__pipeline_code_dir" in self.env:
+            p = Path(self.env["__pipeline_code_dir"], "containers", container)
+            if p.exists():
+                return p.__str__()
 
-        return resolved_path
+        self.task_logger.error(f"container file not found: {container}")
+        raise TaskFailedException()
 
     def _resolve_script(self, script, env):
 
