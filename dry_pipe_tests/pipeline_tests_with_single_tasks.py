@@ -596,16 +596,19 @@ class TestFileSet(BasePipelineTest):
         dump_in_file("palindrome.txt", "123454321")
 
     def dag_gen(self, dsl):
+
+        tc = self.task_conf()
         yield dsl.task(
             key="t",
-            task_conf=self.task_conf()
+            task_conf=tc
         ).inputs(
             x=3,
             y=5,
             palindrome_file=Path("data-dir/palindrome.txt")
         ).outputs(
             random_files=dsl.file_set("**/*", "*.no"),
-            palindrome=int
+            palindrome=int,
+            round_trip=dsl.file("rt.txt")
         ).calls(
             """
             #!/usr/bin/bash
@@ -622,6 +625,7 @@ class TestFileSet(BasePipelineTest):
             echo "z" > $__task_output_dir/z.no                    
             echo "z" > $__task_output_dir/a2/b.txt
             
+            touch $round_trip
             """
         )()
 
@@ -632,6 +636,7 @@ class TestFileSet(BasePipelineTest):
                 "t/a1/a.yes",
                 "t/a2/c/x/y/z/pop",
                 "t/palindrome.txt",
+                "t/rt.txt"
             },
             {
                 str(Path(f).relative_to(Path(self.pipeline_instance_dir, "output")))

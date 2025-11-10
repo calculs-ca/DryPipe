@@ -31,16 +31,40 @@ class RemoteTestFileSet(TestFileSet):
 class RemoteTestFileSetWithDataDirVar(RemoteTestFileSet):
 
     def dag_gen(self, dsl):
+
+        pre_t = dsl.task(
+            key="pre-t"
+        ).outputs(
+            d=dsl.file("subdir"),
+            d2=dsl.file_set("**/*.zaz")
+        ).calls(
+            """
+            #!/usr/bin/bash
+            mkdir -p $__task_output_dir/subdir/d1/d2
+            echo "123abc" > $__task_output_dir/subdir/d1/d2/f1.txt
+            echo "abc123" > $__task_output_dir/subdir/d1/d2/f2.txt
+                    
+            mkdir -p $__task_output_dir/subdir2/d1
+            echo "!abc123" > $__task_output_dir/subdir2/d1/f.zaz
+            """
+        )()
+
+        yield pre_t
+
+
         yield dsl.task(
             key="t",
             task_conf=self.task_conf()
         ).inputs(
+            pre_t.outputs.d,
+            pre_t.outputs.d2,
             x=3,
             y=5,
             data_dir=Path("data-dir")
         ).outputs(
             random_files=dsl.file_set("**/*", "*.no"),
-            palindrome=int
+            palindrome=int,
+            round_trip=dsl.file("rt.txt")
         ).calls(
             """
             #!/usr/bin/bash
@@ -56,10 +80,25 @@ class RemoteTestFileSetWithDataDirVar(RemoteTestFileSet):
 
             echo "z" > $__task_output_dir/z.no                    
             echo "z" > $__task_output_dir/a2/b.txt
+                                
+            cat $__pipeline_instance_dir/output/pre-t/subdir/d1/d2/f1.txt > $round_trip
+            cat $__pipeline_instance_dir/output/pre-t/subdir/d1/d2/f2.txt >> $round_trip
+            cat $__pipeline_instance_dir/output/pre-t//subdir2/d1/f.zaz >> $round_trip
 
             """
         )()
 
+    def validate(self, tasks_by_keys):
+        super().validate(tasks_by_keys)
+
+        s = tasks_by_keys["t"].outputs.round_trip.content_as_string()
+
+        res = [
+            line.strip()
+            for line in s.strip().split("\n")
+        ]
+
+        self.assertEqual(res, ["123abc", "abc123", "!abc123"])
 
 
 class RemoteTestFileSetWithGlobus(RemoteTestFileSetWithDataDirVar):

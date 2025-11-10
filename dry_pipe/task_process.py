@@ -272,6 +272,16 @@ class TaskProcess:
             for _, file in p.inputs.rsync_file_list_produced_upstream():
                 yield file
 
+            for i in p.inputs.rsync_file_sets_produced_upstream():
+                with open(Path(p.pipeline_work_dir, i.upstream_task_key,"task-conf.json")) as tc:
+                    z = json.load(tc)
+                    for o in z['outputs']:
+                        if o['name'] == i.name:
+                            fs = o['file_set']
+                            for aa in Path(p.pipeline_output_dir, i.upstream_task_key).glob(fs['pattern']):
+                                qq = aa.relative_to(p.pipeline_instance_dir)
+                                yield qq.__str__()
+
             for file in p.inputs.rsync_output_var_file_list_produced_upstream():
                 yield file
 

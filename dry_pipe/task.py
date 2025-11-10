@@ -254,7 +254,7 @@ class TaskInput:
 
     def __init__(self, name, type, upstream_task_key=None, name_in_upstream_task=None, file_name=None, value=None):
 
-        if type not in ['file', 'str', 'int', 'float', 'task-list']:
+        if type not in ['file', 'str', 'int', 'float', 'task-list', 'file_set']:
             raise Exception(f"invalid type {type}")
 
         if type != 'file' and file_name is not None:
@@ -559,6 +559,11 @@ class TaskInputs:
         for i in self._task_inputs.values():
             if i.is_upstream_output() and i.type == 'file':
                 yield i.name, f"output/{i.upstream_task_key}/{i.name_in_upstream_task}"
+
+    def rsync_file_sets_produced_upstream(self):
+        for i in self._task_inputs.values():
+            if i.is_upstream_output() and i.type == 'file_set':
+                yield i
 
     def rsync_output_var_file_list_produced_upstream(self):
 
