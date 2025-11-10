@@ -570,6 +570,10 @@ class Cli:
         if self.parsed_args.ssh_remote_dest is not None:
             task_process.task_conf.ssh_remote_dest = self.parsed_args.ssh_remote_dest
         elif task_process.task_conf.executer_type == "slurm":
+            if task_process.is_remote_execution_on_master_site():
+                task_process.launch_task()
+                return
+
             if self.parsed_args.by_runner and not task_process.task_conf.is_slurm_parent:
                 task_process.submit_sbatch_task()
                 return
