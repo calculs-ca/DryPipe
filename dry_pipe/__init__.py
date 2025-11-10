@@ -431,6 +431,10 @@ class RemotePipelineSpecs:
 
         return overrides_file
 
+    def lock_file_for_remote_site(self):
+        rbd = self.remote_base_dir.replace("/", "_")
+        return Path(self.task_process.pipeline_work_dir, f"site-{self.user_at_host}{rbd}.lock")
+
     def gen_and_upload_task_conf_remote_overrides(self, upload_cmd):
         overrides_basename = "site.env"
         with TemporaryDirectory(dir=self.task_process.control_dir) as tmp_dir:

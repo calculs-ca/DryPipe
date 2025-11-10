@@ -1,3 +1,4 @@
+import fcntl
 import json
 import logging
 import os
@@ -161,6 +162,14 @@ def watch_remote_array(__task_process):
             ss.sleep()
 
 
+def _queue_for_upload(remote_helper, func):
+    lock_file = remote_helper.lock_file_for_remote_site()
+    remote_helper.task_logger.debug("will acquire lock on: %s", lock_file)
+    with open(lock_file, 'w') as lock_file:
+        fcntl.flock(lock_file, fcntl.LOCK_EX)
+        func()
+    remote_helper.task_logger.debug("lock released")
+
 
 @DryPipe.python_call()
 def upload_task_inputs_rsync(__task_process):
@@ -206,16 +215,19 @@ def upload_task_inputs_rsync(__task_process):
     def rsync_upload(overrides_file, dst):
         rs(f"rsync {remote_helper.rsync_chown_arg} --mkpath {overrides_file} {dst}")
 
-    remote_helper.gen_and_upload_task_conf_remote_overrides(rsync_upload)
+    def do_it_all():
+        remote_helper.gen_and_upload_task_conf_remote_overrides(rsync_upload)
 
-    do_rsync(
-        remote_helper.absolute_pid,
-        f"{remote_helper.ssh_remote_dest}/{remote_helper.pid_base_name}",
-        internal_dep_file_txt
-    )
+        do_rsync(
+            remote_helper.absolute_pid,
+            f"{remote_helper.ssh_remote_dest}/{remote_helper.pid_base_name}",
+            internal_dep_file_txt
+        )
 
-    if len(external_file_deps) > 0:
-        do_rsync("", f"{remote_helper.ssh_remote_dest}/{remote_helper.pid_base_name}/external-file-deps", external_dep_file_txt)
+        if len(external_file_deps) > 0:
+            do_rsync("", f"{remote_helper.ssh_remote_dest}/{remote_helper.pid_base_name}/external-file-deps", external_dep_file_txt)
+
+    _queue_for_upload(remote_helper, do_it_all)
 
 
 def _globus_or_rsync_download_func(task_process):
