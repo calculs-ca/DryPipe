@@ -112,7 +112,7 @@ class PipelineInstance:
 
                         def r():
                             with TimeLogger(tp.task_key, self.instance_logger.debug):
-                                tp.run(by_pipeline_runner=True)
+                                tp.run(by_pipeline_runner=True, instance_logger=self.instance_logger)
 
                         yield r, None
                         c += 1

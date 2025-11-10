@@ -224,7 +224,13 @@ class TaskProcess:
                             self.task_logger.debug("external files root: %s", v)
                             self.task_conf.external_files_root = v
 
-    def run(self, array_limit=None, by_pipeline_runner=False):
+    def run(self, array_limit=None, by_pipeline_runner=False, instance_logger=None):
+
+        if instance_logger is None:
+            this_logger = self.task_logger
+        else:
+            this_logger = instance_logger
+
 
         if not self.as_subprocess:
             self.launch_task(array_limit=array_limit)
@@ -238,6 +244,8 @@ class TaskProcess:
             if by_pipeline_runner:
                 cmd.append("--by-runner")
 
+            this_logger.info("will launch task: %s", ' '.join(cmd))
+
             with PortablePopen(
                 cmd,
                 stdout=subprocess.PIPE,
@@ -245,7 +253,7 @@ class TaskProcess:
             ) as p:
                 p.wait()
                 if p.popen.returncode != 0:
-                    self.task_logger.warning(
+                    this_logger.warning(
                         "task ended with non zero code: %s, %s",
                         p.popen.returncode,
                         p.safe_stderr_as_string()
