@@ -107,7 +107,8 @@ class PipelineInstance:
                         as_subprocess = not run_tasks_in_process
                         wait_for_completion = run_tasks_sync
                         tp = TaskProcess(
-                            control_dir, as_subprocess=as_subprocess, wait_for_completion=wait_for_completion
+                            control_dir, as_subprocess=as_subprocess,
+                            wait_for_completion=wait_for_completion, no_logger=as_subprocess
                         )
 
                         def r():
