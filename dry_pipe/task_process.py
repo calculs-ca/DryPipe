@@ -999,13 +999,13 @@ class TaskProcess:
         def _log_resolved_path(container_path):
             self.task_logger.debug(f"resolved container path: {container_path}")
 
-        if os.path.exists(container):
-            _log_resolved_path(container)
-            return container
-
         if os.path.isabs(container):
-            self.task_logger.error(f"container file not found: {container}")
-            raise TaskFailedException()
+            if os.path.exists(container):
+                _log_resolved_path(container)
+                return container
+            else:
+                self.task_logger.error(f"container file not found: {container}")
+                raise TaskFailedException()
 
         if "__pipeline_code_dir" in self.env:
             p = Path(self.env["__pipeline_code_dir"], "containers", container)
