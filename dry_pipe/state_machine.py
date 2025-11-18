@@ -99,6 +99,9 @@ class StateMachine:
         return False
 
 
+    def logger(self):
+        return self.instance_logger
+
     def task(self, key=None, task_conf=None, is_slurm_array_child=False, downstream_resets=()):
         if key is None:
             raise Exception(f"key can't be none")

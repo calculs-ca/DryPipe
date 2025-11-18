@@ -113,12 +113,14 @@ def setup_cli_logging(logging_level):
 
     logger.info(f"Logging level: {logging.getLevelName(logging_level)}")
 
+    return logger
+
 
 def setup_verbose1():
-    setup_cli_logging(logging.INFO)
+    return setup_cli_logging(logging.INFO)
 
 def setup_verbose2():
-    setup_cli_logging(logging.DEBUG)
+    return setup_cli_logging(logging.DEBUG)
 
 
 class EnvDefault(argparse.Action):
@@ -260,9 +262,11 @@ class Cli:
 
 
         if self.parsed_args.v:
-            setup_verbose1()
+            self.logger = setup_verbose1()
         elif self.parsed_args.vv:
-            setup_verbose2()
+            self.logger = setup_verbose2()
+        else:
+            self.logger = logger
 
         method = self.command_names_to_method.get(self.parsed_args.command)
 
@@ -480,12 +484,14 @@ class Cli:
                 "or DRYPIPE_PIPELINE_INSTANCE_DIR environment variable must be set"
             )
 
+        self.logger.info("will prepare instance %s", self.parsed_args.pipeline_instance_dir)
+
         return pipeline.create_pipeline_instance(self.parsed_args.pipeline_instance_dir)
 
     def run(self):
         pipeline_instance = self.pipeline_instance_from_args()
         pipeline_instance.prepare_instance_dir()
-        if not self.test_mode:
+        if not self.test_mode and not self.parsed_args.vv:
             pipeline_instance.monitor = CliMonitor(pipeline_instance, self.parsed_args.generator)
 
         pipeline_instance.run(
