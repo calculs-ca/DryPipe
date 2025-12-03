@@ -13,3 +13,11 @@ function dp {
 
     $SCRIPT_DIR/cli "$@"
 }
+
+
+function dp_env {
+    export DRYPIPE_DP_HINT_DIR=`pwd`
+    r=$($SCRIPT_DIR/cli dump-env -k $1)
+    eval "$r"
+    echo "$r"
+}

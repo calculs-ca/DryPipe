@@ -648,6 +648,9 @@ class TaskProcess:
 
             yield "__is_on_remote_site", self.is_on_remote_site
 
+            if self.task_conf.external_files_root is not None:
+                yield "DRYPIPE_EXTERNAL_FILES_ROOT", self.task_conf.external_files_root
+
             container = self.task_conf.container
             if container is not None and container != "":
                 yield "__is_singularity", "True"
@@ -1021,6 +1024,13 @@ class TaskProcess:
                 p = p.__str__()
                 _log_resolved_path(p)
                 return p
+
+        path_in_pid_parent = Path(self.pipeline_instance_dir).parent.joinpath(container)
+
+        if path_in_pid_parent.exists():
+            p = path_in_pid_parent.__str__()
+            _log_resolved_path(p)
+            return p
 
         self.task_logger.error(f"container file not found: {container}")
         raise TaskFailedException()
@@ -1642,9 +1652,7 @@ class TaskProcess:
     def upload_drypipe_for_remote_instance(self):
         if self.is_remote_execution_on_master_site():
             remote_task_helper = RemotePipelineSpecs(self)
-            if self.is_slurm_array_parent():
-                remote_task_helper.upsync_drypipe_code()
-                #TODO: implement
+            remote_task_helper.upsync_drypipe_code()
         else:
             raise Exception(f"{self.task_key} is not a remote task, or not calling from master site")
 

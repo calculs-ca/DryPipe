@@ -523,6 +523,19 @@ class RemotePipelineSpecs:
 
         invoke_rsync(cmd)
 
+    def fetch_remote_task_logs(self):
+
+        task_key = self.task_process.task_key
+
+        remote_src = f"{self.user_at_host}:{self.remote_base_dir}/{self.pid_base_name}/.drypipe/{task_key}"
+
+        dst = f"{self.absolute_pid}/.drypipe/{task_key}"
+
+        cmd = f"rsync --prune-empty-dirs -va --update --include='*/' --include='*/*.log' --exclude='*' {remote_src}/ {dst}/"
+
+        self.task_logger.debug("rsync remote logs: %s", cmd)
+
+        invoke_rsync(cmd)
     def fetch_sacct_dumps(self):
 
         remote_src = f"{self.user_at_host}:{self.remote_base_dir}/{self.pid_base_name}/.drypipe"

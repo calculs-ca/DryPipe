@@ -1,10 +1,11 @@
 import fnmatch
+import json
 import logging
 import os.path
 import typing
 from pathlib import Path
 
-from dry_pipe import TaskBuilder, TaskConf, FileSet, Task, DryPipe, PythonCall
+from dry_pipe import TaskBuilder, TaskConf, FileSet, Task
 from dry_pipe.state_file_tracker import StateFileTracker
 from dry_pipe.task_process import TaskProcess
 from dry_pipe.task_lib import download_other_task_outputs
@@ -150,6 +151,10 @@ class StateMachine:
 
     def pipeline_instance_dir(self):
         return self.state_file_tracker.pipeline_instance_dir
+
+    def pipeline_instance_args(self):
+        with open(Path(self.pipeline_instance_dir(), "args.json")) as f:
+            return json.load(f)
 
     def query_all_or_nothing(self, glob_expression, state="completed", min_matches=None):
 

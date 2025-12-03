@@ -318,7 +318,11 @@ def download_task_outputs_rsync(__task_process):
 @DryPipe.python_call()
 def execute_remote_task(__task_process):
 
-    __task_process.remote_task_helper().remote_exec("remote-exec")
+    remote_helper = __task_process.remote_task_helper()
+
+    res = remote_helper.remote_exec("remote-exec")
+
+    remote_helper.task_logger.info(f"remote exec: {res}")
 
 
 
@@ -342,21 +346,28 @@ def poll_remote_task(__task_process):
 
         while True:
 
-            remote_state_file = fetch_remote_state()
+            try:
+                remote_state_file = fetch_remote_state()
 
-            if remote_state_file.did_not_succeed():
-                raise Exception(f"remote task {remote_state_file.path} did not succeed")
+                if remote_state_file.did_not_succeed():
+                    raise Exception(f"remote task {remote_state_file.path} did not succeed")
 
-            if remote_state_file.is_completed():
-                task_logger.info("remote task completed")
-                return
+                if remote_state_file.is_completed():
+                    task_logger.info("remote task completed")
+                    return
 
-            ns = ss.next_sleep()
-            task_logger.debug(
-                "remote state is %s, will sleep for %s", remote_state_file.state_as_string(), ns
-            )
+                ns = ss.next_sleep()
+                task_logger.debug(
+                    "remote state is %s, will sleep for %s", remote_state_file.state_as_string(), ns
+                )
 
-            ss.sleep()
+                ss.sleep()
+            finally:
+                try:
+                    remote_helper.fetch_remote_task_logs()
+                except Exception:
+                    task_logger.exception("failed to fetch remote task logs")
+                    pass
 
 
 @DryPipe.python_call()

@@ -111,7 +111,7 @@ def copy_pre_existing_file_deps_from_code_dir(pipeline_instance):
 
     instance_dir_for_test = pipeline_instance.pipeline_instance_dir
 
-    src_pipeline = pipeline_instance.pipeline.create_pipeline_instance()
+    src_pipeline = pipeline_instance.diann_pipeline.create_pipeline_instance()
 
     file_deps = src_pipeline.pre_existing_file_deps()
 
@@ -128,7 +128,7 @@ def _copy_pre_existing_file_deps(src_pipeline, dst_pipeline_instance_dir):
 
     instance_dir_for_test = dst_pipeline_instance_dir
 
-    src_pipeline = src_pipeline.pipeline.create_pipeline_instance()
+    src_pipeline = src_pipeline.diann_pipeline.create_pipeline_instance()
 
     file_deps = src_pipeline.pre_existing_file_deps()
 

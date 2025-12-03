@@ -19,7 +19,7 @@ from dry_pipe.slurm_array_task import SlurmArrayParentTask
 from dry_pipe.reports import timers_for_tasks
 from dry_pipe.state_machine import StateFileTracker
 from dry_pipe.service import PipelineRunner
-from dry_pipe.task_lib import submit_local_array
+from dry_pipe.task_lib import submit_local_array, upload_task_inputs_rsync
 
 logger = logging.getLogger(__name__)
 
@@ -298,7 +298,7 @@ class Cli:
 
         def task_key(parser):
             pipeline_instance_dir(parser)
-            parser.add_argument('--task-key', '-k')
+            parser.add_argument('--task-key', '-k', required=True, help="task key")
 
         def limit(parser):
             parser.add_argument(
@@ -425,6 +425,17 @@ class Cli:
                         can also be set with environment var DRYPIPE_SERVICE_CONFIG_GENERATOR""",
             )
 
+        def log_conf(parser):
+            parser.add_argument(
+                "--log-conf",
+                action=EnvDefault,
+                envvar="DRYPIPE_LOGGING_CONF",
+                env=self.env,
+                help="the path to a logging configuration file, can also be set with environment var DRYPIPE_LOGGING_CONF",
+                required=False
+            )
+
+
         _s = self.parser.add_subparsers(required=True, dest='command')
         self.subparsers = _s
 
@@ -441,7 +452,7 @@ class Cli:
 
         yield Command('run', pipeline_instance_dir, generator, until, restart_failed, reset_failed, sleep_schedule)
         yield Command('prepare', pipeline_instance_dir, generator, until, sleep_schedule)
-        yield Command('service', pipeline_instance_dir, config_generator, sleep_schedule)
+        yield Command('service', pipeline_instance_dir, config_generator, sleep_schedule, log_conf)
         yield Command('upgrade-drypipe', pipeline_instance_dir)
         yield Command('restart-failed-array-tasks', pipeline_instance_dir, include_pre_launch)
 
@@ -455,8 +466,10 @@ class Cli:
         yield Command("watch-array-from-remote", task_key, wait)
         yield Command('fetch-remote-state', task_key, wait)
         yield Command('upload-drypipe-for-remote-instance', task_key)
+        yield Command('upload-task-inputs', task_key)
         yield Command('sbatch', task_key, wait)
         yield Command('sbatch-gen', task_key)
+        yield Command('dump-env', task_key)
         yield Command('array-submit', task_key, limit)
         yield Command('array-upload', task_key)
         yield Command('array-download', task_key)
@@ -607,6 +620,7 @@ class Cli:
             wait_for_completion=False,
             test_mode=self.test_mode,
             as_subprocess=not self.test_mode,
+            use_remote_drypipe_log=True
         )
 
         s = list(Path(control_dir).glob("state.*"))
@@ -666,13 +680,28 @@ class Cli:
         )
         task_process.upload_drypipe_for_remote_instance()
 
+    def upload_task_inputs(self):
+        task_process = TaskProcess(
+            os.path.join(self.parsed_args.pipeline_instance_dir, ".drypipe", self.parsed_args.task_key),
+            wait_for_completion=True,
+            alternate_logger=logger
+        )
+        upload_task_inputs_rsync.func(task_process)
+        task_process.upload_drypipe_for_remote_instance()
+
     def sbatch(self):
         task_process = TaskProcess(self._control_dir(), wait_for_completion=self._wait())
         task_process.submit_sbatch_task()
 
     def sbatch_gen(self):
-        task_process = TaskProcess(self._control_dir(), wait_for_completion=self._wait())
+        task_process = TaskProcess(self._control_dir())
         print(" ".join(task_process.sbatch_cmd_lines()), file=self.output)
+
+    def dump_env(self):
+        task_process = TaskProcess(self._control_dir(), no_logger=True)
+
+        for k, v in task_process.env.items():
+            print(f"export {k}='{v}'", file=self.output)
 
     def array_submit(self):
         task_process = TaskProcess(
