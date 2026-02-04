@@ -1,4 +1,5 @@
 import os.path
+import random
 from pathlib import Path
 
 from dry_pipe_tests.base_pipeline_test import BasePipelineTest
@@ -880,6 +881,40 @@ class RestartTest(PipelineWithMultiStepsForRestartTests):
 
         self.assertTrue(t.is_failed())
         self.assertEqual(t.step_idx(), 2)
+
+
+def dag_never_ending_task(dsl):
+        i = random.randint(1,100000)
+        yield dsl.task(
+            key="never-ending-task",
+            task_conf=TaskConf.default()
+        ).inputs(
+            x=i
+        ).outputs(
+            result=int
+        ).calls(
+            """
+            #!/usr/bin/bash        
+            while :
+            do
+                echo "worker: $x"
+                sleep 1
+            done
+            """
+        )()
+
+def never_ending_task_pipeline():
+    return DryPipe.create_pipeline(dag_never_ending_task)
+
+
+
+class PipelineWithNeverEndingTask(BasePipelineTest):
+
+    def dag_gen(self, dsl):
+        yield from dag_never_ending_task(dsl)
+
+    def validate(self, tasks_by_keys):
+        pass
 
 
 unimplemented = [

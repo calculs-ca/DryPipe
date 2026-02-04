@@ -1,6 +1,6 @@
 from io import StringIO
 
-from cli import Cli
+from dry_pipe.cli import Cli
 from dry_pipe_tests.base_pipeline_test import BasePipelineTest
 from dry_pipe import DryPipe, TaskConf
 

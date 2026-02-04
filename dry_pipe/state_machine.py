@@ -326,6 +326,11 @@ class StateMachine:
             #    self.state_file_tracker.set_ready_on_disk_and_in_memory(state_file.task_key)
             #    # child tasks can also have upstream deps (!), we simply inhibit launches
             #    pass
+
+            if state_file.is_in_pre_launch():
+                self.instance_logger.debug("%s is in pre launch", state_file.task_key)
+                return
+
             if state_file.is_parent_task:
                 with open(os.path.join(state_file.control_dir(), "task-keys.tsv")) as tc:
                     for k in tc:

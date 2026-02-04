@@ -300,6 +300,10 @@ class Cli:
             pipeline_instance_dir(parser)
             parser.add_argument('--task-key', '-k', required=True, help="task key")
 
+        def task_key_optional(parser):
+            pipeline_instance_dir(parser)
+            parser.add_argument('--task-key', '-k', required=False, default=None)
+
         def limit(parser):
             parser.add_argument(
                 '--limit', type=int, help='limit submitted array size to N tasks', metavar='N'
@@ -456,7 +460,7 @@ class Cli:
         yield Command('upgrade-drypipe', pipeline_instance_dir)
         yield Command('restart-failed-array-tasks', pipeline_instance_dir, include_pre_launch)
 
-        yield Command('report-execution-times', task_key, filter)
+        yield Command('report-execution-times', task_key_optional, filter)
 
         yield Command('task', task_key, wait, tail, by_runner, from_remote, ssh_remote_dest)
         yield Command('restart', task_key, at_step, reset, wait, from_remote)
@@ -499,13 +503,19 @@ class Cli:
 
         self.logger.info("will prepare instance %s", self.parsed_args.pipeline_instance_dir)
 
-        return pipeline.create_pipeline_instance(self.parsed_args.pipeline_instance_dir)
+        return pipeline.create_pipeline_instance(
+            self.parsed_args.pipeline_instance_dir,
+            None,
+            instance_log_is_debug=self.parsed_args.vv
+        )
 
     def run(self):
         pipeline_instance = self.pipeline_instance_from_args()
         pipeline_instance.prepare_instance_dir()
         if not self.test_mode and not self.parsed_args.vv:
             pipeline_instance.monitor = CliMonitor(pipeline_instance, self.parsed_args.generator)
+
+        pipeline_instance.for_dry_run = self.parsed_args.dry_run
 
         pipeline_instance.run(
             until_patterns=self.parsed_args.until,

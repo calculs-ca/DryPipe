@@ -22,6 +22,8 @@ class PipelineInstance:
             self.prepare_instance_dir()
         self.monitor = None
 
+        self.for_dry_run = False
+
         if logger is not None:
             self.instance_logger = logger
         else:
@@ -112,8 +114,15 @@ class PipelineInstance:
                         )
 
                         def r():
-                            with TimeLogger(tp.task_key, self.instance_logger.debug):
-                                tp.run(by_pipeline_runner=True, instance_logger=self.instance_logger)
+                            if not self.for_dry_run:
+                                with TimeLogger(tp.task_key, self.instance_logger.debug):
+                                    tp.run(by_pipeline_runner=True, instance_logger=self.instance_logger)
+                            else:
+                                self.instance_logger.info(
+                                    "dry run, would have launched %s in state %s",
+                                    tp.task_key,
+                                    state_file
+                                )
 
                         yield r, None
                         c += 1
