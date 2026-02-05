@@ -327,8 +327,8 @@ class StateMachine:
             #    # child tasks can also have upstream deps (!), we simply inhibit launches
             #    pass
 
-            if state_file.is_in_pre_launch():
-                self.instance_logger.debug("%s is in pre launch", state_file.task_key)
+            if not state_file.is_waiting():
+                self.instance_logger.debug("%s not ready", state_file.task_key)
                 return
 
             if state_file.is_parent_task:
