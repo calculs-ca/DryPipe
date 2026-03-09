@@ -637,8 +637,8 @@ class TaskConf:
     """
 
     @staticmethod
-    def default():
-        return TaskConf("process")
+    def default(extra_env=None):
+        return TaskConf("process",extra_env=extra_env)
 
     def __init__(
             self,
