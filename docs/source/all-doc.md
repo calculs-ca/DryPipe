@@ -34,9 +34,9 @@ The DryPipe DSL is meant to express two things:
 Producer/consumer relationships, are often inherently related to their arguments, ex: 
 
 ```python
-t1 = dsl.task(key="t1").produces(x=dsl.var(int)).calls(f1)()
+t1 = dsl.task(key="t1").outputs(x=dsl.var(int)).calls(f1)()
 
-t2 = dsl.task(key="t2").consumes(t1.out.x).produces(f=dsl.file("f.tsv")).calls(f2)()
+t2 = dsl.task(key="t2").inputs(t1.out.x).outputs(f=dsl.file("f.tsv")).calls(f2)()
 ```
 
 The above code expresses in a (mostly) _declarative style_ the following:
@@ -53,10 +53,10 @@ from dry_pipe import DryPipe
 
 def my_tasks(dsl):
  
-    t1 = dsl.task(key="t1").produces(x=dsl.var(int)).calls(f1)()
+    t1 = dsl.task(key="t1").outputs(x=dsl.var(int)).calls(f1)()
     yield t1
    
-    yield dsl.task(key="t2").consumes(t1.out.x).produces(f=dsl.file("f.tsv")).calls(f2)()
+    yield dsl.task(key="t2").inputs(t1.out.x).outputs(f=dsl.file("f.tsv")).calls(f2)()
 
 @DryPipe.python_call()
 def f1():
@@ -105,7 +105,7 @@ The function below `my_dag_generator` the generates the DAG above.
 def my_dag_generator(dsl):
 
     t1 = dsl.task(key="t1")\
-        .produces(x=dsl.var(int), z=dsl.file("z.json"))\
+        .outputs(x=dsl.var(int), z=dsl.file("z.json"))\
         .calls("""
             #!/usr/bin/env bash
             export x=123
@@ -114,14 +114,14 @@ def my_dag_generator(dsl):
     yield t1
     
     t2 = dsl.task(key="t2")\
-        .consumes(t1.out.x)\
-        .produces(f=dsl.file("f.tsv"))\
+        .inputs(t1.out.x)\
+        .outputs(f=dsl.file("f.tsv"))\
         .calls(f2)()
     yield t2
         
     yield dsl.task(key="t3")\
-        .consumes(t1.out.z, t2.out.f)\
-        .produces(t=dsl.file("pipeline-result.tsv"))\
+        .inputs(t1.out.z, t2.out.f)\
+        .outputs(t=dsl.file("pipeline-result.tsv"))\
         .calls(f3)()
 ```
 The `my_dag_generator` is a [generator function](https://docs.python.org/3.10/glossary.html#term-generator), 
@@ -172,7 +172,7 @@ def my_pipeline_dag_generator(dsl):
 
   yield dsl.task(
         key="t1"
-    ).produces(
+    ).outputs(
         a_file=dsl.file("a-file.txt")
     ).calls("""
         #!/usr/bin/env bash
@@ -181,7 +181,7 @@ def my_pipeline_dag_generator(dsl):
 
   yield dsl.task(
         key="t2"
-    ).produces(
+    ).outputs(
         other_file=dsl.file("another-file.txt")
     ).calls("""
         #!/usr/bin/env bash
@@ -203,9 +203,9 @@ def my_pipeline_dag_generator(dsl):
 
   t1 = dsl.task(
         key="t1"
-    ).consumes(
+    ).inputs(
         x=dsl.val(123)
-    ).produces(
+    ).outputs(
         result=dsl.file("f.txt")
     ).calls("""
         echo $(( x * x )) > $result
@@ -217,9 +217,9 @@ def my_pipeline_dag_generator(dsl):
   
   yield dsl.task(
         key="t2"
-    ).consumes(
+    ).inputs(
         r=t1.out.result
-    ).produces(
+    ).outputs(
         f=dsl.file("final-result.txt")
     ).calls("""
         result_from_t1="$(cat $r)"
@@ -242,11 +242,11 @@ def my_pipeline_dag_generator(dsl):
 
   t1 = dsl.task(
         key="t1"
-    ).consumes(
+    ).inputs(
         x=dsl.val(123),
         y=dsl.val(3.14159265359),
         z=dsl.val('abc')
-    ).produces(
+    ).outputs(
         result=dsl.var(int)
     ).calls("""
         #!/usr/bin/env bash
@@ -258,9 +258,9 @@ def my_pipeline_dag_generator(dsl):
 
   yield dsl.task(
         key="t2"
-    ).consumes(
+    ).inputs(
         r=t1.out.result
-    ).produces(
+    ).outputs(
         f=dsl.file("final-result.txt")
     ).calls("""      
         #!/usr/bin/env bash
@@ -320,11 +320,11 @@ def f2(r, f):
 def my_pipeline_dag_generator(dsl):
     t1 = dsl.task(
         key="t1"
-    ).consumes(
+    ).inputs(
         x=dsl.val(123),
         y=dsl.val(3.14159265359),
         z=dsl.val('abc')
-    ).produces(
+    ).outputs(
         result=dsl.var(int)
     ).calls(
         f1
@@ -334,9 +334,9 @@ def my_pipeline_dag_generator(dsl):
 
     yield dsl.task(
         key="t2"
-    ).consumes(
+    ).inputs(
         r=t1.out.result
-    ).produces(
+    ).outputs(
         f=dsl.file("final-result.txt")
     ).calls(
         f2
@@ -392,9 +392,9 @@ def create_dag_generator(beautiful_numbers):
         for i in beautiful_numbers:
             yield dsl.task(
                 key=f"square-{i}"
-            ).consumes(
+            ).inputs(
                 x=dsl.val(i)
-            ).produces(
+            ).outputs(
                 f=dsl.file("file_with_squared_number.txt")
             ).calls("""
                 #!/usr/bin/env bash
@@ -447,9 +447,9 @@ def dag_gen(dsl):
             i, other_arg = line.split("\t")
             yield dsl.task(
                 key=f"t-{i}"
-            ).consumes(
+            ).inputs(
                 x=dsl.val(other_arg)
-            ).produces(
+            ).outputs(
                 f=dsl.file("result.txt")
             ).calls("""
                #!/usr/bin/env bash
@@ -558,9 +558,9 @@ def create_n_chunks_of_work(input_fasta, __task_output_dir):
 def dag_gen(dsl):
     prepare_chunks = dsl.task(
         key=f"prepare-chunks"
-    ).consumes(
+    ).inputs(
         input_fasta=dsl.file('chimp.fasta')
-    ).produces(
+    ).outputs(
         work_chunks=dsl.fileset('work-chunk.*.fasta')
     ).calls(
         create_n_chunks_of_work
@@ -579,9 +579,9 @@ def dag_gen(dsl):
             chunk_number = work_chunk_file_handle.basename().split(".")[1]
             yield dsl.task(
                 key=f"task-for-chunk.{chunk_number}"
-            ).consumes(
+            ).inputs(
                 f=work_chunk_file_handle
-            ).produces(
+            ).outputs(
                 results_file=dsl.file("results.json")
             ).calls("""
                 #!/usr/bin/env bash
@@ -594,10 +594,10 @@ def dag_gen(dsl):
         for matcher in dsl.wait_for_matching_tasks("task-for-chunk.*"):
             yield dsl.task(
                 key="analyze-all-work-pieces"
-            ).consumes(
+            ).inputs(
                 # pattern_for_all_chunks is $__pipeline_instance_dir/output/task-for-chunk-*/results.json
                 pattern_for_all_chunks=matcher.all.results_file.as_glob_expression()
-            ).produces(
+            ).outputs(
                 a_result_file=dsl.var("final-result-file")
             ).calls("""
                 #!/usr/bin/env bash
@@ -636,7 +636,7 @@ In some cases, a producer/consumer relationship can be expressed by simply passi
 consumes(...) clause of the downstream task, ex:
 
 ```python
-dsl.task("key=t2").consumes(z=t1.out.abc)
+dsl.task("key=t2").inputs(z=t1.out.abc)
 ```
 
 In such cases, dsl.wait_for isn't necessary. DryPipe will _know_ that the consuming task needs to wait. 
@@ -665,7 +665,7 @@ def my_dag_generator(dsl):
     
     task_a = dsl.task(
         key="task-a"
-    ).produces(
+    ).outputs(
         x=dsl.var(int) 
     ).calls(
         some_func
@@ -691,7 +691,7 @@ def my_dag_generator(dsl):
                         f"--time={estimate_time(actual_x_loaded_from_completed_task)}"
                     ]
                 )
-            ).consumes(
+            ).inputs(
                 x=dsl.val
             )...        
 ```
@@ -741,9 +741,9 @@ def my_coposite_dag_generator(dsl):
         v = super_task.out.a_variable
         yield dsl.task(
             "task-dependent-on-a-super-task"
-        ).consumes(
+        ).inputs(
             y=dsl.val(v)
-        ).produces(
+        ).outputs(
             z=dsl.var(int)
         ).calls(
             a_func
@@ -753,7 +753,7 @@ def my_coposite_dag_generator(dsl):
         for task_dependent_on_a_super_task in dsl.wait_for_tasks("task-dependent-on-a-super-task"):
             yield dsl.task(
                 "grande-finale"
-            ).consumes(
+            ).inputs(
                 z=task_dependent_on_a_super_task.out.z,
                 a_pattern=matcher.all.a_file_defined_in_do_it_tasks.as_glob_expression()
             ).calls(
