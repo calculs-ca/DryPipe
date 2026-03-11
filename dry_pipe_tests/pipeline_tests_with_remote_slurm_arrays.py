@@ -38,7 +38,7 @@ class RemoteTestSite:
         return f"{self.user_at_host()}:{self.remote_base_dir()}"
 
 
-remote_test_site = RemoteTestSite("maxl@gh1301")
+remote_test_site = RemoteTestSite("maxl@ip40")
 remote_test_site.sbatch_options = ["-p", "c-gh"]
 
 #remote_test_site = RemoteTestSite("maxl@ip40.ccs.usherbrooke.ca")

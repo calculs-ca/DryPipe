@@ -444,9 +444,9 @@ class Cli:
         self.subparsers = _s
 
         class Command:
-            def __init__(self, name, *args):
+            def __init__(self, name, *args, **kwargs):
                 self.name = name
-                sub_parser = _s.add_parser(name)
+                sub_parser = _s.add_parser(name, help=kwargs.get("help"))
                 for a in args:
                     try:
                         a(sub_parser)
@@ -454,30 +454,53 @@ class Cli:
                         raise Exception(f"arg {a.__name__}  on command {name} failed with exception {e}")
 
 
-        yield Command('run', pipeline_instance_dir, generator, until, restart_failed, reset_failed, sleep_schedule)
-        yield Command('prepare', pipeline_instance_dir, generator, until, sleep_schedule)
-        yield Command('service', pipeline_instance_dir, config_generator, sleep_schedule, log_conf)
-        yield Command('upgrade-drypipe', pipeline_instance_dir)
-        yield Command('restart-failed-array-tasks', pipeline_instance_dir, include_pre_launch)
+        yield Command('run', pipeline_instance_dir, generator, until, restart_failed, reset_failed, sleep_schedule,
+                      help="generate tasks and run the pipeline")
 
-        yield Command('report-execution-times', task_key_optional, filter)
+        yield Command('prepare', pipeline_instance_dir, generator, until, sleep_schedule,
+                      help="generate tasks, WITHOUT running the pipeline")
 
-        yield Command('task', task_key, wait, tail, by_runner, from_remote, ssh_remote_dest)
-        yield Command('restart', task_key, at_step, reset, wait, from_remote)
-        yield Command('poll-task', task_key)
-        yield Command('remote-exec', task_key, wait)
-        yield Command("submit-array-from-remote", task_key, wait)
-        yield Command("watch-array-from-remote", task_key, wait)
+        yield Command('service', pipeline_instance_dir, config_generator, sleep_schedule, log_conf,
+                      help="run as service")
+
+        yield Command('upgrade-drypipe', pipeline_instance_dir,
+                      help="upgrade drypipe version for the specified pipeline instance")
+
+        yield Command('restart-failed-array-tasks', task_key, include_pre_launch,
+                      help="restart failed array tasks, of specified array task")
+
+        yield Command('report-execution-times', task_key_optional, filter,
+                      help="execute time for all tasks, or all tasks matching filter expression")
+
+        yield Command('task', task_key, wait, tail, by_runner, from_remote, ssh_remote_dest,
+                      help="run specified task")
+
+        yield Command('restart', task_key, at_step, reset, wait, from_remote,
+                      help="restart specified task --task-key, at last unsuccessful step. WARNING: if task is completed, will restart from first step")
+
+        yield Command('poll-task', task_key, help="return state of task (used for polling remote tasks)")
+
+        yield Command('remote-exec', task_key, wait, help="execute remote tasks")
+
+
         yield Command('fetch-remote-state', task_key, wait)
         yield Command('upload-drypipe-for-remote-instance', task_key)
         yield Command('upload-task-inputs', task_key)
-        yield Command('sbatch', task_key, wait)
-        yield Command('sbatch-gen', task_key)
-        yield Command('dump-env', task_key)
-        yield Command('array-submit', task_key, limit)
-        yield Command('array-upload', task_key)
-        yield Command('array-download', task_key)
-        yield Command('create-array-parent', task_key)
+
+        yield Command('sbatch', task_key, wait,
+                      help="launch task (specified by --task-key) with sbatch")
+
+        yield Command('sbatch-gen', task_key,
+                      help="print sbatch command for launching task, without invoking it")
+
+        yield Command('dump-env', task_key, help="dump all environment variables of specified task")
+
+        yield Command('array-submit', task_key, limit, help="submit array task")
+        yield Command('array-upload', task_key, help="upload array task to remote location")
+        yield Command('array-download', task_key, help="download all array tasks results (rsync or Globus fetch all __task_output_dir of child tasks)")
+        yield Command("array-submit-from-remote", task_key, wait, help="submit array task to remote location")
+        yield Command("array-watch-from-remote", task_key, wait, help="watch (poll and fetch children status) of array task at remote location")
+        yield Command('array-create-parent', task_key, help="create a parent array task with matching tasks")
         yield Command('list-states', task_key, gen_rsync_list)
         yield Command('array-rsync-list', task_key)
 
@@ -646,7 +669,7 @@ class Cli:
             task_process.launch_task()
 
 
-    def submit_array_from_remote(self):
+    def array_submit_from_remote(self):
         control_dir = self._control_dir()
         task_process = TaskProcess(control_dir, use_remote_drypipe_log=True)
 
@@ -655,7 +678,7 @@ class Cli:
         # task_process.task_logger.info("submitted array from remote %s", json.dumps(res))
         print(json.dumps(res), file=self.output)
 
-    def watch_array_from_remote(self):
+    def array_watch_from_remote(self):
 
         control_dir = self._control_dir()
 
@@ -747,7 +770,7 @@ class Cli:
 
         array_parent_task._download_array()
 
-    def create_array_parent(self):
+    def array_create_parent(self):
 
         new_task_key = self.parsed_args.new_task_key
         matcher = self.parsed_args.matcher
@@ -868,6 +891,10 @@ def cli_in_sub_process(args):
     cmd = [sys.executable, py_file] + args
     return PortablePopen(cmd)
 
+
+def cli_argument_parser():
+    cli = Cli([])
+    return cli.parser
 
 if __name__ == '__main__':
 

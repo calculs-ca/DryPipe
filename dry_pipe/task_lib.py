@@ -91,7 +91,7 @@ def watch_local_array(__task_process):
 def submit_remote_array(__task_process):
 
     remote_helper  = __task_process.remote_task_helper()
-    res = remote_helper.remote_exec_json_results("submit-array-from-remote")
+    res = remote_helper.remote_exec_json_results("array-submit-from-remote")
     msg = json.dumps(res)
     remote_helper.task_process.task_logger.info("submit array from remote %s", msg)
 
