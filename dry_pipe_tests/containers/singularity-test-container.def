@@ -1,21 +1,11 @@
-BootStrap: localimage
-From: ./singularity-base-test-container.sif
+BootStrap: docker
+From: ubuntu:24.04
 
-
-%setup
-    #mkdir ${SINGULARITY_ROOTFS}/tmp/drypipe
-    rm -Rf /tmp/drypipe
-    mkdir /tmp/drypipe
-    cp ../../setup.py /tmp/drypipe
-    cp -R ../../dry_pipe /tmp/drypipe/dry_pipe
-
-
-%files
-   /tmp/drypipe /tmp/drypipe
 
 %post
 
-    cd /tmp/drypipe
-    export dry_pipe_is_full_req=True
-    python3 setup.py install
-    rm -Rf /tmp/drypipe
+    apt-get -y update
+    apt-get -y install software-properties-common
+
+    apt-get install -y python3
+
