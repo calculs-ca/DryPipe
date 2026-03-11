@@ -297,8 +297,8 @@ def f1(x, y, z):
     if isinstance(x, int):
         print("Wow, x has the correct type !")
     else:
-        # will write to  $__pipeline_instance_dir/.drypipe/$__task_key/err.log
-        print("Something is seriously wrong !", file=sys.stderr)
+        # will write to  $__pipeline_instance_dir/.drypipe/$__task_key/out.log
+        print("Something is seriously wrong !")
 
     x_from_env = os.environ["x"]
     if isinstance(x_from_env, str):
@@ -785,12 +785,10 @@ $__pipeline_instance_dir
 │   │
 │   └────t1
 │      │   task
-│      │   (pid|slurm_job_id)
 │      │   task-env.sh
 │      │   task-conf.json
 │      │   state.(completed|launched|step-started.0|failed.0|killed.0|...)
 │      │   out.log
-│      │   err.log
 │      │   drypipe.log
 │      └─t2
 │      │   task
@@ -835,7 +833,7 @@ A task can be manualy launched by executing the task script $__pipeline_instance
 Additionally, the task script has these other useful commands: 
 
 + ```task kill```: will kill the task 
-+ ```task tail```: will do a multi tail -f of all three logs of the task (out.log, err.log, drypipe.log) 
++ ```task tail```: will do a multi tail -f of all three logs of the task (out.log, drypipe.log) 
 + ```task ps```: equivalent to calling "ps -p <pid of the task>" 
 
 
@@ -849,12 +847,11 @@ Ex: we can refer to $__task_output_dir instead instead of "the task's output dir
 | variable name            | description                                                 | equivalent                                                                                                                                               |
 |--------------------------|-------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------|
 | $__pipeline_instance_dir | path of the pipeline instance directory                     |                                                                                                                                                          |
- | $__task_key              | ```dsl.tasl(key="a-unique-str-123")```                      |                                                                                                                                                          |
- | $__task_output_dir       | the task's dedicated output dir                             | $__pipeline_instance_dir/output/$__task_key                                                                                                              |
+| $__task_key              | ```dsl.tasl(key="a-unique-str-123")```                      |                                                                                                                                                          |
+| $__task_output_dir       | the task's dedicated output dir                             | $__pipeline_instance_dir/output/$__task_key                                                                                                              |
 | $__out_log               | destination of the task's stdout                            | $__pipeline_instance_dir/.drypipe/$__task_key/out.log                                                                                                    |
-| $__err_log               | destination of the task's stderr                            | $__pipeline_instance_dir/.drypipe/$__task_key/err.log                                                                                                    |
- | $__scratch_dir           | temp working directory                                      | $SLURM_TMPDIR if tasks running in Slurm, otherwise $__task_output_dir/scratch                                                                            |
- | $__pipeline_code_dir     | path to the instance's code directory                       | defaults to the directory of the python file where the DAG generator is coded, can be overriden. Useful for refering to scripts in a task's bash snippet |
+| $__scratch_dir           | temp working directory                                      | $SLURM_TMPDIR if tasks running in Slurm, otherwise $__task_output_dir/scratch                                                                            |
+| $__pipeline_code_dir     | path to the instance's code directory                       | defaults to the directory of the python file where the DAG generator is coded, can be overriden. Useful for refering to scripts in a task's bash snippet |
 | $__containers_dir        | the directory where containers used by the pipeline reside  |                                                                                                                                                          |
 
 Note: $__pipeline_code_dir, and $__containers_dir are defined at the pipeline level, and can be overriden (see ...) 
@@ -979,26 +976,13 @@ def my_pipeline():
 # DryPipe CLI
 (section_drypipe_cli)=
 
-## Running a pipeline instance
-
-```shell
-drypipe run -p my_module:my_pipeline_creator_function --instance-dir=/a/b/c
+```{eval-rst}
+.. argparse::
+  :module: dry_pipe.cli
+  :func: cli_argument_parser
+  :prog: drypipe
 ```
 
-## Launch pipeline instances from a watch dir
-
-todo: write the doc
-
-## monitor pipelines with the Web interface
-
-todo: write the doc
-
-# API
-
-(api_dsl_wait_for_tasks)=
-(api_dsl_wait_for_matching_tasks)=
-
-TODO...
 
 # Definitions
 
@@ -1009,4 +993,4 @@ TODO...
 + Bash call: a bash snippet in the calls(...) clause of a task
 + PythonCall: a python function annotated with DryPipe.python_call() in the calls(...) clause of a task
 (pipeline_input_dataset)=
-+ Pipeline Input Dataset: pipeline instances execute over pre existing data, we refer to it as the pipeline instance's input dataset.
++ Pipeline Input Dataset: pipeline instances execute over pre existing data, most often files (DryPipe assumes no particular format). We refer to it as the pipeline instance's input dataset.

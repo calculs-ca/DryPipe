@@ -18,7 +18,8 @@ root_doc = "index"
 
 extensions = [
     "myst_parser",
-    "sphinxcontrib.mermaid"
+    "sphinxcontrib.mermaid",
+    "sphinxarg.ext"
 ]
 
 templates_path = ['_templates']
