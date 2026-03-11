@@ -103,7 +103,10 @@ class Task:
     def save_if_hash_has_changed(self, state_file, hash_code):
 
         def hash_changed():
-            with open(state_file.task_conf_file()) as f:
+            f0 = pathlib.Path(state_file.task_conf_file())
+            if not f0.exists():
+                return True
+            with open(f0) as f:
                 i = 0
                 for line in f:
                     if '"digest"' in line:
