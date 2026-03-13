@@ -22,6 +22,11 @@ def multiply_by_x(x, y, PYTHONPATH):
 class PipelineWithSingleBashTask(BasePipelineTest):
 
     def dag_gen(self, dsl):
+
+        dsl.debug("zaz")
+        dsl.debug("zaz")
+        dsl.debug("zaz2")
+
         yield dsl.task(
             key="multiply_x_by_y",
             task_conf=self.task_conf()

@@ -71,6 +71,8 @@ class StateMachine:
         else:
             self.instance_logger = instance_logger
 
+        self.logger = self.instance_logger
+
         self._keys_of_waiting_tasks_to_set_of_incomplete_upstream_task_keys: dict[str, set[str]] = {}
         self._keys_of_tasks_waiting_for_external_events: set[str] = set()
         self._keys_of_failed_tasks: set[str] = set()
@@ -99,9 +101,11 @@ class StateMachine:
 
         return False
 
+    def debug(self, msg, **kwargs):
+        self.instance_logger.debug(msg, **kwargs)
 
-    def logger(self):
-        return self.instance_logger
+    def info(self, msg, **kwargs):
+        self.instance_logger.info(msg, **kwargs)
 
     def task(self, key=None, task_conf=None, is_slurm_array_child=False, downstream_resets=()):
         if key is None:

@@ -24,6 +24,9 @@ class TestWithDirectorySandbox(unittest.TestCase):
     def is_log_level_debug(self):
         return False
 
+    def instance_log_level(self):
+        return "DEBUG" if self.is_log_level_debug() else "INFO"
+
     def setUp(self):
 
         d = Path(self.pipeline_instance_dir)
@@ -68,11 +71,11 @@ class BasePipelineTest(TestWithDirectorySandbox):
         pipeline = self.create_pipeline()
         if other_pipeline_instance_dir is not None:
             pipeline_instance = pipeline.create_pipeline_instance(
-                other_pipeline_instance_dir, instance_log_is_debug=self.is_log_level_debug()
+                other_pipeline_instance_dir, instance_log_level=self.instance_log_level()
             )
         else:
             pipeline_instance = pipeline.create_pipeline_instance(
-                self.pipeline_instance_dir, instance_log_is_debug=self.is_log_level_debug()
+                self.pipeline_instance_dir, instance_log_level=self.instance_log_level()
             )
 
         self.init_pipeline_instance(pipeline_instance)

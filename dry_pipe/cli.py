@@ -529,7 +529,7 @@ class Cli:
         return pipeline.create_pipeline_instance(
             self.parsed_args.pipeline_instance_dir,
             None,
-            instance_log_is_debug=self.parsed_args.vv
+            instance_log_level="DEBUG" if self.parsed_args.vv else "INFO"
         )
 
     def run(self):

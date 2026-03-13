@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 class PipelineInstance:
 
-    def __init__(self, pipeline, pipeline_instance_dir, logger=None, instance_log_is_debug=False):
+    def __init__(self, pipeline, pipeline_instance_dir, logger=None, instance_log_level="INFO"):
         self.pipeline = pipeline
         self.state_file_tracker = StateFileTracker(pipeline_instance_dir)
         if not self.state_file_tracker.instance_exists():
@@ -38,7 +38,7 @@ class PipelineInstance:
                 maxBytes=1024 * 1024 * 10, backupCount=3
             )
 
-            if instance_log_is_debug:
+            if instance_log_level == "DEBUG":
                 logging_level = logging.DEBUG
             else:
                 logging_level = logging.INFO

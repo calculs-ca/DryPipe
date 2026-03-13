@@ -92,7 +92,7 @@ class CliArrayTests1(PipelineWithSlurmArrayForRealSlurmTest):
 
         pipeline_instance = Pipeline.load_from_module_func(
             pipeline_with_slurm_array_1_modfunc
-        ).create_pipeline_instance(d.sandbox_dir, instance_log_is_debug=self.is_log_level_debug())
+        ).create_pipeline_instance(d.sandbox_dir, instance_log_level=self.instance_log_level())
 
         # ensure no task has been executed
         for k, task in pipeline_instance.query_all_tasks_by_key().items():

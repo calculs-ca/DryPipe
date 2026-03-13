@@ -84,7 +84,7 @@ class TestSandboxDir:
             env_vars=env_vars,
             containers_dir=test_containers_dir(),
             task_conf=task_conf,
-            instance_log_is_debug = self.is_log_level_debug()
+            instance_log_level=self.is_log_level_debug()
         )
 
         copy_pre_existing_file_deps_from_code_dir(pi)

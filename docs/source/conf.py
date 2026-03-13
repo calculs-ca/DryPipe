@@ -1,7 +1,12 @@
-# Configuration file for the Sphinx documentation builder.
-#
-# For the full list of built-in configuration values, see the documentation:
+import os
+import sys
+from pathlib import Path
+
 # https://www.sphinx-doc.org/en/master/usage/configuration.html
+
+# add source root to PYTHONPATH, for sphinx-argparse
+root_path = Path(__file__).parents[2]
+sys.path.insert(0, str(root_path.resolve()))
 
 # -- Project information -----------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
