@@ -24,6 +24,8 @@ class PipelineInstance:
 
         self.for_dry_run = False
 
+        self.dag_crash_exception = None
+
         if logger is not None:
             self.instance_logger = logger
         else:
@@ -34,7 +36,7 @@ class PipelineInstance:
             self.instance_logger.handlers.clear()
 
             file_handler = RotatingFileHandler(
-                filename=os.path.join(self.state_file_tracker.pipeline_work_dir, "instance.log"),
+                filename=self.pipeline_instance_log(),
                 maxBytes=1024 * 1024 * 10, backupCount=3
             )
 
@@ -53,6 +55,9 @@ class PipelineInstance:
 
             self.instance_logger.info("log level: %s", logging.getLevelName(logging_level))
 
+
+    def pipeline_instance_log(self):
+        return os.path.join(self.state_file_tracker.pipeline_work_dir, "instance.log")
 
     def pipeline_instance_dir(self):
         return self.state_file_tracker.pipeline_instance_dir
@@ -145,6 +150,7 @@ class PipelineInstance:
                 yield None, None
 
             except Exception as ex:
+                self.dag_crash_exception = ex
                 self.instance_logger.debug(f"entrypoint of exception %s", current_stack_as_string())
                 self.instance_logger.error(f"unexpected error in %s", exc_info=ex)
                 yield None, None

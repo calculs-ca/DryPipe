@@ -21,6 +21,7 @@ from dry_pipe.reports import timers_for_tasks
 from dry_pipe.state_machine import StateFileTracker
 from dry_pipe.service import PipelineRunner
 from dry_pipe.task_lib import submit_local_array, upload_task_inputs_rsync
+from collections import deque
 
 logger = logging.getLogger(__name__)
 
@@ -353,7 +354,7 @@ class Cli:
         def generator(parser):
             parser.add_argument(
                 '-g', '--generator',
-                help='<module>:<function> task generator function, can also be set with environment var DRYPIPE_PIPELINE_GENERATOR',
+                help='<module>:<function> task generator function (a function that yields tasks, see "generator function"), can also be set with environment var DRYPIPE_PIPELINE_GENERATOR',
                 action=EnvDefault,
                 envvar="DRYPIPE_PIPELINE_GENERATOR",
                 metavar="GENERATOR",
@@ -556,6 +557,18 @@ class Cli:
             sleep_schedule=self.parsed_args.sleep_schedule
         )
 
+        self.dump_instance_log_tail_after_dag_crash_exception_if_crashed(pipeline_instance)
+
+    def dump_instance_log_tail_after_dag_crash_exception_if_crashed(self, pipeline_instance):
+        if pipeline_instance.dag_crash_exception is not None:
+            print(f"Unhandled exception {pipeline_instance.dag_crash_exception} in {self.parsed_args.generator}: ")
+            instance_log = pipeline_instance.pipeline_instance_log()
+            instance_log = Path(instance_log).absolute()
+            print(f"tail -16 {instance_log}")
+            with open(instance_log) as log_file:
+                for line in deque(log_file, 16):
+                    print(line.strip())
+
     def call(self):
         call(self.parsed_args.module_function)
 
@@ -564,6 +577,7 @@ class Cli:
         pipeline_instance = self.pipeline_instance_from_args()
         pipeline_instance.prepare_instance_dir()
         pipeline_instance.run_sync(["*"], sleep_schedule=self.parsed_args.sleep_schedule)
+        self.dump_instance_log_tail_after_dag_crash_exception_if_crashed(pipeline_instance)
 
     def service(self):
         init_logging(self.parsed_args.log_conf, verbose=self.parsed_args.v)
