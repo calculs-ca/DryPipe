@@ -352,7 +352,7 @@ class Cli:
 
         def generator(parser):
             parser.add_argument(
-                '--generator',
+                '-g', '--generator',
                 help='<module>:<function> task generator function, can also be set with environment var DRYPIPE_PIPELINE_GENERATOR',
                 action=EnvDefault,
                 envvar="DRYPIPE_PIPELINE_GENERATOR",
