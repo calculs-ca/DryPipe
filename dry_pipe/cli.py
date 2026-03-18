@@ -1,4 +1,5 @@
 import argparse
+import inspect
 import shutil
 import time
 import json
@@ -11,7 +12,7 @@ from io import StringIO
 from os import environ
 from pathlib import Path
 
-from dry_pipe import PortablePopen
+from dry_pipe import PortablePopen, DryPipe
 from dry_pipe.core_lib import func_from_mod_func, is_inside_slurm_job
 from dry_pipe.pipeline_instance import Monitor
 from dry_pipe.task_process import TaskProcess
@@ -516,7 +517,15 @@ class Cli:
         g = self.parsed_args.generator
         if g is None:
             raise Exception(f"--generator is required")
-        pipeline = func_from_mod_func(g)()
+
+        f = func_from_mod_func(g)
+
+        sig = inspect.signature(f)
+
+        if len(sig.parameters) == 1 and 'dsl' in sig.parameters:
+            pipeline = DryPipe.create_pipeline(f)
+        else:
+            pipeline = f()
 
         if self.parsed_args.pipeline_instance_dir is None:
             raise Exception(

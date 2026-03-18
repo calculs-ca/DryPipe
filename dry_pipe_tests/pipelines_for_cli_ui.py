@@ -2,6 +2,14 @@ import time
 
 from dry_pipe import DryPipe
 
+"""
+
+  drypipe run -pid dry_pipe_tests/sandboxes/ui1 --generator=dry_pipe_tests.pipelines_for_cli_ui:pipline_dag_echo_debug
+ 
+  drypipe run -pid dry_pipe_tests/sandboxes/ui2 --generator=dry_pipe_tests.pipelines_for_cli_ui:dag_echo_debug
+  
+"""
+
 
 def dag_echo_debug(dsl):
 
