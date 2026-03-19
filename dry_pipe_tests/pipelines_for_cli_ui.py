@@ -32,6 +32,8 @@ def dag_echo_debug(dsl):
         """
     )()
 
+    #raise Exception("dag crash")
+
     time.sleep(2)
 
 

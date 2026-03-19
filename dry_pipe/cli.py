@@ -1,6 +1,7 @@
 import argparse
 import inspect
 import shutil
+import subprocess
 import time
 import json
 import logging
@@ -12,6 +13,7 @@ from io import StringIO
 from os import environ
 from pathlib import Path
 
+import dry_pipe
 from dry_pipe import PortablePopen, DryPipe
 from dry_pipe.core_lib import func_from_mod_func, is_inside_slurm_job
 from dry_pipe.pipeline_instance import Monitor
@@ -550,14 +552,70 @@ class Cli:
 
         pipeline_instance.for_dry_run = self.parsed_args.dry_run
 
-        pipeline_instance.run(
-            until_patterns=self.parsed_args.until,
-            restart_failed=self.parsed_args.restart_failed,
-            reset_failed=self.parsed_args.reset_failed,
-            sleep_schedule=self.parsed_args.sleep_schedule
-        )
+        def f():
+            pipeline_instance.run(
+                until_patterns=self.parsed_args.until,
+                restart_failed=self.parsed_args.restart_failed,
+                reset_failed=self.parsed_args.reset_failed,
+                sleep_schedule=self.parsed_args.sleep_schedule
+            )
+            return pipeline_instance
 
-        self.dump_instance_log_tail_after_dag_crash_exception_if_crashed(pipeline_instance)
+        self._run_in_rich(f, pipeline_instance)
+
+    def install_rich(self):
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "rich==14.3.3"])
+
+    def _is_rich_installed(self):
+        try:
+            from rich.console import Console
+            return True
+        except ModuleNotFoundError:
+
+            if self.query_yes_no("This function requires the Rich library, do you want to install it in the current virtual environment ?"):
+                self.install_rich()
+                return True
+            else:
+                return False
+
+    def query_yes_no(self, question, default="yes"):
+        valid = {"yes": True, "y": True, "ye": True, "no": False, "n": False}
+        if default is None:
+            prompt = " [y/n] "
+        elif default == "yes":
+            prompt = " [Y/n] "
+        elif default == "no":
+            prompt = " [y/N] "
+        else:
+            raise ValueError("invalid default answer: '%s'" % default)
+
+        while True:
+            sys.stdout.write(question + prompt)
+            choice = input().lower()
+            if default is not None and choice == "":
+                return valid[default]
+            elif choice in valid:
+                return valid[choice]
+            else:
+                sys.stdout.write("Please respond with 'yes' or 'no' " "(or 'y' or 'n').\n")
+
+    def _run_in_rich(self, f, pipeline_instance):
+        if self._is_rich_installed():
+            from rich.console import Console
+            console = Console()
+            try:
+                pipeline_instance.catch_exception = False
+                f()
+            except Exception:
+                suppress_list = [
+                    "state_machine",
+                    "pipeline_instance",
+                    "pipeline",
+                    "cli"
+                ]
+                console.print_exception(show_locals=True, suppress=[f"dry_pipe/{f}" for f in suppress_list], max_frames=0, extra_lines=5)
+        else:
+            f()
 
     def dump_instance_log_tail_after_dag_crash_exception_if_crashed(self, pipeline_instance):
         if pipeline_instance.dag_crash_exception is not None:
@@ -574,10 +632,15 @@ class Cli:
 
 
     def prepare(self):
+
         pipeline_instance = self.pipeline_instance_from_args()
-        pipeline_instance.prepare_instance_dir()
-        pipeline_instance.run_sync(["*"], sleep_schedule=self.parsed_args.sleep_schedule)
-        self.dump_instance_log_tail_after_dag_crash_exception_if_crashed(pipeline_instance)
+
+        def f():
+            pipeline_instance.prepare_instance_dir()
+            pipeline_instance.run_sync(["*"], sleep_schedule=self.parsed_args.sleep_schedule)
+
+        self._run_in_rich(f, pipeline_instance)
+
 
     def service(self):
         init_logging(self.parsed_args.log_conf, verbose=self.parsed_args.v)

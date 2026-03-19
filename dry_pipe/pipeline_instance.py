@@ -24,7 +24,7 @@ class PipelineInstance:
 
         self.for_dry_run = False
 
-        self.dag_crash_exception = None
+        self.catch_exception = True
 
         if logger is not None:
             self.instance_logger = logger
@@ -150,9 +150,10 @@ class PipelineInstance:
                 yield None, None
 
             except Exception as ex:
-                self.dag_crash_exception = ex
                 self.instance_logger.debug(f"entrypoint of exception %s", current_stack_as_string())
                 self.instance_logger.error(f"unexpected error in %s", exc_info=ex)
+                if not self.catch_exception:
+                    raise ex
                 yield None, None
 
         def mon():

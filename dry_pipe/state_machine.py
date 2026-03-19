@@ -107,6 +107,9 @@ class StateMachine:
     def info(self, msg, **kwargs):
         self.instance_logger.info(msg, **kwargs)
 
+    def __repr__(self):
+        return  f"[pipeline_instance_dir='{Path(self.pipeline_instance_dir()).absolute()}']"
+
     def task(self, key=None, task_conf=None, is_slurm_array_child=False, downstream_resets=()):
         if key is None:
             raise Exception(f"key can't be none")
