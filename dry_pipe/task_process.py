@@ -10,9 +10,7 @@ import sys
 import tarfile
 import traceback
 import time
-from datetime import datetime
 from pathlib import Path
-from tempfile import NamedTemporaryFile
 from threading import Thread
 
 from dry_pipe.slurm_arrays import ArrayTaskManager, SAcctParser, SQueueParser
@@ -1156,23 +1154,32 @@ class TaskProcess:
 
     def _create_local_scratch_and_rsync_inputs(self):
 
-        Path(self._local_inputs_root()).mkdir(exist_ok=True)
-        Path(self._local_outputs_root()).mkdir(exist_ok=True)
+        try:
 
-        with NamedTemporaryFile("w", prefix="zzz") as tf:
-            for fi in self.dependent_file_list():
-                tf.write(fi)
-                tf.write("\n")
-            tf.flush()
+            Path(self._local_inputs_root()).mkdir(exist_ok=True)
+            Path(self._local_outputs_root()).mkdir(exist_ok=True)
+
+            with open(Path(self.control_dir, "local-input-files.txt").absolute(), "w") as tf:
+                for fi in self.dependent_file_list():
+                    self.task_logger.debug("add file for rsync: %s ", fi)
+                    tf.write(fi)
+                    tf.write("\n")
+                tf.flush()
 
             pid = self.pipeline_instance_dir
 
-            invoke_rsync(f"rsync --files-from={tf.name} {pid}/ {self._local_inputs_root()}")
+            cmd = f"rsync --files-from={tf.name} {pid}/ {self._local_inputs_root()}"
+            self.task_logger.info("work_on_local_file_copies=True, will rsync inputs to local drive: %s", cmd)
+            invoke_rsync(cmd)
+
+        except Exception as e:
+            self.task_logger.exception(e)
+            raise TaskFailedException()
 
     def _rsync_outputs_from_scratch(self):
-        invoke_rsync(
-            f"rsync -a --dirs {self._local_outputs_root()}/ {self.pipeline_output_dir}/{self.task_key}"
-        )
+        cmd = f"rsync -a --dirs {self._local_outputs_root()}/ {self.pipeline_output_dir}/{self.task_key}"
+        self.task_logger.info("work_on_local_file_copies=True, will rsync outputs: %s", cmd)
+        invoke_rsync(cmd)
 
     def sleep_schedule(self, value_when_absent):
         custom_sleep_schedule = self.env.get("DRYPIPE_SLEEP_SCHEDULE")
@@ -1269,12 +1276,12 @@ class TaskProcess:
 
         step_invocations = list(self._resolve_steps())
 
-        if self._is_work_on_local_copy():
-            self._create_local_scratch_and_rsync_inputs()
-
         skip_transition_to_completed = False
 
         try:
+
+            if self._is_work_on_local_copy():
+                self._create_local_scratch_and_rsync_inputs()
 
             for i in range(step_number, len(step_invocations)):
 
@@ -1346,7 +1353,18 @@ class TaskProcess:
         yield "--parsable"
         yield f"{self.pipeline_instance_dir}/.drypipe/cli"
 
+
+    def _warn_if_pid_not_nfs(self):
+        if not self._is_pipeline_instance_dir_nfs():
+            self.task_logger.warning(
+                "Will launch sbatch task %s on non NFS drive, most slurm setups use NFS for file sharing between nodes " +
+                "and login node. In such setups, a non NFS PIPELINE_INSTANCE_DIR  results in a crash without any logs",
+                self.control_dir
+            )
+
     def submit_sbatch_task(self):
+
+        self._warn_if_pid_not_nfs()
 
         p = PortablePopen(
             list(self.sbatch_cmd_lines()),
@@ -1589,25 +1607,28 @@ class TaskProcess:
 
         return ArrayTaskManager(self, arm, parser, for_dry_run=self.for_dry_run)
 
+    def _fs_type(self, file):
+
+        stat_cmd = f"stat -f -L -c %T {file}"
+        with PortablePopen(stat_cmd.split()) as p:
+            p.wait_and_raise_if_non_zero()
+            return p.stdout_as_string().strip()
+
+    def _is_pipeline_instance_dir_nfs(self):
+        return self._fs_type(self.pipeline_instance_dir) == "nfs"
+
     def _set_apptainer_bind_in_env(self, env, script=None):
 
         def _root_dir(d):
             p = Path(d)
             return os.path.join(p.parts[0], p.parts[1])
 
-        def _fs_type(file):
-
-            stat_cmd = f"stat -f -L -c %T {file}"
-            with PortablePopen(stat_cmd.split()) as p:
-                p.wait_and_raise_if_non_zero()
-                return p.stdout_as_string().strip()
-
         apptainer_bindings = []
 
         if script is not None:
             root_dir_of_script = _root_dir(script)
 
-            if _fs_type(root_dir_of_script) in ["autofs", "nfs", "zfs"]:
+            if self._fs_type(root_dir_of_script) in ["autofs", "nfs", "zfs"]:
                 apptainer_bindings.append(f"{root_dir_of_script}:{root_dir_of_script}")
 
         slurm_tmpdir = os.environ.get("SLURM_TMPDIR")
