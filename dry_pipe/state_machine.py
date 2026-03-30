@@ -114,7 +114,9 @@ class StateMachine:
         if key is None:
             raise Exception(f"key can't be none")
 
-        if task_conf is None:
+        if task_conf is not None and callable(task_conf):
+            task_conf = task_conf(key)
+        elif task_conf is None:
             task_conf = TaskConf.default()
 
         def n(o):
