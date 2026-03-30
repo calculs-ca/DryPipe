@@ -116,6 +116,9 @@ class StateMachine:
 
         if task_conf is not None and callable(task_conf):
             task_conf = task_conf(key)
+            if task_conf is None:
+                raise Exception(f"task {key} has a function assigned to argument task_conf that returned None" +
+                                "it should return a TaskConf")
         elif task_conf is None:
             task_conf = TaskConf.default()
 
