@@ -136,7 +136,15 @@ class StateMachine:
         return tb
 
     def file(self, p):
-        return Path(p)
+
+        p0 = Path(p)
+
+        pid = Path(self.pipeline_instance_dir())
+
+        if pid in p0.parents:
+            return p0.relative_to(pid)
+
+        return p0
 
     def file_set(self, pattern, exclude_pattern=None):
         """
