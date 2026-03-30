@@ -284,7 +284,7 @@ class TaskBuilder:
 
         task_conf = self.task_conf
         if "container" in kwargs:
-            task_conf = task_conf.override_container(kwargs["container"])
+            task_conf = task_conf.override(container=kwargs["container"])
 
         task_step = None
 
@@ -307,7 +307,7 @@ class TaskBuilder:
                         )
             if isinstance(a, PythonCall):
                 python_bin = kwargs.get("python_bin") or self.dsl.task_conf.python_bin or sys.executable
-                task_conf = task_conf.override_python_bin(python_bin)
+                task_conf = task_conf.override(python_bin=python_bin)
                 task_step = TaskStep(task_conf, python_call=a)
 
         if task_step is None:
@@ -664,10 +664,13 @@ class TaskConf:
             globus_local_path_rewrite=None,
             auto_restart_condition_regexp_per_log_file=None,
             downstream_resets=(),
-            use_squeue=False
+            use_squeue=False,
+            external_files_root=None
     ):
 
-        self.external_files_root = None
+        self.is_slurm_parent = False
+        self.is_on_remote_site = False
+        self.external_files_root = external_files_root
 
         if init_bash_command is not None:
             raise Exception(f"init_bash_command is deprecated")
@@ -709,8 +712,6 @@ class TaskConf:
         self.extra_env = extra_env
         self.label = label
         self.work_on_local_file_copies = work_on_local_file_copies
-        self.is_slurm_parent = False
-        self.is_on_remote_site = False
         #self.hash_code = None
         self.inputs = []
         self.outputs = []
@@ -781,6 +782,8 @@ class TaskConf:
             yield self.slurm_account
         if self.python_bin is not None:
             yield self.python_bin
+        if self.command_before_task is not None:
+            yield self.command_before_task
         if self.run_as_group is not None:
             yield self.run_as_group
         if self.globus_local_path_rewrite is not None:
@@ -834,16 +837,46 @@ class TaskConf:
     def uses_singularity(self):
         return self.container is not None
 
-    def override_container(self, container):
-        tc = copy.copy(self)
-        tc.container = container
+    def override(self, **kwargs):
+        fields = vars(self).copy()
+
+        for f in ["is_slurm_parent", "is_on_remote_site", "inputs", "outputs"]:
+            del fields[f]
+
+        for k, v in kwargs.items():
+            if k not in fields:
+                raise Exception(f"{k} is not a valid TaskConf field")
+
+        tc = TaskConf(**{
+            **fields,
+            **kwargs
+        })
+
+        if self.is_slurm_parent:
+            tc.is_slurm_parent = True
+
         return tc
 
+    def with_sbatch_options(self, account=None, mem=None, time=None, cpu_per_task=None, partition=None):
 
-    def override_python_bin(self, python_bin):
-        tc = copy.copy(self)
-        tc.python_bin = python_bin
-        return tc
+        sbatch_options = []
+
+        if mem is not None:
+            sbatch_options.append(f"--mem={mem}")
+
+        if time is not None:
+            sbatch_options.append(f"--time={time}")
+
+        if cpu_per_task is not None:
+            sbatch_options.append(f"--cpus-per-task={cpu_per_task}")
+
+        if account is not None:
+            sbatch_options.append(f"--account={account}")
+
+        if partition is not None:
+            sbatch_options.append(f"--partition={partition}")
+
+        return self.override(sbatch_options=sbatch_options)
 
 
 
