@@ -490,7 +490,7 @@ class Cli:
         yield Command('upgrade-drypipe', pipeline_instance_dir,
                       help="upgrade drypipe version for the specified pipeline instance")
 
-        yield Command('restart-failed-array-tasks', task_key, include_pre_launch,
+        yield Command('restart-failed-array-tasks', task_key, include_pre_launch, wait,
                       help="restart failed array tasks, of specified array task")
 
         yield Command('report-execution-times', task_key_optional, filter,
