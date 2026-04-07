@@ -1,6 +1,9 @@
 import argparse
+import ctypes
+import ctypes.util
 import inspect
 import shutil
+import signal
 import subprocess
 import time
 import json
@@ -300,6 +303,15 @@ class Cli:
                 env=self.env
             )
 
+        def pipeline_instances_dir(parser):
+            parser.add_argument(
+                '--pipeline-instances-dir',
+                help='parent dir of all pipeline instance directories, can also be set with environment var DRYPIPE_PIPELINE_INSTANCES_DIR',
+                action=EnvDefault,
+                envvar="DRYPIPE_PIPELINE_INSTANCES_DIR",
+                env=self.env
+            )
+
         def task_key(parser):
             pipeline_instance_dir(parser)
             parser.add_argument('--task-key', '-k', required=True, help="task key")
@@ -412,6 +424,14 @@ class Cli:
                 default=False
             )
 
+        def exit_on_parent_death(parser):
+            parser.add_argument(
+                '--exit-on-parent-death',
+                help='ensure the process dies when the parent process exits',
+                type=str,
+                default=False
+            )
+
         def sleep_schedule(parser):
             parser.add_argument(
                 "--sleep-schedule",
@@ -464,7 +484,7 @@ class Cli:
         yield Command('prepare', pipeline_instance_dir, generator, until, sleep_schedule,
                       help="generate tasks, WITHOUT running the pipeline")
 
-        yield Command('service', pipeline_instance_dir, config_generator, sleep_schedule, log_conf,
+        yield Command('service', pipeline_instances_dir, config_generator, sleep_schedule, log_conf, exit_on_parent_death,
                       help="run as service")
 
         yield Command('upgrade-drypipe', pipeline_instance_dir,
@@ -662,10 +682,53 @@ class Cli:
 
         logging.info("starting drypipe service")
 
-        for suggested_sleep in pipeline_runner.iterate_work():
-            if suggested_sleep > 0:
-                logging.debug("will sleep for %s", suggested_sleep)
-                time.sleep(suggested_sleep)
+        def work():
+            for suggested_sleep in pipeline_runner.iterate_work():
+                if suggested_sleep > 0:
+                    logging.debug("will sleep for %s", suggested_sleep)
+                    mini_sleep = suggested_sleep / 30
+                    for i in range(0, 30):
+                        time.sleep(mini_sleep)
+
+        if self.parsed_args.exit_on_parent_death is not None:
+            self._work_until_parent_death(work, self.parsed_args.exit_on_parent_death)
+        else:
+            work()
+
+    def _work_until_parent_death(self, work_func, pid_or_none):
+
+        PR_SET_PDEATHSIG = 1
+
+        def set_parent_death_signal():
+            libc = ctypes.CDLL(ctypes.util.find_library('c'), use_errno=True)
+            result = libc.prctl(PR_SET_PDEATHSIG, signal.SIGTERM, 0, 0, 0)
+            if result != 0:
+                errno = ctypes.get_errno()
+                raise OSError(errno, f"prctl failed with error {errno}")
+
+        set_parent_death_signal()
+        parent_pid = int(pid_or_none) if pid_or_none is not None else os.getppid()
+
+        def parent_is_alive(pid=None):
+            if pid is None:
+                pid = os.getppid()
+            try:
+                os.kill(pid, 0)
+                return True
+            except OSError:
+                return False
+
+        if not parent_is_alive(parent_pid):
+            self.logger.info("launching parent process no longer alive, will exit")
+            sys.exit(0)
+
+        def handle_sigterm(signum, frame):
+            self.logger.info("SIGTERM received")
+            sys.exit(0)
+
+        signal.signal(signal.SIGTERM, handle_sigterm)
+
+        work_func()
 
 
     def upgrade_drypipe(self):
