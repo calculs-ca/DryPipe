@@ -148,6 +148,7 @@ class PipelineRunner:
         self.run_tasks_in_process = run_tasks_in_process
         self.pipeline_instances = {}
         self.sleep_schedule = sleep_schedule
+        self.stop_instances_when_non_runnable = True
 
     def pipeline_instance_exists(self, instances_dir_basename, name):
 
@@ -271,8 +272,9 @@ class PipelineRunner:
                             check_completed()
                     except AllRunnableTasksCompletedOrInError:
                         if not check_completed():
-                            running_pipeline_instance.set_stopped()
-                            instance_logger.info("pipeline instance stopped")
+                            if self.stop_instances_when_non_runnable:
+                                running_pipeline_instance.set_stopped()
+                                instance_logger.info("pipeline instance stopped")
                         work_done += 1
                     except Exception as ex:
                         logger.error("Error in pipeline instance %s", pid, exc_info=ex)

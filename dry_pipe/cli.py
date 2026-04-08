@@ -691,6 +691,7 @@ class Cli:
                         time.sleep(mini_sleep)
 
         if self.parsed_args.exit_on_parent_death is not None:
+            pipeline_runner.stop_instances_when_non_runnable = False
             self._work_until_parent_death(work, self.parsed_args.exit_on_parent_death)
         else:
             work()
