@@ -568,12 +568,13 @@ class ArrayTaskManager:
 
                 if is_failed:
                     def state_file_if_restart():
+                        if restart_failed:
+                            return self.find_state_file_for_task_key(task_key)
+
                         if self.auto_restart_manager is not None:
                             state_file = self.find_state_file_for_task_key(task_key)
                             if self.auto_restart_manager.should_restart(state_file, logger=self.logger()):
                                 return state_file
-                        elif restart_failed:
-                            return self.find_state_file_for_task_key(task_key)
 
                     state_file_for_restart = state_file_if_restart()
                     if state_file_for_restart is not None:

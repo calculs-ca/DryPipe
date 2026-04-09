@@ -33,6 +33,7 @@ def submit_local_array(__task_process):
     is_restart = len(array_task_manager.arrays_submitted_sacct_info) > 0
 
     if is_restart:
+        __task_process.task_logger.info("will restart array")
         for restart_file in Path(__task_process.pipeline_work_dir).glob("*/restarts.tsv"):
             with open(restart_file, "a") as f:
                 f.write("RESET\n")
