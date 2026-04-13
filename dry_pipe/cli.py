@@ -686,9 +686,12 @@ class Cli:
             for suggested_sleep in pipeline_runner.iterate_work():
                 if suggested_sleep > 0:
                     logging.debug("will sleep for %s", suggested_sleep)
-                    mini_sleep = suggested_sleep / 30
-                    for i in range(0, 30):
-                        time.sleep(mini_sleep)
+                    time.sleep(suggested_sleep)
+
+                    #mini_sleep = suggested_sleep / 30.0
+                    #for i in range(0, 30):
+                    #    logging.debug("sleep %s", i)
+                    #    time.sleep(mini_sleep)
 
         if self.parsed_args.exit_on_parent_death is not None:
             pipeline_runner.stop_instances_when_non_runnable = False
