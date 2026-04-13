@@ -288,7 +288,8 @@ class PipelineRunner:
 
             if work_done > 0:
                 sleep_idx = 0
-                continue
+                if self.stop_instances_when_non_runnable:
+                    continue
             else:
                 if sleep_idx < len(self.sleep_schedule) - 1:
                     sleep_idx += 1
