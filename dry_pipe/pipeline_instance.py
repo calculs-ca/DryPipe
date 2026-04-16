@@ -1,3 +1,4 @@
+import fnmatch
 import logging
 import os
 import time
@@ -199,6 +200,26 @@ class PipelineInstance:
             return task
         else:
             raise Exception(f"expected a task with key {task_key}, found none")
+
+    def refresh_matching_tasks(self, task_key_glob_filter="*"):
+        self._refresh_tasks(task_key_glob_filter=task_key_glob_filter)
+
+    def refresh_task(self, task_key):
+        self._refresh_tasks(task_key_glob_filter=task_key, at_most_one=True)
+
+    def _refresh_tasks(self, task_key_glob_filter="*", at_most_one=False):
+        state_machine = StateMachine(
+            self.state_file_tracker,
+            self.pipeline.task_generator,
+            instance_logger=self.instance_logger
+        )
+
+        for task in state_machine.gen_all_tasks():
+            if fnmatch.fnmatch(task.key, task_key_glob_filter):
+                self.state_file_tracker.create_true_state_if_new_else_fetch_from_memory(task, force_save=True)
+                if at_most_one:
+                    break
+
 
     def restart_failed(self):
         self.state_file_tracker

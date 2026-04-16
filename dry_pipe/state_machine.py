@@ -299,6 +299,9 @@ class StateMachine:
     def set_of_completed_task_keys(self) -> typing.Set:
         return set(self.state_file_tracker.completed_task_keys())
 
+    def gen_all_tasks(self):
+        yield from self._task_generator(self)
+
     def _ready_state_files_from_generator(self):
 
         new_generated_tasks = 0

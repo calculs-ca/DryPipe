@@ -16,7 +16,6 @@ from io import StringIO
 from os import environ
 from pathlib import Path
 
-import dry_pipe
 from dry_pipe import PortablePopen, DryPipe
 from dry_pipe.core_lib import func_from_mod_func, is_inside_slurm_job
 from dry_pipe.pipeline_instance import Monitor
@@ -365,6 +364,15 @@ class Cli:
                 action='store_true'
             )
 
+        def refresh(parser):
+            parser.add_argument(
+                '--refresh',
+                help='rewrites all generated files for the task before running (task-conf.json, bash snippets)'+\
+                     'note: this flag is neither necessary or available for "run" and "prepare, because these commands detect changes and updates task config accordingly"',
+                action='store_true',
+                default=False
+            )
+
         def generator(parser):
             parser.add_argument(
                 '-g', '--generator',
@@ -496,10 +504,10 @@ class Cli:
         yield Command('report-execution-times', task_key_optional, filter,
                       help="execute time for all tasks, or all tasks matching filter expression")
 
-        yield Command('task', task_key, wait, tail, by_runner, from_remote, ssh_remote_dest,
+        yield Command('task', task_key, wait, tail, by_runner, from_remote, ssh_remote_dest, refresh,
                       help="run specified task, or restarts it if in failed state (see restart command)")
 
-        yield Command('restart', task_key, at_step, reset, wait, tail, from_remote,
+        yield Command('restart', task_key, at_step, reset, wait, tail, from_remote, refresh,
                       help="restart specified task --task-key, at last unsuccessful step. WARNING: if task is completed, will restart from first step")
 
         yield Command('poll-task', task_key, help="return state of task (used for polling remote tasks)")
@@ -953,9 +961,21 @@ class Cli:
         for task_key, timer_label, hms, s in timers_for_tasks(self.parsed_args.pipeline_instance_dir, f):
             print(f"{timer_label}\t{task_key}\t{hms}\t{s}", file=self.output)
 
+
+    def _maybe_refresh_task(self):
+        if self.parsed_args.refresh:
+            g = self.parsed_args.generator
+            if g is None:
+                raise Exception(f"--generator is required for --refresh")
+
+            pipeline_instance = self.pipeline_instance_from_args()
+            pipeline_instance.prepare_instance_dir()
+            pipeline_instance.refresh_task(self.parsed_args.task_key)
+
     def task(self):
 
-        #raise Exception(f">>> {self._control_dir()}")
+        self._maybe_refresh_task()
+
         task_process = TaskProcess(
             self._control_dir(),
             wait_for_completion=self._wait() or self._tail(),
