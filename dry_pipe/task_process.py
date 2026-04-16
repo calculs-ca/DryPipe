@@ -1448,13 +1448,13 @@ class TaskProcess:
             flf = os.path.join(self.control_dir, "out.log")
 
             while not os.path.exists(flf):
-                time.sleep(1)
+                time.sleep(0.5)
                 if self.has_ended:
                     break
 
             if not self.has_ended:
                 with open(flf) as f:
-                    for line in tail_file(f, 1):
+                    for line in tail_file(f, 0.5):
                         print(f"out.log - {line}")
                         if self.has_ended:
                             break
@@ -1462,6 +1462,7 @@ class TaskProcess:
         t = Thread(target=func)
         t.start()
         launch_func()
+        self.has_ended = True
 
     def is_slurm_array_parent(self):
         is_slurm_parent = self.task_conf.is_slurm_parent
