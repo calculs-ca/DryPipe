@@ -497,9 +497,9 @@ class Cli:
                       help="execute time for all tasks, or all tasks matching filter expression")
 
         yield Command('task', task_key, wait, tail, by_runner, from_remote, ssh_remote_dest,
-                      help="run specified task")
+                      help="run specified task, or restarts it if in failed state (see restart command)")
 
-        yield Command('restart', task_key, at_step, reset, wait, from_remote,
+        yield Command('restart', task_key, at_step, reset, wait, tail, from_remote,
                       help="restart specified task --task-key, at last unsuccessful step. WARNING: if task is completed, will restart from first step")
 
         yield Command('poll-task', task_key, help="return state of task (used for polling remote tasks)")
@@ -760,31 +760,6 @@ class Cli:
     def _wait(self):
         return self.parsed_args.wait
 
-    def task(self):
-
-        #raise Exception(f">>> {self._control_dir()}")
-        task_process = TaskProcess(
-            self._control_dir(),
-            wait_for_completion=self._wait(),
-            test_mode=self.test_mode,
-            as_subprocess=not self.test_mode,
-            tail=self._tail(),
-            from_remote=self.parsed_args.from_remote
-        )
-
-        if self.parsed_args.ssh_remote_dest is not None:
-            task_process.task_conf.ssh_remote_dest = self.parsed_args.ssh_remote_dest
-        elif task_process.task_conf.executer_type == "slurm":
-            if task_process.is_remote_execution_on_master_site():
-                task_process.launch_task()
-                return
-
-            if self.parsed_args.by_runner and not task_process.task_conf.is_slurm_parent:
-                task_process.submit_sbatch_task()
-                return
-
-        task_process.launch_task()
-
     def poll_task(self):
         control_dir = self._control_dir()
         task_process = TaskProcess(control_dir, no_logger=True)
@@ -978,12 +953,38 @@ class Cli:
         for task_key, timer_label, hms, s in timers_for_tasks(self.parsed_args.pipeline_instance_dir, f):
             print(f"{timer_label}\t{task_key}\t{hms}\t{s}", file=self.output)
 
+    def task(self):
+
+        #raise Exception(f">>> {self._control_dir()}")
+        task_process = TaskProcess(
+            self._control_dir(),
+            wait_for_completion=self._wait() or self._tail(),
+            test_mode=self.test_mode,
+            as_subprocess=not self.test_mode,
+            tail=self._tail(),
+            from_remote=self.parsed_args.from_remote
+        )
+
+        if self.parsed_args.ssh_remote_dest is not None:
+            task_process.task_conf.ssh_remote_dest = self.parsed_args.ssh_remote_dest
+        elif task_process.task_conf.executer_type == "slurm":
+            if task_process.is_remote_execution_on_master_site():
+                task_process.launch_task()
+                return
+
+            if self.parsed_args.by_runner and not task_process.task_conf.is_slurm_parent:
+                task_process.submit_sbatch_task()
+                return
+
+        task_process.launch_task()
+
     def restart(self):
 
         task_process = TaskProcess(
             self._control_dir(),
-            wait_for_completion=self.parsed_args.wait,
-            use_remote_drypipe_log=self.parsed_args.from_remote
+            wait_for_completion=self._wait() or self._tail(),
+            use_remote_drypipe_log=self.parsed_args.from_remote,
+            tail=self._tail(),
         )
 
         task_process.reset_restart_accounting()
