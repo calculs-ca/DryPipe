@@ -504,7 +504,7 @@ class Cli:
         yield Command('report-execution-times', task_key_optional, filter,
                       help="execute time for all tasks, or all tasks matching filter expression")
 
-        yield Command('task', task_key, wait, tail, by_runner, from_remote, ssh_remote_dest, refresh,
+        yield Command('task', task_key, wait, tail, by_runner, from_remote, ssh_remote_dest, refresh, generator,
                       help="run specified task, or restarts it if in failed state (see restart command)")
 
         yield Command('restart', task_key, at_step, reset, wait, tail, from_remote, refresh,
