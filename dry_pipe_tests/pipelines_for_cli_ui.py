@@ -37,6 +37,30 @@ def dag_echo_debug(dsl):
     time.sleep(2)
 
 
-
 def pipline_dag_echo_debug():
     return DryPipe.create_pipeline(dag_echo_debug)
+
+@DryPipe.python_call()
+def hello_world():
+    for i in range(1, 4):
+        print(f"hello python world {i}")
+        time.sleep(1)
+
+
+def dag_hello_world(dsl):
+    dsl.logger.debug("debug 1")
+
+    dsl.logger.info("msg in dag hello world")
+
+    yield dsl.task(
+        key="t1"
+    ).inputs(
+        x=123
+    ).outputs(
+        y=int
+    ).calls(
+        """
+        #!/usr/bin/bash
+        echo "hello bash world"
+        """
+    ).calls(hello_world)()

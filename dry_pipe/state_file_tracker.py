@@ -339,7 +339,8 @@ class StateFileTracker:
                 if task.is_slurm_parent:
                     state_file_in_memory.is_parent_task = True
                 task.save(state_file_in_memory, hash_code)
-                state_file_in_memory.touch_initial_state_file()
+                if state_file_path is None:
+                    state_file_in_memory.touch_initial_state_file()
                 self.state_files_in_memory[task.key] = state_file_in_memory
                 self.new_save_count += 1
                 return True, state_file_in_memory

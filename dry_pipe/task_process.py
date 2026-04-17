@@ -167,7 +167,7 @@ class TaskProcess:
         else:
             logging_level = logging.INFO
 
-        logger = logging.getLogger(f"task-logger-{os.path.basename(self.control_dir)}")
+        logger = logging.getLogger("drypipe.log")
         logger.propagate = False
         logger.setLevel(logging_level)
 
@@ -182,20 +182,19 @@ class TaskProcess:
         logger.handlers.clear()
         logger.addHandler(file_handler)
 
-        if self.cli_tail_logger:
-            logger.addHandler(self.cli_tail_logger)
+        if self.cli_tail_logger and self.tail_all:
+            _task_key = self.task_key
+            srz = f".drypipe/{_task_key}/drypipe.log"
+            class BridgeHandler(logging.Handler):
+                def __init__(self, target_logger):
+                    super().__init__()
+                    self.target_logger = target_logger
 
-        if self.tail_all:
-            h = logging.StreamHandler(sys.stdout)
-            h.setLevel(logging_level)
-            h.setFormatter(
-                logging.Formatter(
-                    "drypipe.log - %(asctime)s - %(levelname)s - %(message)s",
-                    datefmt='%H:%M:%S%z'
-                )
-            )
-            logger.addHandler(h)
+                def emit(self, record):
+                    record.__dict__['srz'] = srz
+                    self.target_logger.handle(record)
 
+            logger.addHandler(BridgeHandler(self.cli_tail_logger))
 
         logger.debug("log level: %s", logging.getLevelName(logging_level))
         return logger
@@ -1451,26 +1450,50 @@ class TaskProcess:
             p.wait_and_raise_if_non_zero()
 
     def _launch_and_tail(self, launch_func):
-        def func():
-            flf = os.path.join(self.control_dir, "out.log")
 
-            while not os.path.exists(flf):
-                time.sleep(0.5)
+        srz = {'srz': f'.drypipe/{self.task_key}/out.log'}
+        out_log = Path(self.control_dir, "out.log")
+
+        def push_line(line):
+            self.cli_tail_logger.info(line.rstrip('\n'), extra=srz)
+
+        if out_log.exists():
+            out_log_f = open(out_log, 'r')
+            out_log_f.seek(0, os.SEEK_END)
+        else:
+            out_log_f = None
+
+        def tail_func(file_desc):
+
+            def drain_remaining_lines(fd):
+                for l in fd:
+                    push_line(l)
+                fd.close()
+
+            if file_desc is None:
+                while not out_log.exists():
+                    time.sleep(0.5)
+                file_desc = open(out_log, 'r')
                 if self.has_ended:
-                    break
+                    drain_remaining_lines(file_desc)
+                    return
 
             if not self.has_ended:
-                with open(flf) as f:
-                    for line in tail_file(f, 0.5):
-                        self.cli_tail_logger.info(line, extra={'name': 'out.log'})
-                        if self.has_ended:
-                            break
+                while True:
+                    line = file_desc.readline()
+                    if not line and not self.has_ended:
+                        time.sleep(0.5)
+                        continue
+                    push_line(line)
+                    if self.has_ended:
+                        drain_remaining_lines(file_desc)
+                        break
 
-        t = Thread(target=func)
+        t = Thread(target=lambda : tail_func(out_log_f))
         t.start()
         launch_func()
-        time.sleep(1.5)
         self.has_ended = True
+
 
     def is_slurm_array_parent(self):
         is_slurm_parent = self.task_conf.is_slurm_parent

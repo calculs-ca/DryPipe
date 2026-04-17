@@ -1,6 +1,7 @@
 import fnmatch
 import logging
 import os
+import sys
 import time
 import traceback
 from io import StringIO
@@ -201,21 +202,31 @@ class PipelineInstance:
         else:
             raise Exception(f"expected a task with key {task_key}, found none")
 
-    def refresh_matching_tasks(self, task_key_glob_filter="*", log_handler=None):
-        self._refresh_tasks(task_key_glob_filter=task_key_glob_filter, cli_tail_logger=None)
+    def regen_matching_tasks(self, task_key_glob_filter="*", log_handler=None):
+        self._regen_tasks(task_key_glob_filter=task_key_glob_filter, cli_tail_logger=None)
 
-    def refresh_task(self, task_key, cli_tail_logger=None):
-        self._refresh_tasks(task_key_glob_filter=task_key, at_most_one=True, cli_tail_logger=cli_tail_logger)
+    def regen_task(self, task_key, cli_tail_logger=None):
+        self._regen_tasks(task_key_glob_filter=task_key, at_most_one=True, cli_tail_logger=cli_tail_logger)
 
-    def _refresh_tasks(self, task_key_glob_filter="*", at_most_one=False, cli_tail_logger=None):
+    def _regen_tasks(self, task_key_glob_filter="*", at_most_one=False, cli_tail_logger=None):
 
         class BridgeHandler(logging.Handler):
             def __init__(self, target_logger):
                 super().__init__()
                 self.target_logger = target_logger
+                self.all_paths_in_pythonpath = sorted(sys.path, key=len, reverse=True)
 
             def emit(self, record):
-                record.name = ".drypipe/instance.log"
+                def path_in_src_relative_to_pythonpath(record):
+                    relative_path = record.pathname
+                    for path in self.all_paths_in_pythonpath:
+                        if record.pathname.startswith(path):
+                            relative_path = os.path.relpath(record.pathname, path)
+                            break
+                    return relative_path
+                p = path_in_src_relative_to_pythonpath(record)
+                record.__dict__['srz'] = f"{p} line {record.lineno}"
+
                 self.target_logger.handle(record)
 
         if cli_tail_logger is not None:
