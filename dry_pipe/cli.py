@@ -963,14 +963,26 @@ class Cli:
 
 
     def _maybe_refresh_task(self):
-        if self.parsed_args.refresh:
-            g = self.parsed_args.generator
-            if g is None:
-                raise Exception(f"--generator is required for --refresh")
 
+        def do_refresh():
             pipeline_instance = self.pipeline_instance_from_args()
             pipeline_instance.prepare_instance_dir()
             pipeline_instance.refresh_task(self.parsed_args.task_key)
+
+        def complain_if_no_generator(msg):
+            g = self.parsed_args.generator
+            if g is None:
+                raise Exception(f"--generator is required {msg}")
+
+        if self.parsed_args.refresh:
+            complain_if_no_generator("with --refresh flag")
+            do_refresh()
+        elif not Path(self._control_dir()).exists():
+            complain_if_no_generator(
+                'when the pipeline was never run, either specify --generator, or use "run" or "prepare"'
+            )
+            do_refresh()
+
 
     def task(self):
 
