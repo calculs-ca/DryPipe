@@ -47,8 +47,7 @@ class TaskProcess:
             alternate_logger=None,
             use_remote_drypipe_log=False,
             for_dry_run=False,
-            tail_log_handler=None,
-            tail_all_log_handler=None
+            cli_tail_logger=None
 
     ):
 
@@ -57,8 +56,7 @@ class TaskProcess:
         self.slurm_array_task_id = os.environ.get("SLURM_ARRAY_TASK_ID")
 
 
-        self.log_handler_tail = tail_log_handler
-        self.log_handler_tail_all = tail_all_log_handler
+        self.cli_tail_logger = cli_tail_logger
 
         self.wait_for_completion = wait_for_completion
         self.tail = tail
@@ -184,8 +182,8 @@ class TaskProcess:
         logger.handlers.clear()
         logger.addHandler(file_handler)
 
-        if self.log_handler_tail:
-            logger.addHandler(self.log_handler_tail)
+        if self.cli_tail_logger:
+            logger.addHandler(self.cli_tail_logger)
 
         if self.log_handler_tail_all:
             logger.addHandler(self.log_handler_tail_all)
@@ -1467,8 +1465,7 @@ class TaskProcess:
             if not self.has_ended:
                 with open(flf) as f:
                     for line in tail_file(f, 0.5):
-                        #print(f"out.log - {line}")
-                        self.log_handler_tail.info(line)
+                        self.cli_tail_logger.info(line, extra={'name': 'out.log'})
                         if self.has_ended:
                             break
 

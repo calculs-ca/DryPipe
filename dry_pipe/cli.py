@@ -97,6 +97,8 @@ def init_logging(logging_conf, verbose=False):
 
 def setup_cli_logging(logging_level):
 
+    logger = logging.getLogger("cli")
+
     handler = logging.StreamHandler(sys.stdout)
     handler.setLevel(logging_level)
     handler.setFormatter(
@@ -107,7 +109,6 @@ def setup_cli_logging(logging_level):
     )
 
     def add_handler(name):
-        logger = logging.getLogger(name)
         logger.setLevel(logging_level)
         logger.addHandler(handler)
 
@@ -962,12 +963,12 @@ class Cli:
             print(f"{timer_label}\t{task_key}\t{hms}\t{s}", file=self.output)
 
 
-    def _maybe_refresh_task(self, tail_log_handler):
+    def _maybe_refresh_task(self, cli_tail_logger):
 
         def do_refresh():
             pipeline_instance = self.pipeline_instance_from_args()
             pipeline_instance.prepare_instance_dir()
-            pipeline_instance.refresh_task(self.parsed_args.task_key, tail_log_handler)
+            pipeline_instance.refresh_task(self.parsed_args.task_key, cli_tail_logger)
 
         def complain_if_no_generator(msg):
             g = self.parsed_args.generator
@@ -986,11 +987,11 @@ class Cli:
 
     def task(self):
 
-        tail_log_handler = None
+        cli_tail_logger = None
         if self._tail():
-            tail_log_handler = self.logger
+            cli_tail_logger = self.logger
 
-        self._maybe_refresh_task(tail_log_handler)
+        self._maybe_refresh_task(cli_tail_logger)
 
 
         task_process = TaskProcess(
@@ -999,7 +1000,7 @@ class Cli:
             test_mode=self.test_mode,
             as_subprocess=not self.test_mode,
             tail=self._tail(),
-            tail_log_handler=tail_log_handler
+            cli_tail_logger=cli_tail_logger
         )
 
         if self.parsed_args.ssh_remote_dest is not None:

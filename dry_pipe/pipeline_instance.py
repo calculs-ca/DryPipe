@@ -202,15 +202,25 @@ class PipelineInstance:
             raise Exception(f"expected a task with key {task_key}, found none")
 
     def refresh_matching_tasks(self, task_key_glob_filter="*", log_handler=None):
-        self._refresh_tasks(task_key_glob_filter=task_key_glob_filter, log_handler=None)
+        self._refresh_tasks(task_key_glob_filter=task_key_glob_filter, cli_tail_logger=None)
 
-    def refresh_task(self, task_key, log_handler=None):
-        self._refresh_tasks(task_key_glob_filter=task_key, at_most_one=True, log_handler=log_handler)
+    def refresh_task(self, task_key, cli_tail_logger=None):
+        self._refresh_tasks(task_key_glob_filter=task_key, at_most_one=True, cli_tail_logger=cli_tail_logger)
 
-    def _refresh_tasks(self, task_key_glob_filter="*", at_most_one=False, log_handler=None):
+    def _refresh_tasks(self, task_key_glob_filter="*", at_most_one=False, cli_tail_logger=None):
 
-        if log_handler is not None:
-            self.instance_logger.addHandler(log_handler)
+        class BridgeHandler(logging.Handler):
+            def __init__(self, target_logger):
+                super().__init__()
+                self.target_logger = target_logger
+
+            def emit(self, record):
+                record.name = ".drypipe/instance.log"
+                self.target_logger.handle(record)
+
+        if cli_tail_logger is not None:
+            bh = BridgeHandler(cli_tail_logger)
+            self.instance_logger.addHandler(bh)
 
         state_machine = StateMachine(
             self.state_file_tracker,
