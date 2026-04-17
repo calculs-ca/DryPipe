@@ -47,8 +47,8 @@ class TaskProcess:
             alternate_logger=None,
             use_remote_drypipe_log=False,
             for_dry_run=False,
-            log_handler_tail=None,
-            log_handler_tail_all=None
+            tail_log_handler=None,
+            tail_all_log_handler=None
 
     ):
 
@@ -57,8 +57,8 @@ class TaskProcess:
         self.slurm_array_task_id = os.environ.get("SLURM_ARRAY_TASK_ID")
 
 
-        self.log_handler_tail = log_handler_tail
-        self.log_handler_tail_all = log_handler_tail_all
+        self.log_handler_tail = tail_log_handler
+        self.log_handler_tail_all = tail_all_log_handler
 
         self.wait_for_completion = wait_for_completion
         self.tail = tail
