@@ -1462,6 +1462,7 @@ class TaskProcess:
         t = Thread(target=func)
         t.start()
         launch_func()
+        time.sleep(1.5)
         self.has_ended = True
 
     def is_slurm_array_parent(self):
