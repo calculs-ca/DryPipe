@@ -101,7 +101,7 @@ def setup_cli_logging(logging_level):
     handler.setLevel(logging_level)
     handler.setFormatter(
         logging.Formatter(
-            "%(asctime)s - %(levelname)s - %(message)s",
+            "%(name)s %(asctime)s - %(levelname)s - %(message)s",
             datefmt='%H:%M:%S%z'
         )
     )

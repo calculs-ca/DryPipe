@@ -1467,7 +1467,15 @@ class TaskProcess:
             if not self.has_ended:
                 with open(flf) as f:
                     for line in tail_file(f, 0.5):
-                        print(f"out.log - {line}")
+                        #print(f"out.log - {line}")
+                        self.log_handler_tail.emit(
+                            logging.makeLogRecord({
+                                'msg': line,
+                                'levelno': logging.INFO,
+                                'levelname': 'INFO'
+                            })
+                        )
+
                         if self.has_ended:
                             break
 
