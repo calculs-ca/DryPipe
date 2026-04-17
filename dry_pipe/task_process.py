@@ -44,15 +44,21 @@ class TaskProcess:
             tail=False,
             tail_all=False,
             is_python_call=False,
-            from_remote=False,
             alternate_logger=None,
             use_remote_drypipe_log=False,
-            for_dry_run=False
+            for_dry_run=False,
+            log_handler_tail=None,
+            log_handler_tail_all=None
+
     ):
 
         self.slurm_job_id = os.environ.get("SLURM_JOB_ID")
         self.slurm_array_job_id = os.environ.get("SLURM_ARRAY_JOB_ID")
         self.slurm_array_task_id = os.environ.get("SLURM_ARRAY_TASK_ID")
+
+
+        self.log_handler_tail = log_handler_tail
+        self.log_handler_tail_all = log_handler_tail_all
 
         self.wait_for_completion = wait_for_completion
         self.tail = tail
@@ -177,6 +183,12 @@ class TaskProcess:
             h.close()
         logger.handlers.clear()
         logger.addHandler(file_handler)
+
+        if self.log_handler_tail:
+            logger.addHandler(self.log_handler_tail)
+
+        if self.log_handler_tail_all:
+            logger.addHandler(self.log_handler_tail_all)
 
         if self.tail_all:
             h = logging.StreamHandler(sys.stdout)

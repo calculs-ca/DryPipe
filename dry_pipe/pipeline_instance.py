@@ -201,13 +201,17 @@ class PipelineInstance:
         else:
             raise Exception(f"expected a task with key {task_key}, found none")
 
-    def refresh_matching_tasks(self, task_key_glob_filter="*"):
-        self._refresh_tasks(task_key_glob_filter=task_key_glob_filter)
+    def refresh_matching_tasks(self, task_key_glob_filter="*", log_handler=None):
+        self._refresh_tasks(task_key_glob_filter=task_key_glob_filter, log_handler=None)
 
-    def refresh_task(self, task_key):
-        self._refresh_tasks(task_key_glob_filter=task_key, at_most_one=True)
+    def refresh_task(self, task_key, log_handler=None):
+        self._refresh_tasks(task_key_glob_filter=task_key, at_most_one=True, log_handler=log_handler)
 
-    def _refresh_tasks(self, task_key_glob_filter="*", at_most_one=False):
+    def _refresh_tasks(self, task_key_glob_filter="*", at_most_one=False, log_handler=None):
+
+        if log_handler is not None:
+            self.instance_logger.addHandler(log_handler)
+
         state_machine = StateMachine(
             self.state_file_tracker,
             self.pipeline.task_generator,

@@ -267,7 +267,7 @@ class Cli:
             self.parsed_args = self.parser.parse_args(self.args)
 
 
-        if self.parsed_args.v:
+        if self.parsed_args.v or self._tail():
             self.logger = setup_verbose1()
         elif self.parsed_args.vv:
             self.logger = setup_verbose2()
@@ -962,12 +962,12 @@ class Cli:
             print(f"{timer_label}\t{task_key}\t{hms}\t{s}", file=self.output)
 
 
-    def _maybe_refresh_task(self):
+    def _maybe_refresh_task(self, tail_log_handler):
 
         def do_refresh():
             pipeline_instance = self.pipeline_instance_from_args()
             pipeline_instance.prepare_instance_dir()
-            pipeline_instance.refresh_task(self.parsed_args.task_key)
+            pipeline_instance.refresh_task(self.parsed_args.task_key, tail_log_handler)
 
         def complain_if_no_generator(msg):
             g = self.parsed_args.generator
@@ -986,7 +986,12 @@ class Cli:
 
     def task(self):
 
-        self._maybe_refresh_task()
+        tail_log_handler = None
+        if self._tail():
+            tail_log_handler = self.logger
+
+        self._maybe_refresh_task(tail_log_handler)
+
 
         task_process = TaskProcess(
             self._control_dir(),
@@ -994,7 +999,7 @@ class Cli:
             test_mode=self.test_mode,
             as_subprocess=not self.test_mode,
             tail=self._tail(),
-            from_remote=self.parsed_args.from_remote
+            tail_log_handler=tail_log_handler
         )
 
         if self.parsed_args.ssh_remote_dest is not None:
