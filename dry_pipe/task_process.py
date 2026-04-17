@@ -185,9 +185,6 @@ class TaskProcess:
         if self.cli_tail_logger:
             logger.addHandler(self.cli_tail_logger)
 
-        if self.log_handler_tail_all:
-            logger.addHandler(self.log_handler_tail_all)
-
         if self.tail_all:
             h = logging.StreamHandler(sys.stdout)
             h.setLevel(logging_level)
