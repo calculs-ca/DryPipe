@@ -264,10 +264,10 @@ class TaskProcess:
                         p.safe_stderr_as_string()
                     )
     def _exit_process(self):
-        self._delete_pid_and_slurm_job_id()
         self.task_logger.info("will exit")
         logging.shutdown()
-        os._exit(0)
+        if not (self.tail_all or self.tail):
+            os._exit(0)
 
     def children_task_keys(self):
         with open(os.path.join(self.control_dir,  "task-keys.tsv")) as f:
@@ -804,21 +804,6 @@ class TaskProcess:
             self.task_logger.exception(ex)
         finally:
             self._exit_process()
-
-    def _delete_pid_and_slurm_job_id(self, sloc=None):
-        try:
-            if sloc is None:
-                sloc = self.control_dir
-
-            def delete_if_exists(f):
-                f = os.path.join(sloc, f)
-                if os.path.exists(f):
-                    os.remove(f)
-
-            delete_if_exists("pid")
-            delete_if_exists("slurm_job_id")
-        except Exception as ex:
-            self.task_logger.exception(ex)
 
 
     def exec_cmd_before_launch_if_applies(self):
