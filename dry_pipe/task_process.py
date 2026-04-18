@@ -8,6 +8,7 @@ import signal
 import subprocess
 import sys
 import tarfile
+import threading
 import traceback
 import time
 from pathlib import Path
@@ -1450,49 +1451,51 @@ class TaskProcess:
             p.wait_and_raise_if_non_zero()
 
     def _launch_and_tail(self, launch_func):
-
         srz = {'srz': f'.drypipe/{self.task_key}/out.log'}
         out_log = Path(self.control_dir, "out.log")
+        has_ended = threading.Event()
 
         def push_line(line):
-            self.cli_tail_logger.info(line.rstrip('\n'), extra=srz)
+            if line:
+                self.cli_tail_logger.info(line.rstrip('\n'), extra=srz)
 
-        if out_log.exists():
-            out_log_f = open(out_log, 'r')
-            out_log_f.seek(0, os.SEEK_END)
-        else:
-            out_log_f = None
+        def tail_func():
+            file_desc = None
+            try:
+                for _ in range(60):
+                    if out_log.exists():
+                        file_desc = open(out_log, 'r')
+                        file_desc.seek(0, os.SEEK_END)
+                        break
+                    if has_ended.wait(timeout=0.5):
+                        return
 
-        def tail_func(file_desc):
-
-            def drain_remaining_lines(fd):
-                for l in fd:
-                    push_line(l)
-                fd.close()
-
-            if file_desc is None:
-                while not out_log.exists():
-                    time.sleep(0.5)
-                file_desc = open(out_log, 'r')
-                if self.has_ended:
-                    drain_remaining_lines(file_desc)
+                if file_desc is None:
                     return
 
-            if not self.has_ended:
-                while True:
+                while not has_ended.is_set():
                     line = file_desc.readline()
-                    if not line and not self.has_ended:
-                        time.sleep(0.5)
-                        continue
-                    push_line(line)
-                    if self.has_ended:
-                        drain_remaining_lines(file_desc)
-                        break
+                    if line:
+                        push_line(line)
+                    else:
+                        has_ended.wait(timeout=0.5)
 
-        t = Thread(target=lambda : tail_func(out_log_f))
+                for line in file_desc:
+                    push_line(line)
+
+            finally:
+                if file_desc:
+                    file_desc.close()
+
+        t = Thread(target=tail_func)
+        t.daemon = True
         t.start()
-        launch_func()
-        self.has_ended = True
+
+        try:
+            launch_func()
+        finally:
+            has_ended.set()
+            t.join(timeout=5.0)
 
 
     def is_slurm_array_parent(self):
