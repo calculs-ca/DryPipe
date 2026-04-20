@@ -840,6 +840,9 @@ class TaskConf:
     def override(self, **kwargs):
         fields = vars(self).copy()
 
+        if "step_invocations" in fields:
+            del fields["step_invocations"]
+
         for f in ["is_slurm_parent", "is_on_remote_site", "inputs", "outputs"]:
             del fields[f]
 
