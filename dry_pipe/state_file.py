@@ -116,7 +116,7 @@ class StateFile:
         return self.path.endswith("state.waiting")
 
     def has_ended(self):
-        return self.is_completed() or self.is_timed_out() or self.is_failed() or self.is_crashed()
+        return self.is_completed() or self.is_timed_out() or self.is_failed() or self.is_crashed() or self.is_killed()
 
     def did_not_succeed(self):
         return self.is_failed() or self.is_crashed() or self.is_killed() or self.is_timed_out()
