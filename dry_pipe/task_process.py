@@ -1446,11 +1446,13 @@ class TaskProcess:
 
         def tail_func():
             file_desc = None
+            out_log_pre_exists = out_log.exists()
             try:
                 for _ in range(60):
                     if out_log.exists():
                         file_desc = open(out_log, 'r')
-                        file_desc.seek(0, os.SEEK_END)
+                        if out_log_pre_exists:
+                            file_desc.seek(0, os.SEEK_END)
                         break
                     if has_ended.wait(timeout=0.5):
                         return
