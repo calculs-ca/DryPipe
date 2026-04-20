@@ -368,7 +368,7 @@ class Cli:
             )
 
         def generator(parser):
-            parser.add_argument(
+            return parser.add_argument(
                 '-g', '--generator',
                 help='<module>:<function> task generator function (a function that yields tasks, see "generator function"), can also be set with environment var DRYPIPE_PIPELINE_GENERATOR',
                 action=EnvDefault,
@@ -376,6 +376,10 @@ class Cli:
                 metavar="GENERATOR",
                 env=self.env
             )
+
+        def generator_optional(parser):
+            arg = generator(parser)
+            arg.required = False
 
         def at_step(parser):
             parser.add_argument(
@@ -498,7 +502,7 @@ class Cli:
         yield Command('report-execution-times', task_key_optional, filter,
                       help="execute time for all tasks, or all tasks matching filter expression")
 
-        yield Command('task', task_key, wait, tail, by_runner, from_remote, ssh_remote_dest, regen, generator,
+        yield Command('task', task_key, wait, tail, by_runner, from_remote, ssh_remote_dest, regen, generator_optional,
                       help="run specified task, or restarts it if in failed state (see restart command)")
 
         yield Command('restart', task_key, at_step, reset, wait, tail, from_remote, regen,
