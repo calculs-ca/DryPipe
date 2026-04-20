@@ -313,12 +313,12 @@ class StateFileTracker:
                         upstream_task_keys.add(k)
                 yield False, state_file, upstream_task_keys
 
-    def create_true_state_if_new_else_fetch_from_memory(self, task):
+    def create_true_state_if_new_else_fetch_from_memory(self, task, force_save=False):
         """
         :return: (task_is_new, state_file)
         """
         state_file_in_memory = self.state_files_in_memory.get(task.key)
-        if state_file_in_memory is not None:
+        if state_file_in_memory is not None and not force_save:
             # state_file_in_memory is assumed up to date, since task declarations don't change between runs
             # by design, DAG generators that violate this assumption are considered at fault
             return False, state_file_in_memory
@@ -326,20 +326,21 @@ class StateFileTracker:
             # we have a new task OR process was restarted
             hash_code = task.compute_hash_code()
             state_file_path = self._find_state_file_path_in_task_control_dir(task.key)
-            if state_file_path is not None:
+            if state_file_path is not None and not force_save:
                 # process was restarted, task is NOT new
                 state_file_in_memory = self.load_from_existing_file_on_disc_and_resave_if_required(task, state_file_path)
                 self.state_files_in_memory[task.key] = state_file_in_memory
                 task.save_if_hash_has_changed(state_file_in_memory, hash_code)
                 return True, state_file_in_memory
             else:
-                # task is new
+                # task is new or force_save=True
                 state_file_in_memory = StateFile(task.key, hash_code, self.pipeline_work_dir)
                 state_file_in_memory.is_slurm_array_child = task.is_slurm_array_child
                 if task.is_slurm_parent:
                     state_file_in_memory.is_parent_task = True
                 task.save(state_file_in_memory, hash_code)
-                state_file_in_memory.touch_initial_state_file()
+                if state_file_path is None:
+                    state_file_in_memory.touch_initial_state_file()
                 self.state_files_in_memory[task.key] = state_file_in_memory
                 self.new_save_count += 1
                 return True, state_file_in_memory

@@ -16,7 +16,6 @@ from io import StringIO
 from os import environ
 from pathlib import Path
 
-import dry_pipe
 from dry_pipe import PortablePopen, DryPipe
 from dry_pipe.core_lib import func_from_mod_func, is_inside_slurm_job
 from dry_pipe.pipeline_instance import Monitor
@@ -94,40 +93,6 @@ def init_logging(logging_conf, verbose=False):
         }
 
     logging.config.dictConfig(log_conf_json)
-
-
-def setup_cli_logging(logging_level):
-
-    handler = logging.StreamHandler(sys.stdout)
-    handler.setLevel(logging_level)
-    handler.setFormatter(
-        logging.Formatter(
-            "%(asctime)s - %(levelname)s - %(message)s",
-            datefmt='%H:%M:%S%z'
-        )
-    )
-
-    def add_handler(name):
-        logger = logging.getLogger(name)
-        logger.setLevel(logging_level)
-        logger.addHandler(handler)
-
-    add_handler("dry_pipe.pipeline_runner")
-    add_handler("dry_pipe.pipeline_instance")
-    add_handler("dry_pipe.task_process")
-    add_handler("dry_pipe.slurm_array_task")
-    add_handler(__name__)
-
-    logger.info(f"Logging level: {logging.getLevelName(logging_level)}")
-
-    return logger
-
-
-def setup_verbose1():
-    return setup_cli_logging(logging.INFO)
-
-def setup_verbose2():
-    return setup_cli_logging(logging.DEBUG)
 
 
 class EnvDefault(argparse.Action):
@@ -250,6 +215,30 @@ class Cli:
             else:
                 self.command_names_to_method[command.name] = m
 
+    def create_logger(self, logging_level):
+
+        logger = logging.getLogger("cli")
+        logger.setLevel(logging_level)
+
+        handler = logging.StreamHandler(sys.stdout)
+        handler.setLevel(logging_level)
+
+        class F(logging.Formatter):
+            def format(self, record):
+                s = super().format(record)
+                srz = record.__dict__.get("srz")
+                if srz is None:
+                    return s
+                else:
+                    return f"{srz}: {s}"
+
+        handler.setFormatter(F())
+
+        logger.addHandler(handler)
+
+        logger.debug(f"Logging level: {logging.getLevelName(logging_level)}")
+
+        return logger
 
     def invoke(self):
 
@@ -268,10 +257,10 @@ class Cli:
             self.parsed_args = self.parser.parse_args(self.args)
 
 
-        if self.parsed_args.v:
-            self.logger = setup_verbose1()
+        if self.parsed_args.v or self._tail():
+            self.logger = self.create_logger(logging.INFO)
         elif self.parsed_args.vv:
-            self.logger = setup_verbose2()
+            self.logger = self.create_logger(logging.DEBUG)
         else:
             self.logger = logger
 
@@ -346,7 +335,11 @@ class Cli:
             )
 
         def tail(parser):
-            parser.add_argument("--tail", dest="tail", action="store_true")
+            parser.add_argument("--tail", dest="tail", action="store_true", help="tail the task output file ./drypipe/<task_key>/out.log")
+            parser.add_argument(
+                "--tail-all", dest="tail_all", action="store_true",
+                help="same as --tail, plus drypipe internal task log i.e. .drypipe/<task_key>/drypipe.log, and logs emitted in the task generator function"
+            )
 
         def from_remote(parser):
             parser.add_argument("--from-remote", dest="from_remote", action="store_true")
@@ -363,6 +356,15 @@ class Cli:
                 '--reset',
                 help='restart the task from the first step, clears the results directory if exists',
                 action='store_true'
+            )
+
+        def regen(parser):
+            parser.add_argument(
+                '--regen',
+                help='rewrites all generated files for the task before running (task-conf.json, bash snippets)'+\
+                     'note: this flag is neither necessary or available for "run" and "prepare, because these commands detect changes and updates task config accordingly"',
+                action='store_true',
+                default=False
             )
 
         def generator(parser):
@@ -496,10 +498,10 @@ class Cli:
         yield Command('report-execution-times', task_key_optional, filter,
                       help="execute time for all tasks, or all tasks matching filter expression")
 
-        yield Command('task', task_key, wait, tail, by_runner, from_remote, ssh_remote_dest,
-                      help="run specified task")
+        yield Command('task', task_key, wait, tail, by_runner, from_remote, ssh_remote_dest, regen, generator,
+                      help="run specified task, or restarts it if in failed state (see restart command)")
 
-        yield Command('restart', task_key, at_step, reset, wait, from_remote,
+        yield Command('restart', task_key, at_step, reset, wait, tail, from_remote, regen,
                       help="restart specified task --task-key, at last unsuccessful step. WARNING: if task is completed, will restart from first step")
 
         yield Command('poll-task', task_key, help="return state of task (used for polling remote tasks)")
@@ -755,35 +757,13 @@ class Cli:
         )
 
     def _tail(self):
-        return self.parsed_args.tail
+        if hasattr(self.parsed_args, 'tail') and self.parsed_args.tail:
+            return True
+
+        return hasattr(self.parsed_args, 'tail_all') and self.parsed_args.tail_all
 
     def _wait(self):
         return self.parsed_args.wait
-
-    def task(self):
-
-        #raise Exception(f">>> {self._control_dir()}")
-        task_process = TaskProcess(
-            self._control_dir(),
-            wait_for_completion=self._wait(),
-            test_mode=self.test_mode,
-            as_subprocess=not self.test_mode,
-            tail=self._tail(),
-            from_remote=self.parsed_args.from_remote
-        )
-
-        if self.parsed_args.ssh_remote_dest is not None:
-            task_process.task_conf.ssh_remote_dest = self.parsed_args.ssh_remote_dest
-        elif task_process.task_conf.executer_type == "slurm":
-            if task_process.is_remote_execution_on_master_site():
-                task_process.launch_task()
-                return
-
-            if self.parsed_args.by_runner and not task_process.task_conf.is_slurm_parent:
-                task_process.submit_sbatch_task()
-                return
-
-        task_process.launch_task()
 
     def poll_task(self):
         control_dir = self._control_dir()
@@ -978,12 +958,69 @@ class Cli:
         for task_key, timer_label, hms, s in timers_for_tasks(self.parsed_args.pipeline_instance_dir, f):
             print(f"{timer_label}\t{task_key}\t{hms}\t{s}", file=self.output)
 
+
+    def _maybe_regen_task(self):
+
+        def do_regen():
+            pipeline_instance = self.pipeline_instance_from_args()
+            pipeline_instance.prepare_instance_dir()
+            pipeline_instance.regen_task(
+                self.parsed_args.task_key,
+                self.logger if self.parsed_args.tail_all else None
+            )
+
+        def complain_if_no_generator(msg):
+            g = self.parsed_args.generator
+            if g is None:
+                raise Exception(f"--generator is required {msg}")
+
+        if self.parsed_args.regen:
+            complain_if_no_generator("with --regen flag")
+            do_regen()
+        elif not Path(self._control_dir()).exists():
+            complain_if_no_generator(
+                'when the pipeline was never run, either specify --generator, or use "run" or "prepare"'
+            )
+            do_regen()
+
+
+    def task(self):
+        cli_tail_logger = None
+        if self._tail():
+            cli_tail_logger = self.logger
+
+        self._maybe_regen_task()
+
+        task_process = TaskProcess(
+            self._control_dir(),
+            wait_for_completion=self._wait() or self._tail(),
+            test_mode=self.test_mode,
+            as_subprocess=not self.test_mode,
+            tail=self._tail(),
+            tail_all=self.parsed_args.tail_all,
+            cli_tail_logger=cli_tail_logger
+        )
+
+        if self.parsed_args.ssh_remote_dest is not None:
+            task_process.task_conf.ssh_remote_dest = self.parsed_args.ssh_remote_dest
+        elif task_process.task_conf.executer_type == "slurm":
+            if task_process.is_remote_execution_on_master_site():
+                task_process.launch_task()
+                return
+
+            if self.parsed_args.by_runner and not task_process.task_conf.is_slurm_parent:
+                task_process.submit_sbatch_task()
+                return
+
+        task_process.launch_task()
+
     def restart(self):
 
         task_process = TaskProcess(
             self._control_dir(),
-            wait_for_completion=self.parsed_args.wait,
-            use_remote_drypipe_log=self.parsed_args.from_remote
+            wait_for_completion=self._wait() or self._tail(),
+            use_remote_drypipe_log=self.parsed_args.from_remote,
+            tail=self._tail(),
         )
 
         task_process.reset_restart_accounting()
