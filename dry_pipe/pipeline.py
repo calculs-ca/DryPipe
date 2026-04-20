@@ -47,6 +47,9 @@ class Pipeline:
             task_groupers=None,
             pipeline_code_dir_ls_command=None
     ):
+
+        self.generator_mod_func = None
+
         if pipeline_code_dir is None:
             pipeline_code_dir = os.path.dirname(os.path.abspath(inspect.getmodule(task_generator).__file__))
 

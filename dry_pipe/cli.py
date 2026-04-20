@@ -18,7 +18,7 @@ from pathlib import Path
 
 from dry_pipe import PortablePopen, DryPipe
 from dry_pipe.core_lib import func_from_mod_func, is_inside_slurm_job
-from dry_pipe.pipeline_instance import Monitor
+from dry_pipe.pipeline_instance import Monitor, PipelineInstance
 from dry_pipe.task_process import TaskProcess
 from dry_pipe.slurm_array_task import SlurmArrayParentTask
 from dry_pipe.reports import timers_for_tasks
@@ -543,18 +543,20 @@ class Cli:
 
     def pipeline_instance_from_args(self):
 
-        g = self.parsed_args.generator
-        if g is None:
+        generator_mod_func = self.parsed_args.generator
+        if generator_mod_func is None:
             raise Exception(f"--generator is required")
 
-        f = func_from_mod_func(g)
+        generator_func = func_from_mod_func(generator_mod_func)
 
-        sig = inspect.signature(f)
+        sig = inspect.signature(generator_func)
 
         if len(sig.parameters) == 1 and 'dsl' in sig.parameters:
-            pipeline = DryPipe.create_pipeline(f)
+            pipeline = DryPipe.create_pipeline(generator_func)
         else:
-            pipeline = f()
+            pipeline = generator_func()
+
+        pipeline.generator_mod_func = generator_mod_func
 
         if self.parsed_args.pipeline_instance_dir is None:
             raise Exception(
@@ -642,16 +644,6 @@ class Cli:
                 console.print_exception(show_locals=True, suppress=[f"dry_pipe/{f}" for f in suppress_list], max_frames=0, extra_lines=5)
         else:
             f()
-
-    def dump_instance_log_tail_after_dag_crash_exception_if_crashed(self, pipeline_instance):
-        if pipeline_instance.dag_crash_exception is not None:
-            print(f"Unhandled exception {pipeline_instance.dag_crash_exception} in {self.parsed_args.generator}: ")
-            instance_log = pipeline_instance.pipeline_instance_log()
-            instance_log = Path(instance_log).absolute()
-            print(f"tail -16 {instance_log}")
-            with open(instance_log) as log_file:
-                for line in deque(log_file, 16):
-                    print(line.strip())
 
     def call(self):
         call(self.parsed_args.module_function)
@@ -742,7 +734,7 @@ class Cli:
 
 
     def upgrade_drypipe(self):
-        StateFileTracker.copy_drypipe_code(Path(self.parsed_args.pipeline_instance_dir).joinpath(".drypipe"))
+        PipelineInstance.upgrade_drypipe_in(Path(self.parsed_args.pipeline_instance_dir).joinpath(".drypipe"))
 
     def restart_failed_array_tasks(self):
         task_process = TaskProcess(
@@ -1070,8 +1062,12 @@ class Cli:
 def run_cli():
     handle_script_lib_main()
 
+def setup_file_creation_mask():
+    os.umask(0o007)
+
 def handle_script_lib_main():
     try:
+        setup_file_creation_mask()
         cli = Cli(sys.argv[1:])
         cli.invoke()
     except Exception as e:
@@ -1093,6 +1089,7 @@ def cli_argument_parser():
 if __name__ == '__main__':
 
     if "SLURM_JOB_ID" in os.environ:
+        setup_file_creation_mask()
         call(sys.argv[2])
     else:
         handle_script_lib_main()

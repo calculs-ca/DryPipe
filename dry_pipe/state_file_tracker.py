@@ -36,17 +36,11 @@ class StateFileTracker:
         return pipeline_state_files[0]
 
     def prepare_instance_dir(self, conf_dict):
-        Path(self.pipeline_instance_dir).mkdir(
-            exist_ok=True, mode=FileCreationDefaultModes.pipeline_instance_directories)
-        Path(self.pipeline_work_dir).mkdir(
-            exist_ok=True, mode=FileCreationDefaultModes.pipeline_instance_directories)
-        Path(self.pipeline_instance_dir, "output").mkdir(
-            exist_ok=True, mode=FileCreationDefaultModes.pipeline_instance_directories)
+        Path(self.pipeline_instance_dir).mkdir(exist_ok=True)
+        Path(self.pipeline_work_dir).mkdir(exist_ok=True)
+        Path(self.pipeline_instance_dir, "output").mkdir(exist_ok=True)
 
-        Path(self.pipeline_messages_dir).mkdir(
-            exist_ok=True,
-            mode=FileCreationDefaultModes.pipeline_instance_directories
-        )
+        Path(self.pipeline_messages_dir).mkdir(exist_ok=True)
 
         latest_json_conf = json.dumps(conf_dict, indent=4)
 
@@ -62,10 +56,10 @@ class StateFileTracker:
                 conf_file.write(latest_json_conf)
                 conf_file.flush()
 
-        self.copy_drypipe_code(self.pipeline_work_dir)
+        self.copy_drypipe_code(self.pipeline_work_dir, conf_dict.get("__generator"))
 
     @classmethod
-    def copy_drypipe_code(cls, pipeline_work_dir):
+    def copy_drypipe_code(cls, pipeline_work_dir, generator_mod_func=None):
 
         src_dir_drypipe = os.path.dirname(__file__)
         dp_dir = Path(pipeline_work_dir, "dry_pipe")
@@ -75,7 +69,12 @@ class StateFileTracker:
         for py_file in glob.glob(os.path.join(src_dir_drypipe, "*.py")):
             shutil.copy(py_file, dp_dir)
 
-        shutil.copy(os.path.join(src_dir_drypipe, "cli-init.sh"), pipeline_work_dir)
+        cli_init = os.path.join(src_dir_drypipe, "cli-init.sh")
+        shutil.copy(cli_init, pipeline_work_dir)
+
+        if generator_mod_func is not None:
+            with open(Path(pipeline_work_dir, "cli-init.sh"), "a") as f:
+                f.write(f"\nexport DRYPIPE_PIPELINE_GENERATOR={generator_mod_func}\n")
 
     def conf_file(self):
         return Path(self.pipeline_work_dir, "conf.json")

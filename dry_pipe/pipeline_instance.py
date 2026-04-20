@@ -1,4 +1,5 @@
 import fnmatch
+import json
 import logging
 import os
 import sys
@@ -7,6 +8,7 @@ import traceback
 from io import StringIO
 from itertools import groupby
 from logging.handlers import RotatingFileHandler
+from pathlib import Path
 
 from dry_pipe.core_lib import TimeLogger, current_stack_as_string
 from dry_pipe.state_machine import StateMachine, AllRunnableTasksCompletedOrInError
@@ -66,9 +68,25 @@ class PipelineInstance:
 
     def prepare_instance_dir(self):
         self.state_file_tracker.prepare_instance_dir({
+            "__generator": self.pipeline.generator_mod_func,
             "__pipeline_code_dir": self.pipeline.pipeline_code_dir,
             "__containers_dir": self.pipeline.containers_dir
         })
+
+    @staticmethod
+    def upgrade_drypipe_in(pid):
+        pwd = Path(pid).joinpath(".drypipe")
+        conf = pwd.joinpath("conf.json")
+        mod_func = None
+        if conf.exists():
+            with open(conf) as json_file:
+                conf_json = json.load(json_file)
+                mod_func = conf_json.get("mod_func")
+
+        StateFileTracker.copy_drypipe_code(pwd, mod_func)
+
+    def upgrade_drypipe(self):
+        PipelineInstance.upgrade_drypipe_in(self.pipeline_instance_dir())
 
     def reset_state_tracker(self):
         self.state_file_tracker = StateFileTracker(self.state_file_tracker.pipeline_instance_dir)
