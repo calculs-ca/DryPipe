@@ -557,11 +557,27 @@ class Cli:
 
         sig = inspect.signature(generator_func)
 
-        if len(sig.parameters) == 1 and 'dsl' in sig.parameters:
-            pipeline = DryPipe.create_pipeline(generator_func)
-        else:
-            pipeline = generator_func()
 
+        def gen_mandatory_params():
+            i = 0
+            for name, param in sig.parameters.items():
+                is_optional = param.default is not inspect.Parameter.empty
+                if not is_optional:
+                    yield i, param
+                i += 1
+
+        mandatory_params = list(gen_mandatory_params())
+
+        def create_pipeline():
+            if len(mandatory_params) == 1:
+
+                idx, p0 = mandatory_params[0]
+                if idx == 0 and p0.name == "dsl":
+                    return DryPipe.create_pipeline(generator_func)
+
+            return generator_func()
+
+        pipeline = create_pipeline()
         pipeline.generator_mod_func = generator_mod_func
 
         if self.parsed_args.pipeline_instance_dir is None:
