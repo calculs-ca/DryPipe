@@ -25,7 +25,7 @@ from dry_pipe.reports import timers_for_tasks
 from dry_pipe.state_machine import StateFileTracker
 from dry_pipe.service import PipelineRunner
 from dry_pipe.task_lib import submit_local_array, upload_task_inputs_rsync
-from collections import deque
+
 
 logger = logging.getLogger(__name__)
 
@@ -510,6 +510,8 @@ class Cli:
 
         yield Command('restart', task_key, at_step, reset, wait, tail, from_remote, regen,
                       help="restart specified task --task-key, at last unsuccessful step. WARNING: if task is completed, will restart from first step")
+
+        yield Command('instance-info', help="dumps basic information about the pipeline instance")
 
         yield Command('poll-task', task_key, help="return state of task (used for polling remote tasks)")
 
@@ -1064,6 +1066,26 @@ class Cli:
 
     def _control_dir(self):
         return Path(self.parsed_args.pipeline_instance_dir, ".drypipe", self.parsed_args.task_key).__str__()
+
+
+    def instance_info(self):
+        pid = os.environ.get("DRYPIPE_PIPELINE_INSTANCE_DIR")
+        print(f"DRYPIPE_PIPELINE_INSTANCE_DIR={pid}")
+        gen = os.environ.get("DRYPIPE_PIPELINE_GENERATOR")
+
+        def dump_gen():
+            print(f"DRYPIPE_PIPELINE_GENERATOR={gen}")
+
+        conf = Path(pid, ".drypipe", "conf.json")
+        if conf.exists():
+            with open(conf, "r") as f:
+                conf = json.load(f)
+                gen = conf.get("__generator")
+                dump_gen()
+                __pipeline_code_dir = conf.get("__pipeline_code_dir")
+                print(f"$__pipeline_code_dir={__pipeline_code_dir}")
+
+
 
 
 def run_cli():

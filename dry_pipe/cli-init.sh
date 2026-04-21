@@ -5,7 +5,7 @@ SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 
 export DRYPIPE_PIPELINE_INSTANCE_DIR=$(dirname "$SCRIPT_DIR")
 
-echo "DRYPIPE_PIPELINE_INSTANCE_DIR is now $DRYPIPE_PIPELINE_INSTANCE_DIR"
+export DRYPIPE_LAUNCHED_FROM_CLI_INIT=True
 
 function dp {
 
@@ -21,3 +21,5 @@ function dp_env {
     eval "$r"
     echo "$r"
 }
+
+$SCRIPT_DIR/cli instance-info

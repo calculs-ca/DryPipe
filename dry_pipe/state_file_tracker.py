@@ -36,6 +36,10 @@ class StateFileTracker:
         return pipeline_state_files[0]
 
     def prepare_instance_dir(self, conf_dict):
+
+        if os.environ.get("DRYPIPE_LAUNCHED_FROM_CLI_INIT") == "True":
+            return
+
         Path(self.pipeline_instance_dir).mkdir(exist_ok=True)
         Path(self.pipeline_work_dir).mkdir(exist_ok=True)
         Path(self.pipeline_instance_dir, "output").mkdir(exist_ok=True)
