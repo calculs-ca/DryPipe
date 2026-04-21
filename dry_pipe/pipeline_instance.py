@@ -264,8 +264,16 @@ class PipelineInstance:
                     break
 
 
-    def restart_failed(self):
-        self.state_file_tracker
+    def list_keys(self):
+        state_machine = StateMachine(
+            self.state_file_tracker,
+            self.pipeline.task_generator,
+            instance_logger=self.instance_logger
+        )
+
+        for task in state_machine.gen_all_tasks():
+            yield task.key
+
 
 class Monitor:
     def __init__(self, task_grouper=None):
