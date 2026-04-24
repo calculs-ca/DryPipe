@@ -47,7 +47,7 @@ def hello_world():
         time.sleep(1)
 
 
-def dag_hello_world(dsl):
+def dag_hello_world(dsl, optional_arg=123):
     dsl.logger.debug("debug 1")
 
     dsl.logger.info("msg in dag hello world")
