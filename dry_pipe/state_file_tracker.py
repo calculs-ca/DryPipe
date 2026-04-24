@@ -65,16 +65,24 @@ class StateFileTracker:
     @classmethod
     def copy_drypipe_code(cls, pipeline_work_dir, generator_mod_func=None):
 
+
+        def _copy(src, dst):
+            shutil.copyfile(src, dst)
+            try:
+                shutil.copymode(src, dst)
+            except OSError:
+                pass
+
         src_dir_drypipe = os.path.dirname(__file__)
         dp_dir = Path(pipeline_work_dir, "dry_pipe")
         dp_dir.mkdir(exist_ok=True)
-        shutil.copy(os.path.join(src_dir_drypipe, "cli"), pipeline_work_dir)
+        _copy(os.path.join(src_dir_drypipe, "cli"), pipeline_work_dir)
 
         for py_file in glob.glob(os.path.join(src_dir_drypipe, "*.py")):
-            shutil.copy(py_file, dp_dir)
+            _copy(py_file, dp_dir)
 
         cli_init = os.path.join(src_dir_drypipe, "cli-init.sh")
-        shutil.copy(cli_init, pipeline_work_dir)
+        _copy(cli_init, pipeline_work_dir)
 
         if generator_mod_func is not None:
             with open(Path(pipeline_work_dir, "cli-init.sh"), "a") as f:
