@@ -67,6 +67,8 @@ class StateFileTracker:
 
 
         def _copy(src, dst):
+            if os.path.isdir(dst):
+                dst = os.path.join(dst, os.path.basename(src))
             shutil.copyfile(src, dst)
             try:
                 shutil.copymode(src, dst)
