@@ -200,9 +200,11 @@ class TaskStep:
 
                 step_script = os.path.join(control_dir, s)
 
+                script_pre_exists = os.path.exists(step_script)
                 with open(step_script, "w") as _step_script:
                     _step_script.write(self.shell_snippet)
-                os.chmod(step_script, 0o764)
+                if not script_pre_exists:
+                    os.chmod(step_script, 0o764)
             elif self.shell_script is not None:
                 script_or_snippet_file = f"$__pipeline_code_dir/{self.shell_script}"
             else:
