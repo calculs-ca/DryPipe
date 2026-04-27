@@ -212,7 +212,7 @@ class ArraySubmitInfo:
         self.task_keys_per_array_index = list(g())
 
     def invoke_sacct(self, fake_outputs=None):
-        self.sacct_output, self.sacct_rows = self.sacct_parser.invoke(self.job_id, fake_outputs)
+        self.sacct_output, self.sacct_rows = self.sacct_parser.invoke(self.job_id, fake_outputs, logger=self.logger)
         file, n = self.sacct_logs_files_sequence.next_file_and_number()
 
         # don't save sacct output, if it's the same as previous
@@ -222,7 +222,7 @@ class ArraySubmitInfo:
                 with open(prev_file, "r") as f:
                     prev_output = f.read()
                     if prev_output == self.sacct_output:
-                        self.logger().debug("sacct identical for job_id %s, won't save", self.job_id)
+                        self.logger.debug("sacct identical for job_id %s, won't save", self.job_id)
                         return
 
         with open(file, "w") as f:
@@ -359,7 +359,7 @@ class ArrayTaskManager:
 
 
         self.arrays_submitted_sacct_info = [
-            ArraySubmitInfo(array_n, job_id, f, self.logger, self.sacct_parser)
+            ArraySubmitInfo(array_n, job_id, f, self.logger(), self.sacct_parser)
             for array_n, job_id, f in self.submitted_arrays_files()
         ]
 
