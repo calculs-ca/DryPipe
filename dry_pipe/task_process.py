@@ -1624,6 +1624,7 @@ class TaskProcess:
 
         if self.task_conf.use_squeue or os.environ.get("DRYPIPE_USE_SQUEUE") == "True":
             parser = SQueueParser()
+            self.task_logger.info("will use squeue, instead of sacct")
         else:
             parser = SAcctParser()
 

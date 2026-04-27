@@ -510,7 +510,7 @@ class Cli:
         yield Command('report-execution-times', task_key_optional, filter,
                       help="execute time for all tasks, or all tasks matching filter expression")
 
-        yield Command('task', task_key, wait, tail, by_runner, from_remote, ssh_remote_dest, regen, generator_optional,
+        yield Command('task', task_key, wait, tail, by_runner, from_remote, ssh_remote_dest, regen, generator_optional, at_step, reset,
                       help="run specified task, or restarts it if in failed state (see restart command)")
 
         yield Command('restart', task_key, at_step, reset, wait, tail, from_remote, regen,
@@ -1027,6 +1027,14 @@ class Cli:
             tail_all=self.parsed_args.tail_all,
             cli_tail_logger=cli_tail_logger
         )
+
+        if self.parsed_args.reset:
+            shutil.rmtree(task_process.task_output_dir)
+            task_process.rewind_to_step(0)
+
+        if self.parsed_args.at_step:
+            task_process.rewind_to_step(self.parsed_args.at_step)
+
 
         if self.parsed_args.ssh_remote_dest is not None:
             task_process.task_conf.ssh_remote_dest = self.parsed_args.ssh_remote_dest
