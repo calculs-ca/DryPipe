@@ -1,6 +1,7 @@
 import glob
 import json
 import os
+import subprocess
 from itertools import groupby
 from pathlib import Path
 
@@ -32,9 +33,8 @@ class SAcctParser:
             if logger is not None:
                 logger.debug(f'command: %s', cmd)
 
-            with PortablePopen(cmd, shell=True) as p:
-                p.wait_and_raise_if_non_zero()
-                sacct_output = p.stdout_as_string()
+            subprocess_result = subprocess.run(cmd, capture_output=True, shell=True, text=True)
+            sacct_output = subprocess_result.stdout
 
         def g():
             for line in sacct_output.split("\n"):
@@ -363,7 +363,7 @@ class ArrayTaskManager:
             for array_n, job_id, f in self.submitted_arrays_files()
         ]
 
-        self.logger().debug("sacct returned %s lines", len(self.arrays_submitted_sacct_info))
+        self.logger().debug("task has %s submitted_arrays_files", len(self.arrays_submitted_sacct_info))
 
         for array_info in self.arrays_submitted_sacct_info:
             array_info.invoke_sacct(fake_sacct_outputs)
