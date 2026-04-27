@@ -1033,7 +1033,7 @@ class Cli:
             shutil.rmtree(task_process.task_output_dir)
             task_process.rewind_to_step(0)
 
-        if self.parsed_args.at_step:
+        if self.parsed_args.at_step is not None:
             task_process.rewind_to_step(self.parsed_args.at_step)
 
 
@@ -1067,7 +1067,7 @@ class Cli:
             shutil.rmtree(task_process.task_output_dir)
             task_process.rewind_to_step(0)
 
-        if self.parsed_args.at_step:
+        if self.parsed_args.at_step is not None:
             task_process.rewind_to_step(self.parsed_args.at_step)
 
 
