@@ -363,6 +363,8 @@ class ArrayTaskManager:
             for array_n, job_id, f in self.submitted_arrays_files()
         ]
 
+        self.logger().debug("sacct returned %s lines", len(self.arrays_submitted_sacct_info))
+
         for array_info in self.arrays_submitted_sacct_info:
             array_info.invoke_sacct(fake_sacct_outputs)
 

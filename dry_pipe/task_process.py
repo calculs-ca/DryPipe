@@ -1627,6 +1627,7 @@ class TaskProcess:
             self.task_logger.info("will use squeue, instead of sacct")
         else:
             parser = SAcctParser()
+            self.task_logger.debug("SAcctParser created")
 
         return ArrayTaskManager(self, arm, parser, for_dry_run=self.for_dry_run)
 

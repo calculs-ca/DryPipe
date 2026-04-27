@@ -26,6 +26,9 @@ def submit_local_arrayz(__task_process):
 @DryPipe.python_call()
 def submit_local_array(__task_process):
 
+    if __task_process.for_dry_run:
+        __task_process.task_logger.info(f"--dry-run mode")
+
     array_task_manager = __task_process.create_array_task_manager()
 
     array_task_manager.invoke_sacct()
