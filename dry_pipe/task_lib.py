@@ -33,10 +33,14 @@ def submit_local_array(__task_process):
     is_restart = len(array_task_manager.arrays_submitted_sacct_info) > 0
 
     if is_restart:
-        __task_process.task_logger.info("will restart array")
-        for restart_file in Path(__task_process.pipeline_work_dir).glob("*/restarts.tsv"):
-            with open(restart_file, "a") as f:
-                f.write("RESET\n")
+        __task_process.task_logger.info(f"submit_local_array is a restart")
+        if not __task_process.for_dry_run:
+            for restart_file in Path(__task_process.pipeline_work_dir).glob("*/restarts.tsv"):
+                with open(restart_file, "a") as f:
+                    f.write("RESET\n")
+        else:
+            __task_process.task_logger.info(f"no file changed, because it's a dry_run")
+
 
     launch_count = 0
 
