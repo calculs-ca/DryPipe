@@ -1025,7 +1025,8 @@ class Cli:
             as_subprocess=not self.test_mode,
             tail=self._tail(),
             tail_all=self.parsed_args.tail_all,
-            cli_tail_logger=cli_tail_logger
+            cli_tail_logger=cli_tail_logger,
+            for_dry_run=self.parsed_args.dry_run
         )
 
         if self.parsed_args.reset:
