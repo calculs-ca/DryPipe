@@ -27,7 +27,7 @@ from dry_pipe.reports import timers_for_tasks
 from dry_pipe.state_machine import StateFileTracker
 from dry_pipe.service import PipelineRunner
 from dry_pipe.task_lib import submit_local_array, upload_task_inputs_rsync
-
+from dry_pipe_tests.pipeline_tests_with_slurm_arrays import python_path_for_tests
 
 logger = logging.getLogger(__name__)
 
@@ -504,8 +504,8 @@ class Cli:
         yield Command('upgrade-drypipe', pipeline_instance_dir,
                       help="upgrade drypipe version for the specified pipeline instance")
 
-        yield Command('restart-failed-array-tasks', task_key, include_pre_launch, wait,
-                      help="restart failed array tasks, of specified array task")
+        #yield Command('restart-failed-array-tasks', task_key, include_pre_launch, wait,
+        #              help="restart failed array tasks, of specified array task")
 
         yield Command('report-execution-times', task_key_optional, filter,
                       help="execute time for all tasks, or all tasks matching filter expression")
@@ -535,7 +535,7 @@ class Cli:
 
         yield Command('dump-env', task_key, help="dump all environment variables of specified task")
 
-        yield Command('array-submit', task_key, limit, help="submit array task")
+        yield Command('array-resubmit', task_key, limit, regen, generator_optional, tail, wait, help="re submit remaining non completed and non running tasks of array")
         yield Command('array-upload', task_key, help="upload array task to remote location")
         yield Command('array-download', task_key, help="download all array tasks results (rsync or Globus fetch all __task_output_dir of child tasks)")
         yield Command("array-submit-from-remote", task_key, wait, help="submit array task to remote location")
@@ -822,6 +822,53 @@ class Cli:
             task_process.submit_sbatch_task()
         else:
             task_process.launch_task()
+
+    def array_resubmit(self):
+
+        cli_tail_logger = None
+        if self._tail():
+            cli_tail_logger = self.logger
+
+        self._maybe_regen_task()
+
+        task_process = TaskProcess(
+            self._control_dir(),
+            wait_for_completion=self._wait() or self._tail(),
+            test_mode=self.test_mode,
+            as_subprocess=not self.test_mode,
+            tail=self._tail(),
+            tail_all=self.parsed_args.tail_all,
+            cli_tail_logger=cli_tail_logger,
+            for_dry_run=self.parsed_args.dry_run
+        )
+
+        if not task_process.is_slurm_array_parent():
+            raise Exception(f"task {self.parsed_args.task_key} is not a slurm array")
+
+        task_process.rewind_to_step(0)
+
+        array_task_manager = task_process.create_array_task_manager()
+
+        array_task_manager.invoke_sacct()
+
+        is_restart = len(array_task_manager.arrays_submitted_sacct_info) > 0
+
+        if is_restart:
+            task_process.task_logger.info(f"submit_local_array is a restart")
+            if not task_process.for_dry_run:
+                for restart_file in Path(task_process.pipeline_work_dir).glob("*/restarts.tsv"):
+                    with open(restart_file, "a") as f:
+                        f.write("RESET\n")
+            else:
+                task_process.task_logger.info(f"no file changed, because it's a dry_run")
+
+        launch_count = 0
+
+        for submit in array_task_manager.next_submits(restart_failed=is_restart, include_all_incompleted=True):
+            submit.invoke()
+            launch_count += len(submit.task_keys)
+
+        print(f"{launch_count} child array tasks were launched")
 
 
     def array_submit_from_remote(self):

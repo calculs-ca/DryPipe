@@ -1,5 +1,6 @@
 import glob
 import json
+import logging
 import os
 import subprocess
 from itertools import groupby
@@ -168,6 +169,13 @@ class SAcctRow:
         k = "?" if self.task_key is None else self.task_key
         return f"Task(key={k}, {self.long_code_state}, {self.job_id}, {self.dry_pipe_state})"
 
+    def full_dump(self):
+        def g():
+            yield f"array_range={self.array_range}"
+
+        s = ",".join(g())
+
+        return f"{self.__str__()}[{s}]"
 
 class ArraySubmitInfo:
     """
@@ -514,6 +522,9 @@ class ArrayTaskManager:
 
         sbatch_options_by_step_number[0] = self.array_task_conf().sbatch_options
 
+        if self.logger().isEnabledFor(logging.DEBUG):
+            self.logger().debug(f"sbatch_options_by_step_number: {sbatch_options_by_step_number}")
+
         def last_sbatch_option_idx(step_number):
             for i in range(step_number, 0, -1):
                 sbo = sbatch_options_by_step_number[i]
@@ -535,33 +546,50 @@ class ArrayTaskManager:
         def key(t):
             return t[0]
 
-        for sbo_idx, sbo_idx_task_keys in groupby(sorted(g(), key=key), key=key):
-            yield sbatch_options_by_step_number[sbo_idx], set([t[1] for t in sbo_idx_task_keys])
+        res = [
+            (sbatch_options_by_step_number[sbo_idx],  set([t[1] for t in sbo_idx_task_keys]))
+            for sbo_idx, sbo_idx_task_keys in groupby(sorted(g(), key=key), key=key)
+        ]
+
+        if self.logger().isEnabledFor(logging.DEBUG):
+            for sbatch_opts, keys in res:
+                self.logger().debug(f"{len(keys)} with sbatch_options: {sbatch_opts}  {len(keys)}")
+
+        return res
 
 
-    def task_keys_for_next_batch(self, restart_failed=False):
+    def task_keys_for_next_batch(self, restart_failed=False, include_all_incompleted=False):
 
         self.logger().debug(f"Task has auto-restart manager: %s ", self.auto_restart_manager is not None)
 
 
         def g():
+
+            self.logger().debug("TASKS INCLUDED OR EXCLUDED in next submit")
+
             for task_key in self.children_task_keys():
                 sacct_row = self.last_sacct_row_per_task_key.get(task_key)
                 if sacct_row is None:
                     #never launched
+                    self.logger().debug(f"INCLUDED %s\tnever launched", task_key)
                     yield task_key
                     continue
 
+                if sacct_row.dry_pipe_state == "completed":
+                    self.logger().debug(f"EXCLUDED %s\t all steps completed", task_key)
+                    continue
+
                 if SlurmJobStateLongCodes.pending_or_running(sacct_row.long_code_state):
+                    self.logger().debug(f"EXCLUDED %s\t pending or running", task_key)
                     continue
 
                 if SlurmJobStateLongCodes.is_canceled(sacct_row.long_code_state):
+                    self.logger().debug(f"INCLUDED %s\tcanceled", task_key)
                     yield task_key
                     continue
 
                 is_failed = False
 
-                self.logger().debug(f"{sacct_row.task_key} {sacct_row.dry_pipe_state}")
                 if sacct_row.dry_pipe_state is not None and sacct_row.dry_pipe_state.startswith("failed"):
                     is_failed = True
 
@@ -577,12 +605,22 @@ class ArrayTaskManager:
                             state_file = self.find_state_file_for_task_key(task_key)
                             if self.auto_restart_manager.should_restart(state_file, logger=self.logger()):
                                 return state_file
+                        return None
 
                     state_file_for_restart = state_file_if_restart()
                     if state_file_for_restart is not None:
                         if not self.for_dry_run:
                             StateFileTracker.transition_to_pre_launch(state_file_for_restart)
+                        self.logger().debug(f"INCLUDED %s\t failed, and restart_failed is %s ", task_key, restart_failed)
                         yield task_key
+                        continue
+
+                if include_all_incompleted:
+                    self.logger().debug(f"INCLUDED %s\t matches no criteria for inclusion, state: %s", task_key,
+                                        sacct_row.full_dump())
+                    yield task_key
+                else:
+                    self.logger().debug(f"EXCLUDED %s\t matches no criteria for inclusion, state: %s", task_key, sacct_row.full_dump())
 
 
         return set(g())
@@ -612,13 +650,19 @@ class ArrayTaskManager:
         return list(g())
 
 
-    def next_submits(self, restart_failed=False):
+    def next_submits(self, restart_failed=False, include_all_incompleted=False):
 
-        next_task_keys = self.task_keys_for_next_batch(restart_failed)
+        next_task_keys = self.task_keys_for_next_batch(restart_failed, include_all_incompleted)
+
+        self.logger().info(f"%s tasks in next sbatch submit", len(next_task_keys))
+
+        self.logger().info(f"%s", next_task_keys)
 
         def g():
 
             for sbatch_options, task_keys in self.group_by_sbatch_options(next_task_keys):
+
+                self.logger().info(f"sbatch_options: {sbatch_options}")
 
                 next_task_key_file, next_array_number = self.next_array_file_name_and_number()
                 task_keys_for_saving = sorted(task_keys)
