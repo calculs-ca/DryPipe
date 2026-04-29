@@ -27,7 +27,6 @@ from dry_pipe.reports import timers_for_tasks
 from dry_pipe.state_machine import StateFileTracker
 from dry_pipe.service import PipelineRunner
 from dry_pipe.task_lib import submit_local_array, upload_task_inputs_rsync
-from dry_pipe_tests.pipeline_tests_with_slurm_arrays import python_path_for_tests
 
 logger = logging.getLogger(__name__)
 
