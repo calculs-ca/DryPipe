@@ -860,7 +860,7 @@ class TaskConf:
 
         return tc
 
-    def with_sbatch_options(self, account=None, mem=None, time=None, cpu_per_task=None, partition=None):
+    def with_sbatch_options(self, account=None, mem=None, time=None, cpu_per_task=None, partition=None, extra_option_list=None):
 
         sbatch_options = []
 
@@ -878,6 +878,9 @@ class TaskConf:
 
         if partition is not None:
             sbatch_options.append(f"--partition={partition}")
+
+        if extra_option_list is not None:
+            sbatch_options += extra_option_list
 
         return self.override(sbatch_options=sbatch_options)
 

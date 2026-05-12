@@ -258,6 +258,9 @@ class Cli:
             self.parsed_args = self.parser.parse_args(self.args)
 
 
+        if self.parsed_args.dry_run:
+            print(f"DRY RUN {self.parsed_args.command}")
+
         if self.parsed_args.v or self._tail():
             self.logger = self.create_logger(logging.INFO)
         elif self.parsed_args.vv:
@@ -431,6 +434,14 @@ class Cli:
                 default=False
             )
 
+        def include_all_incompleted_tasks(parser):
+            parser.add_argument(
+                '--include-all_incompleted-tasks',
+                help='all incimpleted tasks (failed, timed-out, and zombie (started status but no actual running task), typically used to recover from a crash',
+                action='store_true',
+                default=False
+            )
+
         def exit_on_parent_death(parser):
             parser.add_argument(
                 '--exit-on-parent-death',
@@ -526,15 +537,17 @@ class Cli:
         yield Command('upload-drypipe-for-remote-instance', task_key)
         yield Command('upload-task-inputs', task_key)
 
-        yield Command('sbatch', task_key, wait,
+        yield Command('sbatch', task_key, wait, regen, generator_optional,
                       help="launch task (specified by --task-key) with sbatch")
 
-        yield Command('sbatch-gen', task_key,
+        yield Command('sbatch-gen', task_key, regen, generator_optional,
                       help="print sbatch command for launching task, without invoking it")
 
         yield Command('dump-env', task_key, help="dump all environment variables of specified task")
 
-        yield Command('array-resubmit', task_key, limit, regen, generator_optional, tail, wait, help="re submit remaining non completed and non running tasks of array")
+        yield Command('array-submit', task_key, limit, regen, generator_optional, tail, wait, include_all_incompleted_tasks, help="submit array")
+        #yield Command('array-resubmit', task_key, limit, regen, generator_optional, tail, wait,
+        #              help="re submit remaining non completed and non running tasks of array")
         yield Command('array-upload', task_key, help="upload array task to remote location")
         yield Command('array-download', task_key, help="download all array tasks results (rsync or Globus fetch all __task_output_dir of child tasks)")
         yield Command("array-submit-from-remote", task_key, wait, help="submit array task to remote location")
@@ -822,7 +835,7 @@ class Cli:
         else:
             task_process.launch_task()
 
-    def array_resubmit(self):
+    def array_submit(self):
 
         cli_tail_logger = None
         if self._tail():
@@ -844,8 +857,6 @@ class Cli:
         if not task_process.is_slurm_array_parent():
             raise Exception(f"task {self.parsed_args.task_key} is not a slurm array")
 
-        task_process.rewind_to_step(0)
-
         array_task_manager = task_process.create_array_task_manager()
 
         array_task_manager.invoke_sacct()
@@ -853,6 +864,7 @@ class Cli:
         is_restart = len(array_task_manager.arrays_submitted_sacct_info) > 0
 
         if is_restart:
+            task_process.rewind_to_step(0)
             task_process.task_logger.info(f"submit_local_array is a restart")
             if not task_process.for_dry_run:
                 for restart_file in Path(task_process.pipeline_work_dir).glob("*/restarts.tsv"):
@@ -863,9 +875,17 @@ class Cli:
 
         launch_count = 0
 
-        for submit in array_task_manager.next_submits(restart_failed=is_restart, include_all_incompleted=True):
-            submit.invoke()
-            launch_count += len(submit.task_keys)
+        for submit in array_task_manager.next_submits(
+            restart_failed=is_restart,
+            include_all_incompleted=self.parsed_args.include_all_incompleted_tasks,
+        ):
+
+            if not self.parsed_args.dry_run:
+                submit.invoke()
+                launch_count += len(submit.task_keys)
+            else:
+                cmd = ' '.join(submit.sbatch_command)
+                print(f"DRY run: \n{cmd}", file=self.output)
 
         print(f"{launch_count} child array tasks were launched")
 
@@ -924,10 +944,12 @@ class Cli:
         task_process.upload_drypipe_for_remote_instance()
 
     def sbatch(self):
+        self._maybe_regen_task()
         task_process = TaskProcess(self._control_dir(), wait_for_completion=self._wait())
         task_process.submit_sbatch_task()
 
     def sbatch_gen(self):
+        self._maybe_regen_task()
         task_process = TaskProcess(self._control_dir())
         print(" ".join(task_process.sbatch_cmd_lines()), file=self.output)
 
@@ -936,17 +958,6 @@ class Cli:
 
         for k, v in task_process.env.items():
             print(f"export {k}='{v}'", file=self.output)
-
-    def array_submit(self):
-        task_process = TaskProcess(
-            self._control_dir(),
-            as_subprocess=not self.test_mode,
-            test_mode=self.test_mode
-        )
-        task_process.run(
-            array_limit=self.parsed_args.limit
-        )
-
 
     def array_upload(self):
         task_process = TaskProcess(self._control_dir())
@@ -1031,6 +1042,10 @@ class Cli:
         if g is None:
             raise Exception(f"--generator is required {msg}")
 
+    def _tail_all(self):
+        b = getattr(self.parsed_args, 'tail_all', False)
+        return b is not None and b
+
     def _maybe_regen_task(self):
 
         def do_regen():
@@ -1038,7 +1053,7 @@ class Cli:
             pipeline_instance.prepare_instance_dir()
             pipeline_instance.regen_task(
                 self.parsed_args.task_key,
-                self.logger if self.parsed_args.tail_all else None
+                self.logger if self._tail_all() else None
             )
 
         if self.parsed_args.regen:
