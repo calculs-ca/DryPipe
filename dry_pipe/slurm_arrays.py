@@ -650,9 +650,12 @@ class ArrayTaskManager:
         return list(g())
 
 
-    def next_submits(self, restart_failed=False, include_all_incompleted=False):
+    def next_submits(self, restart_failed=False, include_all_incompleted=False, set_of_task_keys=None):
 
-        next_task_keys = self.task_keys_for_next_batch(restart_failed, include_all_incompleted)
+        if set_of_task_keys is None:
+            next_task_keys = self.task_keys_for_next_batch(restart_failed, include_all_incompleted)
+        else:
+            next_task_keys = set_of_task_keys
 
         self.logger().info(f"%s tasks in next sbatch submit", len(next_task_keys))
 

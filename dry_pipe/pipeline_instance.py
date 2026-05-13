@@ -274,6 +274,17 @@ class PipelineInstance:
         for task in state_machine.gen_all_tasks():
             yield task.key
 
+    def iterate_key_state_steps(self):
+        state_machine = StateMachine(
+            self.state_file_tracker,
+            self.pipeline.task_generator,
+            instance_logger=self.instance_logger
+        )
+
+        for task in state_machine.gen_all_tasks():
+            _, state_file = self.state_file_tracker.create_true_state_if_new_else_fetch_from_memory(task)
+            yield state_file.key_state_step()
+
 
 class Monitor:
     def __init__(self, task_grouper=None):
