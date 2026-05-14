@@ -2,7 +2,6 @@ import argparse
 import ctypes
 import ctypes.util
 import fnmatch
-import glob
 import inspect
 import shutil
 import signal
@@ -27,6 +26,7 @@ from dry_pipe.reports import timers_for_tasks
 from dry_pipe.state_machine import StateFileTracker
 from dry_pipe.service import PipelineRunner
 from dry_pipe.task_lib import submit_local_array, upload_task_inputs_rsync
+
 
 logger = logging.getLogger(__name__)
 
@@ -370,6 +370,12 @@ class Cli:
                 '''
             )
 
+        def grep_expr(parser):
+            parser.add_argument(
+                '--grep-expr', '-e',
+                help="grep expression, uses fgrep as backend"
+            )
+
         def reset(parser):
             parser.add_argument(
                 '--reset',
@@ -576,6 +582,18 @@ class Cli:
         yield Command('array-create-parent', task_key, help="create a parent array task with matching tasks")
         yield Command('list-states', task_key, gen_rsync_list)
         yield Command('array-rsync-list', task_key)
+
+        yield Command( 'grep-logs', pipeline_instance_dir,py_filter, filter, grep_expr, generator, help="applies fgrep on out.log files of matching tasks")
+
+
+        def tail_n(parser):
+            parser.add_argument(
+                '--n', '-n',
+                help="number of lines for tail n"
+            )
+
+        yield Command('tail-logs', py_filter, filter, tail_n, generator, pipeline_instance_dir,
+                      help="applies tail on out.log files of matching tasks")
 
 
         def module_function(parser):
@@ -1061,6 +1079,23 @@ class Cli:
         for task_key, timer_label, hms, s in timers_for_tasks(self.parsed_args.pipeline_instance_dir, f):
             print(f"{timer_label}\t{task_key}\t{hms}\t{s}", file=self.output)
 
+    def grep_logs(self):
+        for key, state, step in self.filter_key_state_step():
+            out_log = Path(self.parsed_args.pipeline_instance_dir, ".drypipe", key, "out.log").absolute()
+            if out_log.exists():
+                cmd = ["grep", "-F", self.parsed_args.grep_expr, str(out_log)]
+                subprocess.check_call(cmd)
+
+
+    def tail_logs(self):
+        for key, state, step in self.filter_key_state_step():
+            out_log = Path(self.parsed_args.pipeline_instance_dir, ".drypipe", key, "out.log").absolute()
+            if out_log.exists():
+                cmd = ["tail",  f"-{self.parsed_args.n}", str(out_log)]
+                print(" ".join(cmd))
+                subprocess.check_call(cmd)
+
+
     def complain_if_no_generator(self, msg):
         g = self.parsed_args.generator
         if g is None:
@@ -1161,12 +1196,8 @@ class Cli:
         return set(g())
 
     def list_keys(self):
-        for key in self.filter_keys():
+        for key, _, _ in self.filter_key_state_step():
             print(key)
-
-        #for key in pipeline_instance.list_keys():
-        #    if fnmatch.fnmatch(key, self.parsed_args.filter):
-        #        print(key)
 
     def task(self):
         cli_tail_logger = None
