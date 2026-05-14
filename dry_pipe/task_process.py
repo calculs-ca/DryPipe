@@ -104,7 +104,11 @@ class TaskProcess:
 
         try:
 
-            self.task_logger.debug("SLURM_ARRAY_TASK_ID: '%s'", self.slurm_array_task_id)
+            if self.slurm_job_id is not None:
+                self.task_logger.info("SLURM_JOB_ID: %s", self.slurm_job_id)
+
+            if self.slurm_array_task_id is not None:
+                self.task_logger.info("SLURM_ARRAY_TASK_ID: %s", self.slurm_array_task_id)
 
             self.task_conf = TaskConf.from_json_file(self.control_dir)
 
@@ -1536,6 +1540,8 @@ class TaskProcess:
                         #self._update_job_name(f"{self.task_key}:{state_name}.{step_number}")
                         self._delete_array_child_launch_log_if_empty()
 
+                    self.launch_slurm_perf_logger()
+
                 os.setpgrp()
                 self.register_signal_handlers()
                 Thread(target=task_func_wrapper).start()
@@ -1701,27 +1707,6 @@ class TaskProcess:
         else:
             raise Exception(f"{self.task_key} is not a remote task, or not calling from master site")
 
+    def launch_slurm_perf_logger(self):
+        pass
 
-def tail_file(file, delay=1.0):
-    line_terminators = ("\r\n", "\n", "\r")
-    trailing = True
-
-    while 1:
-        where = file.tell()
-        line = file.readline()
-        if line:
-            if trailing and line in line_terminators:
-                trailing = False
-                continue
-
-            if line[-1] in line_terminators:
-                line = line[:-1]
-                if line[-1:] == "\r\n" and "\r\n" in line_terminators:
-                    line = line[:-1]
-
-            trailing = False
-            yield line
-        else:
-            trailing = True
-            file.seek(where, 0)
-            time.sleep(delay)
