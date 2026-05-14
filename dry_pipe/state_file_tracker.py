@@ -5,7 +5,7 @@ import os
 import shutil
 from pathlib import Path
 
-from dry_pipe.core_lib import FileCreationDefaultModes
+import filecmp
 from dry_pipe.state_file import StateFile
 
 
@@ -69,6 +69,10 @@ class StateFileTracker:
         def _copy(src, dst):
             if os.path.isdir(dst):
                 dst = os.path.join(dst, os.path.basename(src))
+
+            if filecmp.cmp(src, dst, shallow=True):
+                return
+
             shutil.copyfile(src, dst)
             try:
                 shutil.copymode(src, dst)
