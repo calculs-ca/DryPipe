@@ -120,7 +120,7 @@ class TaskProcess:
             task_inputs, task_outputs = self._unserialize_and_resolve_inputs_outputs(ensure_all_upstream_deps_complete)
 
             self.inputs = TaskInputs(self.task_key, task_inputs)
-            self.outputs = TaskOutputs(self.task_key, task_outputs)
+            self.outputs = TaskOutputs(None, self.task_key, task_outputs, was_resolved=True)
 
 
             for k, v in self.iterate_task_env():

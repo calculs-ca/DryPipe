@@ -294,7 +294,7 @@ class StateFileTracker:
                 task_key, task_control_dir, state_file_dir_entry, include_non_completed
             )
 
-    def load_single_task_or_none(self, task_key, include_non_completed=False):
+    def load_single_task_or_none(self, task_key, include_non_completed=False, dont_update_mem=True):
         task_control_dir = os.path.join(self.pipeline_work_dir, task_key)
         state_file_path = self._find_state_file_path_in_task_control_dir(task_key)
         if state_file_path is None:
