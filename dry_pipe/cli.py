@@ -1204,6 +1204,12 @@ class Cli:
         if self._tail():
             cli_tail_logger = self.logger
 
+        c = Path(self._control_dir())
+        if not c.exists():
+            self.parsed_args.regen = True
+            c.mkdir(parents=True, exist_ok=True)
+
+
         self._maybe_regen_task()
 
         task_process = TaskProcess(

@@ -70,8 +70,8 @@ class StateFileTracker:
             if os.path.isdir(dst):
                 dst = os.path.join(dst, os.path.basename(src))
 
-            if filecmp.cmp(src, dst, shallow=True):
-                return
+            if os.path.exists(dst) and filecmp.cmp(src, dst, shallow=True):
+                    return
 
             shutil.copyfile(src, dst)
             try:
