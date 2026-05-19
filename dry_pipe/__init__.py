@@ -860,7 +860,7 @@ class TaskConf:
 
         return tc
 
-    def with_sbatch_options(self, account=None, mem=None, time=None, cpu_per_task=None, partition=None, extra_option_list=None):
+    def with_sbatch_options(self, account=None, mem=None, time=None, cpu_per_task=None, partition=None, extra_option_list=None, gpus_per_node=None):
 
         sbatch_options = []
 
@@ -878,6 +878,9 @@ class TaskConf:
 
         if partition is not None:
             sbatch_options.append(f"--partition={partition}")
+
+        if gpus_per_node is not None:
+            sbatch_options.append(f"--gpus-per-node={gpus_per_node}")
 
         if extra_option_list is not None:
             sbatch_options += extra_option_list
