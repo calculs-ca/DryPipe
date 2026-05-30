@@ -1,3 +1,4 @@
+import argparse
 import glob
 from pathlib import Path
 
@@ -26,3 +27,9 @@ def parse_timers_in_log(drypipe_log):
                 yield label, time_h_m_s.strip(), time_s.strip()
             except Exception:
                 raise Exception(f"Error parsing line : {c} in log {drypipe_log}")
+
+
+if __name__ == "__main__":
+
+    for t in parse_timers_in_log(Path("/home/maxl/dev/OpenProt/drypipe.log")):
+        print(f"{t[0]}\t{t[1]}\t{t[2]}")

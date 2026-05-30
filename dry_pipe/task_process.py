@@ -1314,7 +1314,7 @@ class TaskProcess:
         except TaskFailedException as tfe:
             self._transition_state_file(state_file, "failed", step_number)
 
-    def sbatch_cmd_lines(self, override_options=None, is_spawn=False):
+    def sbatch_cmd_lines(self, override_options=None, is_spawn=False, extra_sbatch_options=None):
 
         #if self.task_conf.executer_type != "slurm":
         #    raise Exception(f"not a slurm task")
@@ -1342,7 +1342,10 @@ class TaskProcess:
 
         yield "--export={0}".format(",".join(job_env()))
         yield "--signal=B:USR1@50"
-        yield "--parsable"
+
+        if extra_sbatch_options is not None:
+            yield extra_sbatch_options
+
         yield f"{self.pipeline_instance_dir}/.drypipe/cli"
 
 
@@ -1354,12 +1357,12 @@ class TaskProcess:
                 self.control_dir
             )
 
-    def submit_sbatch_task(self):
+    def submit_sbatch_task(self, extra_sbatch_options=None):
 
         self._warn_if_pid_not_nfs()
 
         p = PortablePopen(
-            list(self.sbatch_cmd_lines()),
+            list(self.sbatch_cmd_lines(extra_sbatch_options)),
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT
         )
 

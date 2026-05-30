@@ -860,7 +860,7 @@ class TaskConf:
 
         return tc
 
-    def with_sbatch_options(self, account=None, mem=None, time=None, cpu_per_task=None, partition=None, extra_option_list=None):
+    def with_sbatch_options(self, account=None, mem=None, time=None, cpus_per_task=None, partition=None, extra_option_list=None):
 
         sbatch_options = []
 
@@ -870,8 +870,8 @@ class TaskConf:
         if time is not None:
             sbatch_options.append(f"--time={time}")
 
-        if cpu_per_task is not None:
-            sbatch_options.append(f"--cpus-per-task={cpu_per_task}")
+        if cpus_per_task is not None:
+            sbatch_options.append(f"--cpus-per-task={cpus_per_task}")
 
         if account is not None:
             sbatch_options.append(f"--account={account}")
