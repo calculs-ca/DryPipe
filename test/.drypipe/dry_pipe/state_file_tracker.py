@@ -5,7 +5,7 @@ import os
 import shutil
 from pathlib import Path
 
-import filecmp
+from dry_pipe.core_lib import FileCreationDefaultModes
 from dry_pipe.state_file import StateFile
 
 
@@ -36,15 +36,17 @@ class StateFileTracker:
         return pipeline_state_files[0]
 
     def prepare_instance_dir(self, conf_dict):
+        Path(self.pipeline_instance_dir).mkdir(
+            exist_ok=True, mode=FileCreationDefaultModes.pipeline_instance_directories)
+        Path(self.pipeline_work_dir).mkdir(
+            exist_ok=True, mode=FileCreationDefaultModes.pipeline_instance_directories)
+        Path(self.pipeline_instance_dir, "output").mkdir(
+            exist_ok=True, mode=FileCreationDefaultModes.pipeline_instance_directories)
 
-        if os.environ.get("DRYPIPE_LAUNCHED_FROM_CLI_INIT") == "True":
-            return
-
-        Path(self.pipeline_instance_dir).mkdir(exist_ok=True)
-        Path(self.pipeline_work_dir).mkdir(exist_ok=True)
-        Path(self.pipeline_instance_dir, "output").mkdir(exist_ok=True)
-
-        Path(self.pipeline_messages_dir).mkdir(exist_ok=True)
+        Path(self.pipeline_messages_dir).mkdir(
+            exist_ok=True,
+            mode=FileCreationDefaultModes.pipeline_instance_directories
+        )
 
         latest_json_conf = json.dumps(conf_dict, indent=4)
 
@@ -60,39 +62,20 @@ class StateFileTracker:
                 conf_file.write(latest_json_conf)
                 conf_file.flush()
 
-        self.copy_drypipe_code(self.pipeline_work_dir, conf_dict.get("__generator"))
+        self.copy_drypipe_code(self.pipeline_work_dir)
 
     @classmethod
-    def copy_drypipe_code(cls, pipeline_work_dir, generator_mod_func=None):
-
-
-        def _copy(src, dst):
-            if os.path.isdir(dst):
-                dst = os.path.join(dst, os.path.basename(src))
-
-            if os.path.exists(dst) and filecmp.cmp(src, dst, shallow=True):
-                return
-
-            shutil.copyfile(src, dst)
-            try:
-                shutil.copymode(src, dst)
-            except OSError:
-                pass
+    def copy_drypipe_code(cls, pipeline_work_dir):
 
         src_dir_drypipe = os.path.dirname(__file__)
         dp_dir = Path(pipeline_work_dir, "dry_pipe")
         dp_dir.mkdir(exist_ok=True)
-        _copy(os.path.join(src_dir_drypipe, "cli"), pipeline_work_dir)
+        shutil.copy(os.path.join(src_dir_drypipe, "cli"), pipeline_work_dir)
 
         for py_file in glob.glob(os.path.join(src_dir_drypipe, "*.py")):
-            _copy(py_file, dp_dir)
+            shutil.copy(py_file, dp_dir)
 
-        cli_init = os.path.join(src_dir_drypipe, "cli-init.sh")
-        _copy(cli_init, pipeline_work_dir)
-
-        if generator_mod_func is not None:
-            with open(Path(pipeline_work_dir, "cli-init.sh"), "a") as f:
-                f.write(f"\nexport DRYPIPE_PIPELINE_GENERATOR={generator_mod_func}\n")
+        shutil.copy(os.path.join(src_dir_drypipe, "cli-init.sh"), pipeline_work_dir)
 
     def conf_file(self):
         return Path(self.pipeline_work_dir, "conf.json")
@@ -284,9 +267,7 @@ class StateFileTracker:
                 yield TaskProcess(
                     task_control_dir, ensure_all_upstream_deps_complete= not include_non_completed,
                     no_logger=True
-                ).resolve_task(
-                    StateFile(task_key, None, self.pipeline_work_dir, path=state_file_path)
-                )
+                ).resolve_task()
 
     def load_tasks_for_query(self, glob_filter=None, include_non_completed=False):
         for task_key, task_control_dir, state_file_dir_entry in self._iterate_all_tasks_from_disk(glob_filter):
@@ -294,7 +275,7 @@ class StateFileTracker:
                 task_key, task_control_dir, state_file_dir_entry, include_non_completed
             )
 
-    def load_single_task_or_none(self, task_key, include_non_completed=False, dont_update_mem=True):
+    def load_single_task_or_none(self, task_key, include_non_completed=False):
         task_control_dir = os.path.join(self.pipeline_work_dir, task_key)
         state_file_path = self._find_state_file_path_in_task_control_dir(task_key)
         if state_file_path is None:

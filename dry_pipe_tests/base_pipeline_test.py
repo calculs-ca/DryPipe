@@ -21,6 +21,13 @@ class TestWithDirectorySandbox(unittest.TestCase):
         self.pipeline_instance_dir = os.path.join(all_sandbox_dirs, self.__class__.__name__)
         self.pipeline_instance = None
 
+    def instance_log_file_path(self):
+        return os.path.join(self.pipeline_instance_dir, ".drypipe", "instance.log")
+
+    def instance_log_as_string_list(self):
+        with open(self.instance_log_file_path()) as f:
+            return list(f)
+
     def is_log_level_debug(self):
         return False
 

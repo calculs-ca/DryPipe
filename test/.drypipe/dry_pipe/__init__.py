@@ -840,9 +840,6 @@ class TaskConf:
     def override(self, **kwargs):
         fields = vars(self).copy()
 
-        if "step_invocations" in fields:
-            del fields["step_invocations"]
-
         for f in ["is_slurm_parent", "is_on_remote_site", "inputs", "outputs"]:
             del fields[f]
 
@@ -860,8 +857,7 @@ class TaskConf:
 
         return tc
 
-
-    def with_sbatch_options(self, account=None, mem=None, time=None, cpus_per_task=None, partition=None, extra_option_list=None, gpus_per_node=None):
+    def with_sbatch_options(self, account=None, mem=None, time=None, cpu_per_task=None, partition=None):
 
         sbatch_options = []
 
@@ -871,20 +867,14 @@ class TaskConf:
         if time is not None:
             sbatch_options.append(f"--time={time}")
 
-        if cpus_per_task is not None:
-            sbatch_options.append(f"--cpus-per-task={cpus_per_task}")
+        if cpu_per_task is not None:
+            sbatch_options.append(f"--cpus-per-task={cpu_per_task}")
 
         if account is not None:
             sbatch_options.append(f"--account={account}")
 
         if partition is not None:
             sbatch_options.append(f"--partition={partition}")
-
-        if gpus_per_node is not None:
-            sbatch_options.append(f"--gpus-per-node={gpus_per_node}")
-
-        if extra_option_list is not None:
-            sbatch_options += extra_option_list
 
         return self.override(sbatch_options=sbatch_options)
 

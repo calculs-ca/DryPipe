@@ -1,0 +1,56 @@
+{
+  "digest": "d3326f61901e0b656f13fc02c9c8cb6096178275",
+  "is_slurm_parent": null,
+  "is_on_remote_site": false,
+  "external_files_root": null,
+  "executer_type": "process",
+  "ssh_remote_dest": null,
+  "slurm_account": null,
+  "sbatch_options": [],
+  "container": null,
+  "command_before_task": null,
+  "remote_pipeline_code_dir": null,
+  "python_bin": "/home/maxl/dev/OpenProt/venv/bin/python3.12",
+  "remote_base_dir": null,
+  "remote_containers_dir": null,
+  "init_bash_command": null,
+  "python_interpreter_switches": [
+    "-u"
+  ],
+  "extra_env": null,
+  "label": null,
+  "work_on_local_file_copies": null,
+  "inputs": [
+    {
+      "upstream_task_key": null,
+      "name_in_upstream_task": null,
+      "file_name": null,
+      "value": 123,
+      "name": "x",
+      "type": "int"
+    }
+  ],
+  "outputs": [
+    {
+      "name": "y",
+      "type": "int"
+    }
+  ],
+  "run_as_group": null,
+  "apptainer_exec_args": null,
+  "globus_transfer": null,
+  "globus_local_path_rewrite": null,
+  "auto_restart_condition_regexp_per_log_file": null,
+  "downstream_resets": [],
+  "use_squeue": false,
+  "step_invocations": [
+    {
+      "call": "bash",
+      "script": "$__pipeline_instance_dir/.drypipe/t1/step-0.sh"
+    },
+    {
+      "call": "python",
+      "module_function": "dry_pipe_tests.pipelines_for_cli_ui:hello_world"
+    }
+  ]
+}

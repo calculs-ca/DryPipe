@@ -1,7 +1,9 @@
+import fnmatch
 import glob
 import os
 import pathlib
 from hashlib import blake2b
+
 
 from dry_pipe.core_lib import FileCreationDefaultModes, PortablePopen, invoke_rsync
 
@@ -29,7 +31,7 @@ class Task:
     ):
         self.key = key
         self.inputs = TaskInputs(self, inputs)
-        self.outputs = TaskOutputs(self, key, outputs)
+        self.outputs = TaskOutputs(self, outputs)
         self.pipeline_instance = pipeline_instance
         self.task_steps = task_steps
         self.task_conf = task_conf
@@ -159,6 +161,16 @@ class Task:
         )
         return state.has_ended()
 
+
+    def resolve(self):
+        from dry_pipe.task_process import TaskProcess
+        piwd = pathlib.Path(self.state_file_tracker.pipeline_instance_dir, ".drypipe")
+        return TaskProcess(
+            piwd.joinpath(self.key),
+            ensure_all_upstream_deps_complete=False,
+            no_logger=True
+        ).resolve_task()
+
 class TaskStep:
 
     def __init__(self, task_conf, shell_script=None, python_call=None, shell_snippet=None):
@@ -198,11 +210,9 @@ class TaskStep:
 
                 step_script = os.path.join(control_dir, s)
 
-                script_pre_exists = os.path.exists(step_script)
                 with open(step_script, "w") as _step_script:
                     _step_script.write(self.shell_snippet)
-                if not script_pre_exists:
-                    os.chmod(step_script, 0o764)
+                os.chmod(step_script, 0o764)
             elif self.shell_script is not None:
                 script_or_snippet_file = f"$__pipeline_code_dir/{self.shell_script}"
             else:
@@ -591,15 +601,12 @@ class TaskInputs:
 
 class TaskOutputs:
 
-    def __init__(self, task, task_key, task_outputs, was_resolved=False):
-        self.task = task
+    def __init__(self, task_key, task_outputs):
         self.task_key = task_key
         self._task_outputs = task_outputs
-        self.was_resolved = was_resolved
 
-    def resolve(self):
-        t = self.task.state_file_tracker.load_task_from_state_file(self.task_key)
-        self._task_outputs = t.outputs._task_outputs
+    def __iter__(self):
+        yield from self._task_outputs.values()
 
     def hash_values(self):
         for o in self._task_outputs.values():
@@ -612,9 +619,6 @@ class TaskOutputs:
         ]
 
     def __getattr__(self, name):
-
-        if not self.was_resolved:
-            self.resolve()
 
         p = self._task_outputs.get(name)
 

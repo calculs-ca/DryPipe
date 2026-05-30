@@ -184,6 +184,46 @@ class PipelineWithTwoBashTasksWorkOnLocalCopy(PipelineWithTwoBashTasks):
         return tc
 
 
+class TaskOutputResolveInDag(BasePipelineTest):
+
+    def dag_gen(self, dsl):
+        t1 = dsl.task(
+            key="produce_a_var"
+        ).outputs(
+            v=int
+        ).calls(
+            """
+            #!/usr/bin/bash                
+            export v=1234        
+            """
+        )()
+
+        yield t1
+
+        if not t1.has_ended():
+            assert t1.outputs.v is None
+            dsl.info("assert1")
+        else:
+            self.assertEqual(t1.outputs.v.__int__(), 1234)
+            dsl.info("assert2")
+
+
+    def validate(self, tasks_by_keys):
+        outputs = tasks_by_keys["produce_a_var"].outputs
+        v = outputs.v
+
+        self.assertEqual(v.__int__(), 1234)
+
+        found = False
+
+        for line in self.instance_log_as_string_list():
+            if "assert2" in line:
+                found = True
+                break
+
+        self.assertTrue(found)
+
+
 def all_basic_tests():
     return [
         PipelineWithVariablePassing,

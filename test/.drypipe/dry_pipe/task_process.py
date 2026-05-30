@@ -18,6 +18,7 @@ from dry_pipe.slurm_arrays import ArrayTaskManager, SAcctParser, SQueueParser
 from dry_pipe import TaskConf, RemotePipelineSpecs, AutoRestartManager
 from dry_pipe.core_lib import UpstreamTasksNotCompleted, PortablePopen, func_from_mod_func, invoke_rsync, \
     FileCreationDefaultModes, expandvars_from_dict, TimeLogger
+from dry_pipe.state_file import StateFile
 
 from dry_pipe.task import TaskOutput, TaskInputs, TaskOutputs, TaskInput
 
@@ -104,11 +105,7 @@ class TaskProcess:
 
         try:
 
-            if self.slurm_job_id is not None:
-                self.task_logger.info("SLURM_JOB_ID: %s", self.slurm_job_id)
-
-            if self.slurm_array_task_id is not None:
-                self.task_logger.info("SLURM_ARRAY_TASK_ID: %s", self.slurm_array_task_id)
+            self.task_logger.debug("SLURM_ARRAY_TASK_ID: '%s'", self.slurm_array_task_id)
 
             self.task_conf = TaskConf.from_json_file(self.control_dir)
 
@@ -120,7 +117,7 @@ class TaskProcess:
             task_inputs, task_outputs = self._unserialize_and_resolve_inputs_outputs(ensure_all_upstream_deps_complete)
 
             self.inputs = TaskInputs(self.task_key, task_inputs)
-            self.outputs = TaskOutputs(None, self.task_key, task_outputs, was_resolved=True)
+            self.outputs = TaskOutputs(self.task_key, task_outputs)
 
 
             for k, v in self.iterate_task_env():
@@ -558,15 +555,15 @@ class TaskProcess:
 
         return task_inputs, task_outputs
 
-    def resolve_task(self, state_file):
+    def resolve_task(self):
 
         class ResolvedTask:
             def __init__(self, tp):
                 self.task_process = tp
-                self.key = state_file.task_key
+                self.state_file = StateFile.create_from_path(tp.task_key, tp.control_dir)
+                self.key = self.state_file.task_key
                 self.inputs = tp.inputs
                 self.outputs = tp.outputs
-                self.state_file = state_file
 
             def __str__(self):
                 return f"Task(key={self.key})"
@@ -575,28 +572,40 @@ class TaskProcess:
                 self.state_file.reload()
 
             def is_completed(self):
-                return state_file.is_completed()
+                return self.state_file.is_completed()
 
             def is_waiting(self):
-                return state_file.is_waiting()
+                return self.state_file.is_waiting()
 
             def is_failed(self):
-                return state_file.is_failed()
+                return self.state_file.is_failed()
 
             def is_ready(self):
-                return state_file.is_ready()
+                return self.state_file.is_ready()
 
             def state_name(self):
-                return state_file.state_as_string()
+                return self.state_file.state_as_string()
 
             def control_dir(self):
-                return state_file.control_dir()
+                return self.state_file.control_dir()
 
             def glob_output(self, pattern):
-                return Path(state_file.output_dir()).glob(pattern)
+                return Path(self.state_file.output_dir()).glob(pattern)
 
             def step_idx(self):
-                return state_file.step_idx()
+                return self.state_file.step_idx()
+
+            def summary(self):
+
+                def g():
+                    yield f"Task(key={self.key})"
+                    yield f"  state: {self.state_file.state_as_string()}"
+                    for i in self.inputs:
+                        yield f"<-    {i.name}={i}"
+                    for o in self.outputs:
+                        yield f"->    {o.name}={o}"
+
+                return "\n".join(g())
 
         return ResolvedTask(self)
 
@@ -1318,7 +1327,7 @@ class TaskProcess:
         except TaskFailedException as tfe:
             self._transition_state_file(state_file, "failed", step_number)
 
-    def sbatch_cmd_lines(self, override_options=None, is_spawn=False, extra_sbatch_options=None):
+    def sbatch_cmd_lines(self, override_options=None, is_spawn=False):
 
         #if self.task_conf.executer_type != "slurm":
         #    raise Exception(f"not a slurm task")
@@ -1346,10 +1355,7 @@ class TaskProcess:
 
         yield "--export={0}".format(",".join(job_env()))
         yield "--signal=B:USR1@50"
-
-        if extra_sbatch_options is not None:
-            yield extra_sbatch_options
-
+        yield "--parsable"
         yield f"{self.pipeline_instance_dir}/.drypipe/cli"
 
 
@@ -1361,12 +1367,12 @@ class TaskProcess:
                 self.control_dir
             )
 
-    def submit_sbatch_task(self, extra_sbatch_options=None):
+    def submit_sbatch_task(self):
 
         self._warn_if_pid_not_nfs()
 
         p = PortablePopen(
-            list(self.sbatch_cmd_lines(extra_sbatch_options)),
+            list(self.sbatch_cmd_lines()),
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT
         )
 
@@ -1453,13 +1459,11 @@ class TaskProcess:
 
         def tail_func():
             file_desc = None
-            out_log_pre_exists = out_log.exists()
             try:
                 for _ in range(60):
                     if out_log.exists():
                         file_desc = open(out_log, 'r')
-                        if out_log_pre_exists:
-                            file_desc.seek(0, os.SEEK_END)
+                        file_desc.seek(0, os.SEEK_END)
                         break
                     if has_ended.wait(timeout=0.5):
                         return
@@ -1542,8 +1546,6 @@ class TaskProcess:
                         #step_number, control_dir, state_file, state_name = self.read_task_state()
                         #self._update_job_name(f"{self.task_key}:{state_name}.{step_number}")
                         self._delete_array_child_launch_log_if_empty()
-
-                    self.launch_slurm_perf_logger()
 
                 os.setpgrp()
                 self.register_signal_handlers()
@@ -1633,10 +1635,8 @@ class TaskProcess:
 
         if self.task_conf.use_squeue or os.environ.get("DRYPIPE_USE_SQUEUE") == "True":
             parser = SQueueParser()
-            self.task_logger.info("will use squeue, instead of sacct")
         else:
             parser = SAcctParser()
-            self.task_logger.debug("SAcctParser created")
 
         return ArrayTaskManager(self, arm, parser, for_dry_run=self.for_dry_run)
 
@@ -1710,6 +1710,27 @@ class TaskProcess:
         else:
             raise Exception(f"{self.task_key} is not a remote task, or not calling from master site")
 
-    def launch_slurm_perf_logger(self):
-        pass
 
+def tail_file(file, delay=1.0):
+    line_terminators = ("\r\n", "\n", "\r")
+    trailing = True
+
+    while 1:
+        where = file.tell()
+        line = file.readline()
+        if line:
+            if trailing and line in line_terminators:
+                trailing = False
+                continue
+
+            if line[-1] in line_terminators:
+                line = line[:-1]
+                if line[-1:] == "\r\n" and "\r\n" in line_terminators:
+                    line = line[:-1]
+
+            trailing = False
+            yield line
+        else:
+            trailing = True
+            file.seek(where, 0)
+            time.sleep(delay)
