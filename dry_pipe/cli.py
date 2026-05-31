@@ -6,6 +6,8 @@ import inspect
 import shutil
 import signal
 import subprocess
+import tarfile
+import tempfile
 import time
 import json
 import logging
@@ -593,12 +595,34 @@ class Cli:
 
         yield Command( 'grep-logs', pipeline_instance_dir,py_filter, filter, grep_expr, generator, help="applies fgrep on out.log files of matching tasks")
 
+        def tar_file(parser):
+            parser.add_argument(
+                '--name',
+                type=str,
+                help='basename of tar.gz file, if it does not end with .tar.gz, this ending will be appended to the name, if not absolute, will be relative to $PWD',
+                required=True
+            )
+
+        def tar_file_tail_log(parser):
+            parser.add_argument(
+                '--tail-logs',
+                action='store_true',
+                default=False,
+                help='include a tail of all out.log'
+            )
 
         def tail_n(parser):
             parser.add_argument(
                 '--n', '-n',
-                help="number of lines for tail n"
+                help="number of lines for tail n",
+                type=int,
+                default=50,
             )
+
+        yield Command(
+            'tar-gz', task_key_optional, tar_file, filter, py_filter, generator, tar_file_tail_log, tail_n,
+            help="creates a .tar.gz with .drypipe/<task_key>/* and output/<task_key>/*"
+        )
 
         yield Command('tail-logs', py_filter, filter, tail_n, generator, pipeline_instance_dir,
                       help="applies tail on out.log files of matching tasks")
@@ -911,7 +935,7 @@ class Cli:
         is_restart = len(array_task_manager.arrays_submitted_sacct_info) > 0
 
         if is_restart:
-            task_process.rewind_to_step(0)
+            # task_process.rewind_to_step(0)
             task_process.task_logger.info(f"submit_local_array is a restart")
             if not task_process.for_dry_run:
                 for restart_file in Path(task_process.pipeline_work_dir).glob("*/restarts.tsv"):
@@ -939,6 +963,54 @@ class Cli:
 
         print(f"{launch_count} child array tasks were launched")
 
+    def tar_gz(self):
+        tar_file = Path(self.parsed_args.name)
+
+        if tar_file.suffix != '.tar.gz':
+            tar_file = tar_file.with_suffix(tar_file.suffix + '.tar.gz')
+
+        if not tar_file.is_absolute():
+            tar_file = Path.cwd() / tar_file
+
+        tar_file.parent.mkdir(parents=True, exist_ok=True)
+
+        pid = self.parsed_args.pipeline_instance_dir
+
+        def g():
+            def g0(k):
+                yield Path(pid, f".drypipe/{k}"), f".drypipe/{k}"
+                yield Path(pid, f"output/{k}"), f"output/{k}"
+
+
+            if self.parsed_args.task_key is not None:
+                yield from g0(self.parsed_args.task_key)
+            else:
+                for task_key, state, step in self.filter_key_state_step():
+                    yield from g0(task_key)
+
+        sources = list(g())
+
+        existing_sources = [(src, name) for src, name in sources if src.exists()]
+
+        if len(existing_sources) == 0:
+            raise FileNotFoundError(
+                f"No source directories found. Tried: {', '.join(str(s) for s in sources)}"
+            )
+
+        with tarfile.open(tar_file, "w:gz") as tar:
+
+            if self.parsed_args.tail_logs:
+                print(f"tailing all logs")
+                with tempfile.TemporaryFile(mode='w+t') as temp_file:
+                    self.tail_logs(file=temp_file)
+                    temp_file.flush()
+                    tar.add(tar_file.absolute(), arcname="all-log-tails.txt")
+
+            for src, arc_name in existing_sources:
+                tar.add(src, arcname=arc_name)
+                print(f"Added {arc_name}")
+
+        print(f"Successfully created {tar_file}")
 
     def array_submit_from_remote(self):
         control_dir = self._control_dir()
@@ -1116,13 +1188,18 @@ class Cli:
                 subprocess.check_call(cmd)
 
 
-    def tail_logs(self):
+    def tail_logs(self, file=sys.stdout):
+        n = self.parsed_args.n
+        i = 1
         for key, state, step in self.filter_key_state_step():
-            out_log = Path(self.parsed_args.pipeline_instance_dir, ".drypipe", key, "out.log").absolute()
+            out_log = Path(self.parsed_args.pipeline_instance_dir, ".drypipe", key, "out.log")
             if out_log.exists():
-                cmd = ["tail",  f"-{self.parsed_args.n}", str(out_log)]
-                print(" ".join(cmd))
-                subprocess.check_call(cmd)
+                print(f"============================= {i} step: {step}, key: {key} =====================================", file=file)
+                i += 1
+                cmd = ["tail", f"-{n}", str(out_log)]
+                print(" ".join(cmd), file=file)
+                subprocess.check_call(cmd, stdout=file, stderr=file)
+                print("", file=file)
 
 
     def complain_if_no_generator(self, msg):
@@ -1344,8 +1421,8 @@ class Cli:
                 print(f"$__pipeline_code_dir={__pipeline_code_dir}")
 
     def summary(self):
-        for key, state, _ in self.filter_key_state_step():
-            print(f"{key}\t{state}")
+        for key, state, step in self.filter_key_state_step():
+            print(f"{key}\t{state}\t{step}")
             #Path(pid).glob(f".drypipe/{key}/state.*")
 
         #pid = self.parsed_args.pipeline_instance_dir
