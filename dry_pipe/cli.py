@@ -551,7 +551,15 @@ class Cli:
         #yield Command('restart-failed-array-tasks', task_key, include_pre_launch, wait,
         #              help="restart failed array tasks, of specified array task")
 
-        yield Command('report-execution-times', task_key_optional, filter,
+        def include_steps(parser):
+            parser.add_argument(
+                '--include-steps',
+                help='include time for all steps',
+                action='store_true',
+                default=False
+            )
+
+        yield Command('report-execution-times', task_key_optional, filter, include_steps,
                       help="execute time for all tasks, or all tasks matching filter expression")
 
         yield Command('task', task_key, wait, tail, by_runner, from_remote, ssh_remote_dest, regen, generator_optional, at_step, reset,
