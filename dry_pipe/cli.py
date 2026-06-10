@@ -579,7 +579,7 @@ class Cli:
         yield Command('upload-drypipe-for-remote-instance', task_key)
         yield Command('upload-task-inputs', task_key)
 
-        yield Command('sbatch', task_key_optional, wait, regen, generator_optional, sbatch_options, filter, py_filter,
+        yield Command('sbatch', task_key_optional, wait, regen, generator_optional, sbatch_options, filter, py_filter, reset, at_step,
                       help="launch task (specified by --task-key, or by combination of --filter --py-filter) with sbatch")
 
         yield Command('sbatch-gen', task_key, regen, generator_optional, sbatch_options,
@@ -1082,9 +1082,22 @@ class Cli:
     def sbatch(self):
 
         def submit_one(key):
+
+            if self.parsed_args.reset:
+                p = Path(self.parsed_args.pipeline_instance_dir, "output", key).__str__()
+                shutil.rmtree(p)                
+
             self._maybe_regen_task(key)
-            p = Path(self.parsed_args.pipeline_instance_dir, ".drypipe", key).__str__()
-            task_process = TaskProcess(p, wait_for_completion=self._wait())
+            
+            control_dir = Path(self.parsed_args.pipeline_instance_dir, ".drypipe", key).__str__()
+
+            task_process = TaskProcess(control_dir, wait_for_completion=self._wait(), no_logger=True)
+
+            if self.parsed_args.at_step is not None:
+                task_process.rewind_to_step(self.parsed_args.at_step)
+            if self.parsed_args.reset:
+                task_process.rewind_to_step(0)                
+
             task_process.submit_sbatch_task(self._extra_sbatch_options_if_any())
 
         if self.has_filters():
