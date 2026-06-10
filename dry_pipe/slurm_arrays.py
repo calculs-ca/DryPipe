@@ -280,7 +280,7 @@ class SlurmArrayBatchSubmit:
         self.task_keys = task_keys
 
     def invoke(self, fake_job_id=None):
-
+        
         self.pre_submit_func()
 
         if fake_job_id is not None:
@@ -288,13 +288,14 @@ class SlurmArrayBatchSubmit:
         else:
             job_id = None
             if self.array_task_manager.for_dry_run:
-                self.array_task_manager.logger().info(f"DRY RUN inhibited command: {' '.join(self.sbatch_command)}")
+                print(f"DRY RUN inhibited command: {' '.join(self.sbatch_command)}")
             else:
                 with PortablePopen(self.sbatch_command) as p:
                     p.wait_and_raise_if_non_zero()
                     job_id = p.stdout_as_string().strip()
 
-        self.post_submit_func(job_id)
+        if not self.array_task_manager.for_dry_run:
+            self.post_submit_func(job_id)
 
 class ArrayTaskManager:
 
@@ -670,12 +671,19 @@ class ArrayTaskManager:
                 next_task_key_file, next_array_number = self.next_array_file_name_and_number()
                 task_keys_for_saving = sorted(task_keys)
                 def pre_submit_func():
-                    self.logger().info("next array task keys in %s", next_task_key_file)
 
-                    if not self.for_dry_run:
-                        with open(next_task_key_file, "w") as _next_task_key_file:
-                            for task_key in task_keys_for_saving:
-                                _next_task_key_file.write(f"{task_key}\n")
+                    if self.for_dry_run:
+                        ntkf = Path("/tmp", Path(next_task_key_file).name)
+                        print(f"DRY RUN: {ntkf.absolute()}")
+                    else:
+                        ntkf = next_task_key_file
+
+                    self.logger().info("next array task keys in %s", ntkf)
+
+                    
+                    with open(ntkf, "w") as _next_task_key_file:
+                        for task_key in task_keys_for_saving:
+                            _next_task_key_file.write(f"{task_key}\n")
 
                 command_args = self.prepare_sbatch_command(
                     next_task_key_file, len(task_keys), sbatch_options

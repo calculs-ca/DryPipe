@@ -274,7 +274,7 @@ class PipelineInstance:
         for task in state_machine.gen_all_tasks():
             yield task.key
 
-    def iterate_key_state_steps(self):
+    def iterate_key_state_steps(self, key_universe=None):
         state_machine = StateMachine(
             self.state_file_tracker,
             self.pipeline.task_generator,
@@ -282,6 +282,11 @@ class PipelineInstance:
         )
 
         for task in state_machine.gen_all_tasks():
+            
+            if key_universe is not None:
+                if task.key not in key_universe:
+                    continue
+
             _, state_file = self.state_file_tracker.create_true_state_if_new_else_fetch_from_memory(task)
             yield state_file.key_state_step()
 

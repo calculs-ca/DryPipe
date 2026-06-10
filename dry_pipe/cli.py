@@ -467,7 +467,7 @@ class Cli:
 
         def include_all_incompleted_tasks(parser):
             parser.add_argument(
-                '--include-all_incompleted-tasks',
+                '--include-all-incompleted-tasks',
                 help='all incimpleted tasks (failed, timed-out, and zombie (started status but no actual running task), typically used to recover from a crash',
                 action='store_true',
                 default=False
@@ -589,7 +589,7 @@ class Cli:
 
         yield Command('array-submit',
                       task_key, limit, regen, generator_optional, tail, wait, include_all_incompleted_tasks,
-                            py_filter, filter,
+                            py_filter, filter, reset,
                       help="submit array")
         #yield Command('array-resubmit', task_key, limit, regen, generator_optional, tail, wait,
         #              help="re submit remaining non completed and non running tasks of array")
@@ -600,6 +600,8 @@ class Cli:
         yield Command('array-create-parent', task_key, help="create a parent array task with matching tasks")
         yield Command('list-states', task_key, gen_rsync_list)
         yield Command('array-rsync-list', task_key)
+
+        yield Command('reset', task_key_optional, filter, py_filter, generator)
 
         yield Command( 'grep-logs', pipeline_instance_dir,py_filter, filter, grep_expr, generator, help="applies fgrep on out.log files of matching tasks")
 
@@ -920,7 +922,13 @@ class Cli:
         if self._tail():
             cli_tail_logger = self.logger
 
-        self._maybe_regen_task()
+        if self.parsed_args.reset:
+            if self.parsed_args.dry_run:
+                print(f"--reset has no effect with --dry-run")
+            else:
+                pass
+
+        self.prepare()
 
         task_process = TaskProcess(
             self._control_dir(),
@@ -954,7 +962,18 @@ class Cli:
 
         launch_count = 0
 
-        set_of_task_keys = self.set_of_task_keys_if_has_filter()
+        def set_of_task_keys_if_has_filter():
+            if not self.has_filters():
+                return None
+
+            def g():
+                for key, _, _ in self.filter_key_state_step(array_task_manager.children_task_keys()):
+                    yield key
+
+            return set(g())
+        
+        set_of_task_keys = set_of_task_keys_if_has_filter()
+
 
         for submit in array_task_manager.next_submits(
             restart_failed=is_restart,
@@ -962,14 +981,10 @@ class Cli:
             set_of_task_keys=set_of_task_keys
         ):
 
-            if not self.parsed_args.dry_run:
-                submit.invoke()
-                launch_count += len(submit.task_keys)
-            else:
-                cmd = ' '.join(submit.sbatch_command)
-                print(f"DRY run: \n{cmd}", file=self.output)
+            submit.invoke()
+            launch_count += len(submit.task_keys)
 
-        print(f"{launch_count} child array tasks were launched")
+        print(f"{launch_count} child tasks in array")
 
     def tar_gz(self):
         tar_file = Path(self.parsed_args.name)
@@ -1079,13 +1094,10 @@ class Cli:
         else:
             return None
 
+
     def sbatch(self):
 
         def submit_one(key):
-
-            if self.parsed_args.reset:
-                p = Path(self.parsed_args.pipeline_instance_dir, "output", key).__str__()
-                shutil.rmtree(p)                
 
             self._maybe_regen_task(key)
             
@@ -1231,23 +1243,50 @@ class Cli:
     def _tail_all(self):
         b = getattr(self.parsed_args, 'tail_all', False)
         return b is not None and b
+    
+    def _key(self, k=None):
+        if k is not None:
+            return k
+        return self.parsed_args.task_key
+    
+    def reset(self):
+        for key, state, step in self.filter_key_state_step():
+            self._maybe_reset(key, force=True)
+
+    def _maybe_reset(self, key=None, force=False):
+
+        if not force:
+            if not self.parsed_args.reset:
+                return
+        
+        k = self._key(key)
+    
+        dirz = [
+            Path(self.parsed_args.pipeline_instance_dir, d, k).__str__()
+            for d in ["output", ".drypipe"]
+        ]                
+        for d in dirz:
+            if self.parsed_args.dry_run:
+                print(f"DRY RUN rm -Rf {d}")
+            else:
+                shutil.rmtree(d, ignore_errors=True)
 
     def _maybe_regen_task(self, key=None):
-        if key is not None:
-            k = key
-        else:
-            k = self.parsed_args.task_key
+
+        k = self._key(key)
 
         def do_regen():
             pipeline_instance = self.pipeline_instance_from_args()
             pipeline_instance.prepare_instance_dir()
+            self._maybe_reset(k)
+
             pipeline_instance.regen_task(
                 k,
                 self.logger if self._tail_all() else None
             )
 
-        if self.parsed_args.regen:
-            self.complain_if_no_generator("with --regen flag")
+        if self.parsed_args.regen or self.parsed_args.reset:
+            self.complain_if_no_generator("with --regen or --reset flags")
             do_regen()
         elif not Path(self._control_dir()).exists():
             self.complain_if_no_generator(
@@ -1292,7 +1331,7 @@ class Cli:
         return list(g())
 
 
-    def filter_key_state_step(self):
+    def filter_key_state_step(self, key_universe=None):
         pipeline_instance = self.pipeline_instance_from_args()
         pipeline_instance.prepare_instance_dir()
 
@@ -1304,7 +1343,7 @@ class Cli:
                     return False
             return True
 
-        for key, state, step in pipeline_instance.iterate_key_state_steps():
+        for key, state, step in pipeline_instance.iterate_key_state_steps(key_universe):
             if accept(key, state, step):
                 yield key, state, step
 
@@ -1315,16 +1354,6 @@ class Cli:
 
     def has_filters(self):
         return self.parsed_args.py_filter is not None or self.parsed_args.filter != "*"
-
-    def set_of_task_keys_if_has_filter(self):
-        if not self.has_filters():
-            return None
-
-        def g():
-            for key, _, _ in self.filter_key_state_step():
-                yield key
-
-        return set(g())
 
     def list_keys(self):
         for key, _, _ in self.filter_key_state_step():
