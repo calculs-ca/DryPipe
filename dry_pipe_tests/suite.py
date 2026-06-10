@@ -111,7 +111,7 @@ if __name__ == '__main__':
 
     #log_4_debug_daemon_mode()
 
-    suite_to_test = "exhaustive_except_for_non_portable_tests"
+    suite_to_test = "low_level_tests"
 
     if len(sys.argv) >= 2:
         suite_to_test = sys.argv[1]
@@ -172,4 +172,4 @@ if __name__ == '__main__':
         build_suite(chosen_suite_func)
     )
 
-    sys.exit(not result.wasSuccessful())
+

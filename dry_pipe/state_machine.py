@@ -182,7 +182,7 @@ class StateMachine:
             if state == "completed":
                 return state_file.is_completed()
             elif state == "ready":
-                return state_file.is_ready_or_passed()
+                return state_file.is_ready_or_passed() or state_file.is_waiting()
             else:
                 raise Exception(f"invalid state: {state}, must be 'completed', or 'ready'")
 

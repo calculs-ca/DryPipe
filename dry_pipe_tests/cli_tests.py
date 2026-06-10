@@ -1,5 +1,6 @@
 import glob
 import os.path
+import time
 from pathlib import Path
 
 from dry_pipe import DryPipe
@@ -15,7 +16,7 @@ from dry_pipe_tests.pipeline_tests_with_slurm_arrays import PipelineWithSlurmArr
     PipelineWithSlurmArrayForRestarts
 
 
-def test_cli(*args, **kwargs):
+def create_cli(*args, **kwargs):
     test = args[0]
 
     env = {
@@ -29,7 +30,10 @@ def test_cli(*args, **kwargs):
 
     args = args[1:]
 
-    Cli(args, env=env, test_mode=True).invoke()
+    return Cli(args, env=env, test_mode=True)
+
+def test_cli(*args, **kwargs):    
+    create_cli(*args, **kwargs).invoke()
 
 def pipeline_with_slurm_array_1():
     t = PipelineWithSlurmArrayForRealSlurmTest()
@@ -96,15 +100,19 @@ class CliArrayTests1(PipelineWithSlurmArrayForRealSlurmTest):
 
         # ensure no task has been executed
         for k, task in pipeline_instance.query_all_tasks_by_key().items():
-            self.assertEqual(task.state_name(), 'state.ready')
+            self.assertIn(task.state_name(), {'state.ready', 'state.waiting'})
 
         test_cli(
             self,
             'array-submit',
             f'-pid={pipeline_instance.state_file_tracker.pipeline_instance_dir}',
+            f'--generator={pipeline_with_slurm_array_1_modfunc}',
             '-k=array-parent'
         )
 
+        time.sleep(5)    
+
+            
         self.do_validate(pipeline_instance)
 
     def _get_job_files(self, pipeline_instance, array_task_key):
@@ -318,6 +326,49 @@ class CliTestsPipelineWithSlurmArray(PipelineWithSlurmArray):
 
 
 class CliTestScenario2(PipelineWithSlurmArray):
+
+
+    def test_array_submit_with_filter(self):
+        d = TestSandboxDir(self)
+
+        test_cli(
+            self,
+            'prepare',
+            '--pipeline-instance-dir', d.sandbox_dir,
+            '--generator', 'dry_pipe_tests.cli_tests:pipeline_with_slurm_array_2'
+        )
+        
+        test_cli(
+            self,
+            'array-submit',
+            '-k=array_parent',
+            '--pipeline-instance-dir', d.sandbox_dir,
+            '--generator', 'dry_pipe_tests.cli_tests:pipeline_with_slurm_array_2',
+            '--filter=t_a*'
+        )
+
+        c = create_cli(
+            self,
+            'array-submit',
+            '-k=array_parent',
+            '--pipeline-instance-dir', d.sandbox_dir,
+            '--generator', 'dry_pipe_tests.cli_tests:pipeline_with_slurm_array_2',
+            '--filter=t_a*',
+            '--sbatch-options=--mem=20 --account=x'
+        )   
+
+        c.parse_args()
+        
+
+        original_options = ["--mem=10"]
+
+        overriden_options = c.sbatch_options_overrider_func(original_options)
+
+        self.assertSetEqual(
+            set(overriden_options),
+            {'--mem=20', '--account=x'}
+        )
+
 
     def test_run_until(self):
         d = TestSandboxDir(self)

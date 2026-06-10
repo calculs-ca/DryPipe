@@ -651,7 +651,7 @@ class ArrayTaskManager:
         return list(g())
 
 
-    def next_submits(self, restart_failed=False, include_all_incompleted=False, set_of_task_keys=None):
+    def next_submits(self, restart_failed=False, include_all_incompleted=False, set_of_task_keys=None, sbatch_option_overrider=lambda o: o):
 
         if set_of_task_keys is None:
             next_task_keys = self.task_keys_for_next_batch(restart_failed, include_all_incompleted)
@@ -686,7 +686,7 @@ class ArrayTaskManager:
                             _next_task_key_file.write(f"{task_key}\n")
 
                 command_args = self.prepare_sbatch_command(
-                    next_task_key_file, len(task_keys), sbatch_options
+                    next_task_key_file, len(task_keys), sbatch_option_overrider(sbatch_options)
                 )
 
                 def post_submit_func(job_id):

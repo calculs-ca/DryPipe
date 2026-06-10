@@ -1,0 +1,10 @@
+#!/usr/bin/bash
+
+
+export DRYPIPE_PIPELINE_INSTANCE_DIR=$PWD/$1
+export DRYPIPE_PIPELINE_GENERATOR=$2
+
+export PYTHONPATH=$(dirname $PWD)
+
+
+echo "drypipe list-keys -pid=$DRYPIPE_PIPELINE_INSTANCE_DIR -g $DRYPIPE_PIPELINE_GENERATOR"

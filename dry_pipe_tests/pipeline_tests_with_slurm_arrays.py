@@ -93,7 +93,7 @@ class PipelineWithSlurmArray(BasePipelineTest):
                 "DRYPIPE_TASK_DEBUG": self.is_log_level_debug().__str__(),
                 "DRYPIPE_SLEEP_SCHEDULE": self.custom_sleep_schedule()
             },
-            use_squeue=True
+            use_squeue=False
         )
 
     def launches_tasks_in_process(self):

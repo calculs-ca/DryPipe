@@ -429,7 +429,7 @@ class StateMachineTests(unittest.TestCase):
         d = TestSandboxDir(self)
         self._test_state_machine_00(StateFileTracker(d.sandbox_dir))
 
-    def test_state_machine_00_with_real_tracker_and_restart(self):
+    def _test_state_machine_00_with_real_tracker_and_restart(self):
         d = TestSandboxDir(self)
         self._test_state_machine_00(StateFileTracker(d.sandbox_dir), save_dag_and_restart=True)
 

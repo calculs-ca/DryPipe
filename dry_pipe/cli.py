@@ -242,6 +242,9 @@ class Cli:
         logger.debug(f"Logging level: {logging.getLevelName(logging_level)}")
 
         return logger
+    
+    def parse_args(self):
+        self.parsed_args = self.parser.parse_args(self.args)
 
     def invoke(self):
 
@@ -589,10 +592,9 @@ class Cli:
 
         yield Command('array-submit',
                       task_key, limit, regen, generator_optional, tail, wait, include_all_incompleted_tasks,
-                            py_filter, filter, reset,
+                      py_filter, filter, sbatch_options, reset,
                       help="submit array")
-        #yield Command('array-resubmit', task_key, limit, regen, generator_optional, tail, wait,
-        #              help="re submit remaining non completed and non running tasks of array")
+
         yield Command('array-upload', task_key, help="upload array task to remote location")
         yield Command('array-download', task_key, help="download all array tasks results (rsync or Globus fetch all __task_output_dir of child tasks)")
         yield Command("array-submit-from-remote", task_key, wait, help="submit array task to remote location")
@@ -916,6 +918,34 @@ class Cli:
         else:
             task_process.launch_task()
 
+    def sbatch_options_overrider_func(self, original_options):
+
+        if self.parsed_args.sbatch_options is None:
+            return original_options
+        
+        def options_to_dict(options):
+
+            def g():
+                for o in options:
+                    k, v = o.split("=")
+                    yield k, v
+
+            return dict(g())
+            
+            
+            
+        d1 = options_to_dict(original_options)
+        d2 = options_to_dict(self.parsed_args.sbatch_options.strip().split(" "))
+
+
+        res = {** d1, ** d2}
+
+        return [
+            f"{k}={v}"
+            for k, v in res.items()
+        ]
+                
+
     def array_submit(self):
 
         cli_tail_logger = None
@@ -978,7 +1008,8 @@ class Cli:
         for submit in array_task_manager.next_submits(
             restart_failed=is_restart,
             include_all_incompleted=self.parsed_args.include_all_incompleted_tasks,
-            set_of_task_keys=set_of_task_keys
+            set_of_task_keys=set_of_task_keys,
+            sbatch_option_overrider=lambda o: self.sbatch_options_overrider_func(o)
         ):
 
             submit.invoke()

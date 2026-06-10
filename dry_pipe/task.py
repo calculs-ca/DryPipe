@@ -599,7 +599,8 @@ class TaskOutputs:
 
     def resolve(self):
         t = self.task.state_file_tracker.load_task_from_state_file(self.task_key)
-        self._task_outputs = t.outputs._task_outputs
+        if t is not None:
+            self._task_outputs = t.outputs._task_outputs
 
     def hash_values(self):
         for o in self._task_outputs.values():
