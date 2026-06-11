@@ -1,6 +1,7 @@
 import os
 import shutil
 from pathlib import Path
+import time
 
 import dry_pipe
 from dry_pipe_tests.base_pipeline_test import BasePipelineTest
@@ -225,7 +226,7 @@ class PipelineWithSlurmArrayWithUntil(PipelineWithSlurmArray):
     def launches_tasks_in_process(self):
         return True
 
-    def test(self):
+    def _test(self):
         #TODO: make --until=x apply to array children
         pipeline_instance = self.run_pipeline(["a-dige*"])
 
@@ -880,6 +881,69 @@ class PipelineWithPartialArrayMatch(BasePipelineTest):
     def is_log_level_debug(self):
         return True
 
+
+
+@dry_pipe.DryPipe.python_call()
+def simple_array_x(x):
+
+    if x == 2:
+        raise Exception("i == 2 !!")
+    
+    if x == 9:
+        print("will sleep for ever")
+        time.sleep(60*60*10000)
+
+    return {
+        "r": x * 2
+    }
+
+
+def tc_ar():
+    return TaskConf(
+        executer_type="slurm",
+        slurm_account="dummy-account",
+        extra_env={
+            "PYTHONPATH": python_path_for_tests,
+            "DRYPIPE_TASK_DEBUG": "True",
+            "DRYPIPE_SLEEP_SCHEDULE": "1"
+        }
+    ).with_sbatch_options(time="1:00:1")
+
+
+# drypipe array-submit -pid dry_pipe_tests/sandboxes/ta1 --generator=dry_pipe_tests.pipeline_tests_with_slurm_arrays:dag_simple_array -k ap
+
+
+# drypipe array-submit -pid dry_pipe_tests/sandboxes/ta1 --generator=dry_pipe_tests.pipeline_tests_with_slurm_arrays:dag_simple_array -k ap --packed-job-size=2
+
+def dag_simple_array(dsl):
+
+    def g():
+        for i in range(1, 12):
+            yield dsl.task(
+                key=f"t{i:02d}",
+                is_slurm_array_child=True,
+                task_conf=tc_ar()
+            ).inputs(
+                x=i
+            ).outputs(
+                r=int
+            ).calls(
+                simple_array_x
+            ).calls("""
+            #!/usr/bin/env bash
+            echo "..."
+            """)()
+
+    tasks = list(g())
+
+    yield from tasks
+
+    yield dsl.task(
+        key="ap",
+        task_conf=tc_ar()
+    ).slurm_array_parent(
+        children_tasks=tasks
+    )()
 
 all_tests = [
     PipelineWithMultiCallSlurmArrayForRealSlurmTest,

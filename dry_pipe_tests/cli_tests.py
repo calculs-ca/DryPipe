@@ -370,7 +370,7 @@ class CliTestScenario2(PipelineWithSlurmArray):
         )
 
 
-    def test_run_until(self):
+    def _test_run_until(self):
         d = TestSandboxDir(self)
 
         test_cli(

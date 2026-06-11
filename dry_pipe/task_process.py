@@ -30,8 +30,24 @@ module_logger = logging.getLogger(__name__)
 class TaskFailedException (Exception):
     pass
 
+class TaskPackExchausted(Exception):
+    pass
 
 class TaskProcess:
+
+
+    @staticmethod
+    def delete_array_child_launch_log_if_empty():
+        slurm_array_job_id = os.environ.get("SLURM_ARRAY_JOB_ID")
+        slurm_array_task_id = os.environ.get("SLURM_ARRAY_TASK_ID")
+        
+        launch_log = Path(
+            os.environ.get("DRYPIPE_TASK_CONTROL_DIR"),
+            f"launch-{slurm_array_job_id}_{slurm_array_task_id}.out"
+        )
+        if launch_log.exists() and launch_log.stat().st_size == 0:
+            launch_log.unlink()
+
 
     def __init__(
         self,
@@ -48,7 +64,9 @@ class TaskProcess:
             alternate_logger=None,
             use_remote_drypipe_log=False,
             for_dry_run=False,
-            cli_tail_logger=None
+            cli_tail_logger=None,
+            packed_job_size=None,
+            packed_array_index=None
 
     ):
 
@@ -56,6 +74,8 @@ class TaskProcess:
         self.slurm_array_job_id = os.environ.get("SLURM_ARRAY_JOB_ID")
         self.slurm_array_task_id = os.environ.get("SLURM_ARRAY_TASK_ID")
 
+        self.packed_array_index = packed_array_index
+        self.packed_job_size = packed_job_size
 
         self.cli_tail_logger = cli_tail_logger
 
@@ -85,7 +105,8 @@ class TaskProcess:
         self.is_on_remote_site = False
         self.use_remote_drypipe_log = use_remote_drypipe_log
         self.for_dry_run = for_dry_run
-
+        self.timed_out_or_killed_signal_received = False
+        self.has_transitioned_to_failed = False
 
         try:
             self.task_conf = None
@@ -267,11 +288,6 @@ class TaskProcess:
                         p.popen.returncode,
                         p.safe_stderr_as_string()
                     )
-    def _exit_process(self):
-        self.task_logger.info("will exit")
-        logging.shutdown()
-        if not (self.tail_all or self.tail):
-            os._exit(0)
 
     def children_task_keys(self):
         with open(os.path.join(self.control_dir,  "task-keys.tsv")) as f:
@@ -441,6 +457,15 @@ class TaskProcess:
         try:
             out_vars = python_call.func(* args, ** kwargs)
         except Exception as ex:
+            # this will end up in the task out.log
+            if self.as_subprocess:
+                traceback.print_exc()     
+            else:
+                with open(self.env['__out_log'], 'a') as out:
+                    traceback.print_exc(file=out)
+
+            # task log gets an info level message
+            self.task_logger.info(f"python call unhandled exception: {ex}")
             self.task_logger.exception(ex)
             raise TaskFailedException()
 
@@ -762,32 +787,23 @@ class TaskProcess:
                     try:
                         p.wait()
                         if p.popen.returncode != 0:
-                            self.task_logger.info(f"python_call process returned {p.popen.returncode}")
+                            self.task_logger.info(f"python_call process returned {p.popen.returncode}, {self.timed_out_or_killed_signal_received}, {self._thread_id()}")
                             has_failed = True
                     except Exception as ex:
                         has_failed = True
                         self.task_logger.exception(ex)
                     finally:
-                        if has_failed:
+                        if has_failed and not self.timed_out_or_killed_signal_received:
                             step_number, control_dir, state_file, state_name = self.read_task_state()
                             self._transition_state_file(state_file, "failed", step_number)
+                            self.has_transitioned_to_failed = True
         if has_failed:
-            if self.as_subprocess:
-                self._exit_process()
-            else:
-                raise TaskFailedException()
+            raise TaskFailedException()
 
-    def _terminate_descendants_and_exit(self, p1, p2):
+    def _terminate_descendants(self):
 
         try:
-            try:
-                self.task_logger.info("signal SIGTERM received, will transition to killed and terminate descendants")
-                step_number, control_dir, state_file, state_name = self.read_task_state()
-                self._transition_state_file(state_file, "killed", step_number)
-                self.task_logger.info("will terminate descendants")
-            except Exception as _:
-                pass
-
+            self.task_logger.info("will terminate descendants")
             this_pid = str(os.getpid())
             with PortablePopen(
                 ['ps', '-opid', '--no-headers', '--ppid', this_pid]
@@ -806,8 +822,6 @@ class TaskProcess:
                         pass
         except Exception as ex:
             self.task_logger.exception(ex)
-        finally:
-            self._exit_process()
 
 
     def exec_cmd_before_launch_if_applies(self):
@@ -895,7 +909,7 @@ class TaskProcess:
 
     def _transition_state_file(self, state_file, next_state_name, step_number=None, update_slurm_job_name=False):
 
-        #self.task_logger.debug("_transition_state_file: %s", state_file)
+        self.task_logger.debug("_transition_state_file: %s, %s, %s", state_file, next_state_name, time.time_ns())
 
         control_dir = os.path.dirname(state_file)
 
@@ -949,14 +963,22 @@ class TaskProcess:
         return state_file, step_number + 1
 
 
+    def _thread_id(self):
+        return f"{os.getpid()}:{threading.current_thread().name}:{threading.get_native_id()}"
+    
+
     def register_signal_handlers(self):
 
         def timeout_handler(s, frame):
+            self.timed_out_or_killed_signal_received = True
+            self.task_logger.info("time out signal recieved")
             step_number, control_dir, state_file, state_name = self.read_task_state()
-            self._transition_state_file(state_file, "timed-out", step_number)
-            self._exit_process()
+            self._transition_state_file(state_file, "timed-out", step_number)            
+            self._terminate_descendants()
+            os._exit(0)
 
-        self.task_logger.debug("will register signal handlers")
+        
+        self.task_logger.debug(f"will register signal handlers: ptid = {self._thread_id()}")
 
         signal.signal(signal.SIGINT, signal.SIG_IGN)
         signal.signal(signal.SIGHUP, signal.SIG_IGN)
@@ -964,7 +986,16 @@ class TaskProcess:
         signal.signal(signal.SIGUSR1, timeout_handler)
 
         def f(p1, p2):
-            self._terminate_descendants_and_exit(p1, p2)
+            self.timed_out_or_killed_signal_received = True
+            try:
+                self.task_logger.info(f"signal SIGTERM received, will transition to killed ptid = {self._thread_id()}")                
+                step_number, control_dir, state_file, state_name = self.read_task_state()
+                self._transition_state_file(state_file, "killed", step_number)                
+                self._terminate_descendants()
+                os._exit(0)
+            except Exception as _:
+                pass
+            
         signal.signal(signal.SIGTERM, f)
 
         self.task_logger.debug("signal handlers registered")
@@ -1107,7 +1138,8 @@ class TaskProcess:
             if has_failed:
                 step_number, control_dir, state_file, state_name = self.read_task_state()
                 self._transition_state_file(state_file, "failed", step_number)
-                self._exit_process()
+                self.has_transitioned_to_failed = True
+                
 
     def _is_work_on_local_copy(self):
         work_on_local_copy = self.task_conf.work_on_local_file_copies
@@ -1316,7 +1348,9 @@ class TaskProcess:
             if not skip_transition_to_completed:
                 self.transition_to_completed(state_file)
         except TaskFailedException as tfe:
-            self._transition_state_file(state_file, "failed", step_number)
+            if not self.timed_out_or_killed_signal_received:
+                if not self.has_transitioned_to_failed:
+                    self._transition_state_file(state_file, "failed", step_number)
 
     def sbatch_cmd_lines(self, override_options=None, is_spawn=False, extra_sbatch_options=None):
 
@@ -1406,17 +1440,24 @@ class TaskProcess:
                     for line in f:
                         yield line.strip()
 
-            slurm_array_task_id = int(self.slurm_array_task_id)
+            if self.packed_array_index is None:
+                array_task_id = int(self.slurm_array_task_id)                
+            else:
+                array_task_id = self.packed_array_index                
+
             c = 0
             _drypipe_dir = os.path.dirname(control_dir_from_env)
 
             for task_key in children_task_keys():
-                if c == slurm_array_task_id:
+                if c == array_task_id:
                     return os.path.join(_drypipe_dir, task_key)
                 else:
                     c += 1
 
-            raise Exception(f"Error: no task_key for SLURM_ARRAY_TASK_ID={slurm_array_task_id}")
+            if self.packed_array_index is not None:
+                raise TaskPackExchausted()
+            
+            raise Exception(f"Error: no task_key for array_task_id={array_task_id}")
 
     def _delete_array_child_launch_log_if_empty(self):
         launch_log = Path(
@@ -1496,9 +1537,11 @@ class TaskProcess:
         is_slurm_parent = self.task_conf.is_slurm_parent
         return is_slurm_parent is not None and is_slurm_parent
 
-    def launch_task(self, array_limit=None):
+    def packed_task_id(self):
+        return f"{self.packed_array_index}/{self.packed_job_size}, slurm array/job: {self.slurm_array_task_id}/{self.slurm_job_id}"
 
-        exit_process_when_done = self.as_subprocess
+    def launch_task(self, array_limit=None):
+        
 
         if not os.path.exists(self.task_output_dir):
             Path(self.task_output_dir).mkdir(
@@ -1510,20 +1553,19 @@ class TaskProcess:
                 Path(self.task_output_dir, "scratch").mkdir(
                     parents=True, exist_ok=True,
                     mode=FileCreationDefaultModes.pipeline_instance_directories
-                )
+                )                
 
         def task_func_wrapper():
             try:
                 with self.create_time_logger("TASK", self.task_logger.info):
                     self._run_steps()
             except Exception as ex:
-                if not exit_process_when_done:
+                if not self.as_subprocess:
                     raise ex
                 self.task_logger.exception(ex)
             finally:
-                self.has_ended = True
-                if exit_process_when_done and not self.launched_from_cli_with_tail():
-                    self._exit_process()
+                self.has_ended = True                
+
 
         if self.wait_for_completion or not self.as_subprocess:
             if self.tail or self.tail_all:
@@ -1536,19 +1578,11 @@ class TaskProcess:
                 # launching process, die to let the child run in the background
                 exit(0)
             else:
-                # forked child, or slurm job
-                if is_slurm:
-                    if self.is_array_child_task():
-                        #step_number, control_dir, state_file, state_name = self.read_task_state()
-                        #self._update_job_name(f"{self.task_key}:{state_name}.{step_number}")
-                        self._delete_array_child_launch_log_if_empty()
-
-                    self.launch_slurm_perf_logger()
-
                 os.setpgrp()
                 self.register_signal_handlers()
-                Thread(target=task_func_wrapper).start()
-                signal.pause()
+                worker = Thread(target=task_func_wrapper)
+                worker.start()
+                worker.join()
 
     def reset_restart_accounting(self):
         p = Path(self.control_dir, "restarts.tsv")

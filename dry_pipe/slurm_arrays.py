@@ -1,6 +1,7 @@
 import glob
 import json
 import logging
+import math
 import os
 import subprocess
 from itertools import groupby
@@ -44,7 +45,7 @@ class SAcctParser:
                     continue
                 job_id, long_code_state, job_name, exit_code, submit_time, start_time, end_time, empty = line.split("|")
                 assert empty == ""
-                if job_name in {"batch", "extern"}:
+                if job_name in {"batch", "extern", "allocation"}:
                     continue
 
                 yield SAcctRow(line, job_id, long_code_state, job_name, exit_code, submit_time, start_time, end_time)
@@ -65,7 +66,7 @@ class SQueueParser:
     9666_1|RUNNING|sleep.sh|0:0|
     """
 
-    def invoke(self, job_id, fake_outputs=None):
+    def invoke(self, job_id, fake_outputs=None, logger=None):
 
         squeue_output = None
         if fake_outputs is not None:
@@ -74,6 +75,7 @@ class SQueueParser:
                 raise Exception(f'No fake squeue output for job_id {job_id}')
             squeue_output = dedent_lines(squeue_output)
         else:
+                               # JOBID|STATE|NAME|0:0|SUBMIT_TIME|START_TIME|END_TIME|
             with PortablePopen(f'squeue --noheader --format="%i|%T|%j|0:0|%V|%S|%e|" -j {job_id}', shell=True) as p:
                 p.wait_and_raise_if_non_zero()
                 squeue_output = p.stdout_as_string()
@@ -83,9 +85,9 @@ class SQueueParser:
                 line = line.strip()
                 if line == "":
                     continue
-                job_id, end, long_code_state, job_name, submit_time, start_time, end_time, empty = line.split("|")
+                job_id, long_code_state, job_name, submit_time, start_time, end_time, empty = line.split("|")
                 assert empty == ""
-                yield SAcctRow(line, job_id, end, long_code_state, job_name, submit_time, start_time, end_time)
+                yield SAcctRow(line, job_id, long_code_state, job_name, None, submit_time, start_time, end_time, origin="squeue")
 
         return squeue_output, list(g())
 
@@ -99,10 +101,13 @@ class SyntheticSAcctRow:
 
     def timestamp_for_state_override_priority(self):
         return "9999-11-31T00:23:59"
+    
+    def full_dump(self):
+        return f"{self.task_key}:{self.long_code_state}"
 
 class SAcctRow:
 
-    def __init__(self, acct_line, job_id, long_code_state, job_name, exit_code_and_signal, submit_time, start_time, end_time):
+    def __init__(self, acct_line, job_id, long_code_state, job_name, exit_code_and_signal, submit_time, start_time, end_time, origin="sacct"):
         self.acct_line = acct_line
         self.exit_code_and_signal = exit_code_and_signal
         self.long_code_state = long_code_state
@@ -138,7 +143,7 @@ class SAcctRow:
         if job_name != "cli":
 
             if ":" not in job_name:
-                raise Exception(f"unexpected job name {job_name}")
+                raise Exception(f"unexpected job name {job_name}, line: {self.acct_line} origin: {origin}")
 
             if ">" in job_name:
                 job_name, self.child_job_id = job_name.split(">")
@@ -489,11 +494,14 @@ class ArrayTaskManager:
 
             yield from sbatch_options
 
-            yield "--export={0}".format(",".join([
-                f"DRYPIPE_TASK_CONTROL_DIR={self.array_task_control_dir()}",
-                f"DRYPIPE_TASK_KEY_FILE_BASENAME={os.path.basename(task_key_file)}",
-                f"DRYPIPE_TASK_DEBUG={self.task_process.is_debug()}"
-            ]))
+            def gen_env():
+                yield f"DRYPIPE_TASK_CONTROL_DIR={self.array_task_control_dir()}"
+                yield f"DRYPIPE_TASK_KEY_FILE_BASENAME={os.path.basename(task_key_file)}"
+                yield f"DRYPIPE_TASK_DEBUG={self.task_process.is_debug()}"
+                if self.task_process.packed_job_size is not None:
+                    yield f"DRYPIPE_PACKED_JOB_SIZE={self.task_process.packed_job_size}"
+
+            yield "--export={0}".format(",".join(gen_env()))
 
             if self.task_process is not None and self.task_process.wait_for_completion:
                 yield "--wait"
@@ -660,11 +668,16 @@ class ArrayTaskManager:
 
         self.logger().info(f"%s tasks in next sbatch submit", len(next_task_keys))
 
-        self.logger().info(f"%s", next_task_keys)
+        self.logger().info(f"%s", next_task_keys)        
 
         def g():
 
-            for sbatch_options, task_keys in self.group_by_sbatch_options(next_task_keys):
+            sbatch_groups = list(self.group_by_sbatch_options(next_task_keys))
+
+            if len(sbatch_groups) > 1 and self.task_process.packed_job_size is not None:
+                raise Exception(f"--packed-job-size is not compatible with multi sbatch groups")
+
+            for sbatch_options, task_keys in sbatch_groups:            
 
                 self.logger().info(f"sbatch_options: {sbatch_options}")
 
@@ -685,8 +698,16 @@ class ArrayTaskManager:
                         for task_key in task_keys_for_saving:
                             _next_task_key_file.write(f"{task_key}\n")
 
+                tasks_in_batch = len(task_keys)
+
+                if self.task_process.packed_job_size is None:                    
+                    array_size = tasks_in_batch
+                else:                    
+                    array_size = math.ceil(tasks_in_batch / self.task_process.packed_job_size)
+                    
+
                 command_args = self.prepare_sbatch_command(
-                    next_task_key_file, len(task_keys), sbatch_option_overrider(sbatch_options)
+                    next_task_key_file, array_size, sbatch_options
                 )
 
                 def post_submit_func(job_id):

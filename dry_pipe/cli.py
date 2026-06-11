@@ -22,7 +22,7 @@ from pathlib import Path
 from dry_pipe import PortablePopen, DryPipe
 from dry_pipe.core_lib import func_from_mod_func, is_inside_slurm_job
 from dry_pipe.pipeline_instance import Monitor, PipelineInstance
-from dry_pipe.task_process import TaskProcess
+from dry_pipe.task_process import TaskPackExchausted, TaskProcess, TaskFailedException
 from dry_pipe.slurm_array_task import SlurmArrayParentTask
 from dry_pipe.reports import timers_for_tasks
 from dry_pipe.state_machine import StateFileTracker
@@ -37,7 +37,15 @@ def call(mod_func):
     python_task = func_from_mod_func(mod_func)
     control_dir = os.environ["__control_dir"]
     task_process = TaskProcess(control_dir, is_python_call=True)
-    task_process.call_python(mod_func, python_task)
+    try:
+        task_process.call_python(mod_func, python_task)
+    except TaskFailedException:
+        if task_process.as_subprocess:
+            os._exit(1)
+    except Exception:
+        if task_process.as_subprocess:
+            os._exit(1)        
+
 
 
 def init_logging(logging_conf, verbose=False):
@@ -252,10 +260,17 @@ class Cli:
 
             tcd = Path(os.environ["DRYPIPE_TASK_CONTROL_DIR"])
             task_key = tcd.name.__str__()
-            pid = tcd.parent.parent.__str__()
+            pid = tcd.parent.parent.__str__()            
+
+            is_packed_job = "DRYPIPE_PACKED_JOB_SIZE" in os.environ
+
+            if is_packed_job:
+                cmd = "run-from-slurm-packed-job"
+            else:
+                cmd = "run-from-slurm-job"
 
             self.parsed_args = self.parser.parse_args([
-                "task",
+                cmd,
                 f"--pipeline-instance-dir={pid}",
                 f"--task-key={task_key}"
             ])
@@ -565,6 +580,10 @@ class Cli:
         yield Command('report-execution-times', task_key_optional, filter, include_steps,
                       help="execute time for all tasks, or all tasks matching filter expression")
 
+        yield Command('run-from-slurm-job', task_key)
+
+        yield Command('run-from-slurm-packed-job', task_key)
+
         yield Command('task', task_key, wait, tail, by_runner, from_remote, ssh_remote_dest, regen, generator_optional, at_step, reset,
                       help="run specified task, or restarts it if in failed state (see restart command)")
 
@@ -585,14 +604,24 @@ class Cli:
         yield Command('sbatch', task_key_optional, wait, regen, generator_optional, sbatch_options, filter, py_filter, reset, at_step,
                       help="launch task (specified by --task-key, or by combination of --filter --py-filter) with sbatch")
 
-        yield Command('sbatch-gen', task_key, regen, generator_optional, sbatch_options,
+        yield Command('sbatch-gen', task_key, regen, generator_optional, sbatch_options, reset,
                       help="print sbatch command for launching task, without invoking it")
 
         yield Command('dump-env', task_key, help="dump all environment variables of specified task")
 
+
+        def packed_job_size(parser):
+            parser.add_argument(
+                '--packed-job-size',
+                type=int,
+                help='group tasks in to jobs, that run sequentialy',
+                default=None
+            )
+
+
         yield Command('array-submit',
                       task_key, limit, regen, generator_optional, tail, wait, include_all_incompleted_tasks,
-                      py_filter, filter, sbatch_options, reset,
+                      py_filter, filter, sbatch_options, reset, packed_job_size,
                       help="submit array")
 
         yield Command('array-upload', task_key, help="upload array task to remote location")
@@ -968,8 +997,9 @@ class Cli:
             tail=self._tail(),
             tail_all=self.parsed_args.tail_all,
             cli_tail_logger=cli_tail_logger,
-            for_dry_run=self.parsed_args.dry_run
-        )
+            for_dry_run=self.parsed_args.dry_run,
+            packed_job_size=self.parsed_args.packed_job_size
+        )        
 
         if not task_process.is_slurm_array_parent():
             raise Exception(f"task {self.parsed_args.task_key} is not a slurm array")
@@ -1014,8 +1044,7 @@ class Cli:
 
             submit.invoke()
             launch_count += len(submit.task_keys)
-
-        print(f"{launch_count} child tasks in array")
+        
 
     def tar_gz(self):
         tar_file = Path(self.parsed_args.name)
@@ -1389,6 +1418,51 @@ class Cli:
     def list_keys(self):
         for key, _, _ in self.filter_key_state_step():
             print(key)
+
+    def run_from_slurm_job(self):        
+        task_process = TaskProcess(
+            self._control_dir()
+        )
+
+        if task_process.is_array_child_task():
+            task_process._delete_array_child_launch_log_if_empty()        
+
+        task_process.launch_task()
+
+    def run_from_slurm_packed_job(self):
+
+        slurm_array_task_id = int(os.environ.get("SLURM_ARRAY_TASK_ID"))
+
+        TaskProcess.delete_array_child_launch_log_if_empty()
+
+        tasks_per_job = int(os.environ["DRYPIPE_PACKED_JOB_SIZE"])
+
+        for packed_array_index in range(
+            slurm_array_task_id * tasks_per_job, 
+            slurm_array_task_id * tasks_per_job + tasks_per_job
+        ):
+
+            try:
+                #print(f"packed launch: {slurm_array_task_id} -> {packed_array_index}")
+
+                task_process = TaskProcess(
+                    self._control_dir(),
+                    packed_array_index=packed_array_index,
+                    packed_job_size=tasks_per_job
+                )
+
+                try:
+                    task_process.launch_task()
+                    task_process.task_logger.info(f"packed task {task_process.packed_task_id()} ended")
+                except Exception as ex:
+                    task_process.task_logger.info(f"packed task {task_process.packed_task_id()} had unhandled exception")
+                    task_process.task_logger.exception(ex)
+            except TaskPackExchausted:
+                break
+
+        # last task of the pack
+        task_process.task_logger.info(f"job pack completed")
+
 
     def task(self):
         cli_tail_logger = None
