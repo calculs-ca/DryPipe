@@ -73,6 +73,7 @@ class TaskProcess:
         self.slurm_job_id = os.environ.get("SLURM_JOB_ID")
         self.slurm_array_job_id = os.environ.get("SLURM_ARRAY_JOB_ID")
         self.slurm_array_task_id = os.environ.get("SLURM_ARRAY_TASK_ID")
+        self.slurm_tmp_dir = None
 
         self.packed_array_index = packed_array_index
         self.packed_job_size = packed_job_size
@@ -127,6 +128,14 @@ class TaskProcess:
 
             if self.slurm_job_id is not None:
                 self.task_logger.info("SLURM_JOB_ID: %s", self.slurm_job_id)
+                tmp_dir = os.environ.get('SLURM_TMPDIR')
+                if tmp_dir is None:
+                    self.slurm_tmp_dir = Path("/tmp", f"slurm_tmp_{self.slurm_job_id}")
+                    #TODO: stop constructing TaskProcess for other reasons than for execution
+                    self.slurm_tmp_dir.mkdir(exist_ok=True)                    
+                    self.task_logger.warning(
+                        f"SLURM_JOB_ID is set, but SLURM_TMPDIR is unset, this is probably a test environment, or at least a non standard slurm config, {self.slurm_tmp_dir} was created"
+                    )
 
             if self.slurm_array_task_id is not None:
                 self.task_logger.info("SLURM_ARRAY_TASK_ID: %s", self.slurm_array_task_id)
@@ -712,7 +721,7 @@ class TaskProcess:
 
 
     def resolve_scratch_dir(self):
-        scratch_dir = os.environ.get('SLURM_TMPDIR')
+        scratch_dir = self.slurm_tmp_dir
         if scratch_dir is None:
             return os.path.join(self.task_output_dir, "scratch")
         else:
@@ -1032,33 +1041,54 @@ class TaskProcess:
 
     def resolve_container_path(self, container):
 
-        def _log_resolved_path(container_path):
-            self.task_logger.debug(f"resolved container path: {container_path}")
+        def do_resolve():
 
-        if os.path.isabs(container):
-            if os.path.exists(container):
-                _log_resolved_path(container)
-                return container
-            else:
-                self.task_logger.error(f"container file not found: {container}")
-                raise TaskFailedException()
+            if os.path.isabs(container):
+                if os.path.exists(container):                    
+                    return container
+                else:
+                    self.task_logger.error(f"container file not found: {container}")
+                    raise TaskFailedException()
 
-        if "__pipeline_code_dir" in self.env:
-            p = Path(self.env["__pipeline_code_dir"], "containers", container)
-            if p.exists():
-                p = p.__str__()
-                _log_resolved_path(p)
+            if "__pipeline_code_dir" in self.env:
+                p = Path(self.env["__pipeline_code_dir"], "containers", container)
+                if p.exists():
+                    p = p.__str__()                    
+                    return p
+
+            path_in_pid_parent = Path(self.pipeline_instance_dir).parent.joinpath(container)
+
+            if path_in_pid_parent.exists():
+                p = path_in_pid_parent.__str__()                
                 return p
 
-        path_in_pid_parent = Path(self.pipeline_instance_dir).parent.joinpath(container)
+            self.task_logger.error(f"container file not found: {container}")
+            raise TaskFailedException()
+        
+        container_sif = do_resolve()
+        
+        def _log_resolved_path(container_path, extra_msg=""):
+            self.task_logger.info(f"resolved container path: {container_path} {extra_msg}")
+            return container_path
 
-        if path_in_pid_parent.exists():
-            p = path_in_pid_parent.__str__()
-            _log_resolved_path(p)
-            return p
+        if self.slurm_tmp_dir is None:
+            return _log_resolved_path(container_sif)
+                
+        sif_path = Path(container_sif)
 
-        self.task_logger.error(f"container file not found: {container}")
-        raise TaskFailedException()
+        local_sif_copy = Path(self.slurm_tmp_dir, sif_path.name)
+
+        def local_sif():
+            s = str(local_sif_copy.absolute())
+            _log_resolved_path(s, f"origin: {container_sif}")
+            return s
+
+        if local_sif_copy.exists():
+            return local_sif()
+        else:
+            shutil.copyfile(container_sif, local_sif_copy)        
+            return local_sif()
+
 
     def _resolve_script(self, script, env):
 
