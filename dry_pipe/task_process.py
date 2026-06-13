@@ -1686,7 +1686,7 @@ class TaskProcess:
                     rsync_list_file.write(f)
                     rsync_list_file.write(f"\n")
 
-    def create_array_task_manager(self):
+    def create_array_task_manager(self, slurm_max_jobs=None):
 
         arm = None
         if self.task_conf.auto_restart_condition_regexp_per_log_file is not None:
@@ -1702,7 +1702,7 @@ class TaskProcess:
             parser = SAcctParser()
             self.task_logger.debug("SAcctParser created")
 
-        return ArrayTaskManager(self, arm, parser, for_dry_run=self.for_dry_run)
+        return ArrayTaskManager(self, arm, parser, for_dry_run=self.for_dry_run, slurm_max_jobs=slurm_max_jobs)
 
     def _fs_type(self, file):
 
@@ -1712,7 +1712,7 @@ class TaskProcess:
             return p.stdout_as_string().strip()
 
     def _is_pipeline_instance_dir_nfs(self):
-        return self._fs_type(self.pipeline_instance_dir) == "nfs"
+        return self._fs_type(self.pipeline_instance_dir) in {"nfs", "lustre"}
 
     def _set_apptainer_bind_in_env(self, env, script=None):
 

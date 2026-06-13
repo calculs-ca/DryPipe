@@ -618,10 +618,18 @@ class Cli:
                 default=None
             )
 
+        def slurm_max_jobs(parser):
+            parser.add_argument(
+                '--slurm-max-jobs',
+                type=int,
+                help='adds %N at the end of the sbatch array spec, ex: --array-2000%N',
+                default=None
+            )
+
 
         yield Command('array-submit',
                       task_key, limit, regen, generator_optional, tail, wait, include_all_incompleted_tasks,
-                      py_filter, filter, sbatch_options, reset, packed_job_size,
+                      py_filter, filter, sbatch_options, reset, packed_job_size, slurm_max_jobs,
                       help="submit array")
 
         yield Command('array-upload', task_key, help="upload array task to remote location")
@@ -1004,7 +1012,7 @@ class Cli:
         if not task_process.is_slurm_array_parent():
             raise Exception(f"task {self.parsed_args.task_key} is not a slurm array")
 
-        array_task_manager = task_process.create_array_task_manager()
+        array_task_manager = task_process.create_array_task_manager(self.parse_args.slurm_max_jobs)
 
         array_task_manager.invoke_sacct()
 
