@@ -1012,7 +1012,7 @@ class Cli:
         if not task_process.is_slurm_array_parent():
             raise Exception(f"task {self.parsed_args.task_key} is not a slurm array")
 
-        array_task_manager = task_process.create_array_task_manager(self.parse_args.slurm_max_jobs)
+        array_task_manager = task_process.create_array_task_manager(self.parsed_args.slurm_max_jobs)
 
         array_task_manager.invoke_sacct()
 
