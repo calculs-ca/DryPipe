@@ -127,9 +127,9 @@ class TaskProcess:
         try:
 
             if self.slurm_job_id is not None:
-                self.task_logger.info("SLURM_JOB_ID: %s", self.slurm_job_id)
-                tmp_dir = os.environ.get('SLURM_TMPDIR')
-                if tmp_dir is None:
+                self.slurm_tmp_dir = os.environ.get('SLURM_TMPDIR')
+                self.task_logger.info("SLURM_JOB_ID: %s, %s", self.slurm_job_id, self.slurm_tmp_dir)
+                if self.slurm_tmp_dir is None:
                     self.slurm_tmp_dir = Path("/tmp", f"slurm_tmp_{self.slurm_job_id}")
                     #TODO: stop constructing TaskProcess for other reasons than for execution
                     self.slurm_tmp_dir.mkdir(exist_ok=True)
@@ -1713,7 +1713,7 @@ class TaskProcess:
                     rsync_list_file.write(f)
                     rsync_list_file.write(f"\n")
 
-    def create_array_task_manager(self):
+    def create_array_task_manager(self, slurm_max_jobs=None):
 
         arm = None
         if self.task_conf.auto_restart_condition_regexp_per_log_file is not None:
@@ -1729,7 +1729,7 @@ class TaskProcess:
             parser = SAcctParser()
             self.task_logger.debug("SAcctParser created")
 
-        return ArrayTaskManager(self, arm, parser, for_dry_run=self.for_dry_run)
+        return ArrayTaskManager(self, arm, parser, for_dry_run=self.for_dry_run, slurm_max_jobs=slurm_max_jobs)
 
     def _fs_type(self, file):
 
@@ -1739,7 +1739,7 @@ class TaskProcess:
             return p.stdout_as_string().strip()
 
     def _is_pipeline_instance_dir_nfs(self):
-        return self._fs_type(self.pipeline_instance_dir) == "nfs"
+        return self._fs_type(self.pipeline_instance_dir) in {"nfs", "lustre"}
 
     def _set_apptainer_bind_in_env(self, env, script=None):
 

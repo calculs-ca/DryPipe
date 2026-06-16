@@ -304,7 +304,7 @@ class SlurmArrayBatchSubmit:
 
 class ArrayTaskManager:
 
-    def __init__(self, task_process, auto_restart_manager=None, sacct_parser=SAcctParser(), for_dry_run=False):
+    def __init__(self, task_process, auto_restart_manager=None, sacct_parser=SAcctParser(), for_dry_run=False, slurm_max_jobs=None):
         self.task_process = task_process
         self.arrays_submitted_sacct_info = None
         self.child_task_sacct_rows = None
@@ -317,6 +317,12 @@ class ArrayTaskManager:
         self.auto_restart_manager = auto_restart_manager
         self.sacct_parser=sacct_parser
         self.for_dry_run = for_dry_run
+
+        if slurm_max_jobs is not None:
+            int(slurm_max_jobs)
+
+        self.slurm_max_jobs = slurm_max_jobs
+        
 
     def next_array_file_name_and_number(self):
         return self.array_files_sequence.next_file_and_number()
@@ -473,6 +479,12 @@ class ArrayTaskManager:
 
     def find_state_file_for_task_key(self, task_key):
         return StateFileTracker.find_state_file_if_exists(self.pipeline_work_dir(), task_key)
+    
+    def _slurm_max_concurrent_jobs_specifier(self):
+        if self.slurm_max_jobs is None:
+            return ""
+        else:
+            return f"%{self.slurm_max_jobs}"
 
     def prepare_sbatch_command(self, task_key_file, array_size, sbatch_options):
 
@@ -481,7 +493,7 @@ class ArrayTaskManager:
         elif array_size == 1:
             array_arg = "0"
         else:
-            array_arg = f"0-{array_size - 1}"
+            array_arg = f"0-{array_size - 1}{self._slurm_max_concurrent_jobs_specifier()}"
 
         def sbatch_lines():
             yield "sbatch"
