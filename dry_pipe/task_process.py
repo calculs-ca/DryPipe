@@ -137,7 +137,7 @@ class TaskProcess:
                         f"SLURM_JOB_ID is set, but SLURM_TMPDIR is unset, probably a test environment, or non standard slurm config, {self.slurm_tmp_dir} was created"
                     )
                 else:                    
-                    self.slurm_tmp_dir = Path(tmp_dir)
+                    self.slurm_tmp_dir = Path(self.slurm_tmp_dir)
                     
                 if not is_python_call:
                     self.cleanup_slurm_tmp_dir()
