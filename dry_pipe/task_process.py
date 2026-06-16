@@ -132,10 +132,15 @@ class TaskProcess:
                 if tmp_dir is None:
                     self.slurm_tmp_dir = Path("/tmp", f"slurm_tmp_{self.slurm_job_id}")
                     #TODO: stop constructing TaskProcess for other reasons than for execution
-                    self.slurm_tmp_dir.mkdir(exist_ok=True)                    
+                    self.slurm_tmp_dir.mkdir(exist_ok=True)
                     self.task_logger.warning(
-                        f"SLURM_JOB_ID is set, but SLURM_TMPDIR is unset, this is probably a test environment, or at least a non standard slurm config, {self.slurm_tmp_dir} was created"
+                        f"SLURM_JOB_ID is set, but SLURM_TMPDIR is unset, probably a test environment, or non standard slurm config, {self.slurm_tmp_dir} was created"
                     )
+                else:                    
+                    self.slurm_tmp_dir = Path(tmp_dir)
+                    
+                if not is_python_call:
+                    self.cleanup_slurm_tmp_dir()
 
             if self.slurm_array_task_id is not None:
                 self.task_logger.info("SLURM_ARRAY_TASK_ID: %s", self.slurm_array_task_id)
@@ -202,7 +207,7 @@ class TaskProcess:
         else:
             logging_level = logging.INFO
 
-        logger = logging.getLogger("drypipe.log")
+        logger = logging.getLogger(f"{self.task_key}/drypipe.log")        
         logger.propagate = False
         logger.setLevel(logging_level)
 
@@ -231,7 +236,7 @@ class TaskProcess:
 
             logger.addHandler(BridgeHandler(self.cli_tail_logger))
 
-        logger.debug("log level: %s", logging.getLevelName(logging_level))
+        #logger.debug("log level: %s", logging.getLevelName(logging_level))
         return logger
 
     def __repr__(self):
@@ -378,6 +383,28 @@ class TaskProcess:
     def dump_function_call_in_stdout(self, func_log):
         with open(os.path.join(self.control_dir, "out.log"), mode="a") as out:
             out.write(f"================ {func_log} ====================\n")
+
+    def cleanup_slurm_tmp_dir(self):        
+        i = list(self.slurm_tmp_dir.iterdir())
+
+        n_e = len(i)
+        self.task_logger.debug(f"will cleanup {n_e} items in {self.slurm_tmp_dir}")
+
+        if n_e > 0:
+            self.task_logger.info("SLURM_TMPDIR not empty, will delete")        
+
+
+        def log_rm(n):
+            self.task_logger.debug(f"will delete %s", n)
+
+        for item in i:
+            if item.is_dir() and not item.is_symlink():
+                if item.name != "_keep":                    
+                    log_rm(item.name)
+                    shutil.rmtree(item)
+            else:                
+                log_rm(item.name)
+                item.unlink()
 
 
     def call_python(self, mod_func, python_call):
@@ -1568,7 +1595,7 @@ class TaskProcess:
         return is_slurm_parent is not None and is_slurm_parent
 
     def packed_task_id(self):
-        return f"{self.packed_array_index}/{self.packed_job_size}, slurm array/job: {self.slurm_array_task_id}/{self.slurm_job_id}"
+        return f"{self.packed_array_index}, slurm array/job: {self.slurm_array_task_id}/{self.slurm_job_id}"
 
     def launch_task(self, array_limit=None):
         

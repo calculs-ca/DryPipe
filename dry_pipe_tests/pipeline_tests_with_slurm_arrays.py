@@ -884,14 +884,24 @@ class PipelineWithPartialArrayMatch(BasePipelineTest):
 
 
 @dry_pipe.DryPipe.python_call()
-def simple_array_x(x):
+def simple_array_x(x, __scratch_dir, __task_process):
 
-    if x == 2:
-        raise Exception("i == 2 !!")
+    #if x == 2 and False:
+    #    raise Exception("i == 2 !!")
     
-    if x == 9:
-        print("will sleep for ever")
-        time.sleep(60*60*10000)
+    #if x == 9 and False:
+    #    print("will sleep for ever")
+    #    time.sleep(60*60*10000)
+    __scratch_dir = Path(__scratch_dir)
+    zaz = __scratch_dir.joinpath("zaz")
+    zaz.mkdir(exist_ok=False)
+    __scratch_dir.joinpath("popo").touch(exist_ok=False)
+
+    ls = ",".join([
+        f"{e}"
+        for e in __scratch_dir.glob("*")
+    ])
+    __task_process.task_logger.info(f"{ls}")
 
     return {
         "r": x * 2

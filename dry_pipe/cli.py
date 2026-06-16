@@ -36,8 +36,9 @@ def call(mod_func):
 
     python_task = func_from_mod_func(mod_func)
     control_dir = os.environ["__control_dir"]
-    task_process = TaskProcess(control_dir, is_python_call=True)
+    task_process = TaskProcess(control_dir, is_python_call=True, no_logger=True)
     try:
+        task_process._create_task_logger()
         task_process.call_python(mod_func, python_task)
     except TaskFailedException:
         if task_process.as_subprocess:
@@ -1437,13 +1438,14 @@ class Cli:
 
         tasks_per_job = int(os.environ["DRYPIPE_PACKED_JOB_SIZE"])
 
+        last_task = None
+
         for packed_array_index in range(
             slurm_array_task_id * tasks_per_job, 
             slurm_array_task_id * tasks_per_job + tasks_per_job
         ):
 
             try:
-                #print(f"packed launch: {slurm_array_task_id} -> {packed_array_index}")
 
                 task_process = TaskProcess(
                     self._control_dir(),
@@ -1451,13 +1453,18 @@ class Cli:
                     packed_job_size=tasks_per_job
                 )
 
+                if last_task is not None:
+                   last_task.task_logger.info(f"will execute next task in pack: .drypipe/{task_process.task_key}")                
+
                 try:
                     task_process.launch_task()
                     task_process.task_logger.info(f"packed task {task_process.packed_task_id()} ended")
                 except Exception as ex:
                     task_process.task_logger.info(f"packed task {task_process.packed_task_id()} had unhandled exception")
                     task_process.task_logger.exception(ex)
-            except TaskPackExchausted:
+
+                last_task = task_process                
+            except TaskPackExchausted:                
                 break
 
         # last task of the pack
