@@ -1448,6 +1448,8 @@ class Cli:
 
         last_task = None
 
+        idx = 0
+
         for packed_array_index in range(
             slurm_array_task_id * tasks_per_job, 
             slurm_array_task_id * tasks_per_job + tasks_per_job
@@ -1455,16 +1457,21 @@ class Cli:
 
             try:
 
+                idx += 1
+
                 task_process = TaskProcess(
                     self._control_dir(),
                     packed_array_index=packed_array_index,
                     packed_job_size=tasks_per_job
                 )
 
+                last_task_msg = ""
                 if last_task is not None:
                    last_task.task_logger.info(f"will execute next task in pack: .drypipe/{task_process.task_key}")                
+                   last_task_msg = f", continued from .drypipe/{last_task.task_key}"
 
                 try:
+                    task_process.task_logger.info(f"packed task {idx} / {tasks_per_job}{last_task_msg}")
                     task_process.launch_task()
                     task_process.task_logger.info(f"packed task {task_process.packed_task_id()} ended")
                 except Exception as ex:

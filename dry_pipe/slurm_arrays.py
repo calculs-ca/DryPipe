@@ -1,3 +1,4 @@
+from datetime import timedelta
 import glob
 import json
 import logging
@@ -8,7 +9,7 @@ from itertools import groupby
 from pathlib import Path
 
 from dry_pipe import PortablePopen, TaskConf
-from dry_pipe.slurm_codes import SlurmJobStateLongCodes, SlurmJobStateCodes
+from dry_pipe.slurm_codes import SlurmJobStateLongCodes, SlurmJobStateCodes, SlurmTime
 from dry_pipe.state_file_tracker import StateFileTracker
 
 def dedent_lines(txt):
@@ -504,7 +505,17 @@ class ArrayTaskManager:
 
             yield f"--output={self.array_task_control_dir()}/launch-%A_%a.out"
 
-            yield from sbatch_options
+            for o in sbatch_options:
+                if self.task_process.packed_job_size is None:
+                    yield o
+                elif not o.startswith("--time="):
+                    yield o
+                else:
+                    _, t = o.split("=")
+                    slurm_time = SlurmTime(t)
+                    scaled_time = slurm_time * self.task_process.packed_job_size
+                    self.logger().info(f"packed array, walltime is {self.task_process.packed_job_size} times longer, {slurm_time} becomes: {scaled_time}")
+                    yield f"--time={scaled_time}"
 
             def gen_env():
                 yield f"DRYPIPE_TASK_CONTROL_DIR={self.array_task_control_dir()}"

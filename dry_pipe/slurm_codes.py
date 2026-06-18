@@ -1,3 +1,5 @@
+from datetime import timedelta
+
 
 class SlurmJobStateCode:
     def __init__(self, short_code, long_code):
@@ -243,3 +245,56 @@ class SlurmJobStateLongCodes:
     @staticmethod
     def has_failed_cancelled_or_timed_out(long_code: str):
         return SlurmJobStateLongCodes._lookup_code(long_code) in SlurmJobStateCodes.failed_cancelled_or_timed_out
+
+
+
+
+class SlurmTime:
+    def __init__(self, time_input):
+        if isinstance(time_input, timedelta):
+            self.td = time_input
+        elif isinstance(time_input, str):
+            self.td = self._parse_string(time_input)
+        else:
+            raise TypeError("must be str or timedelta.")
+
+    def _parse_string(self, time_str: str) -> timedelta:
+        if "-" in time_str:
+            days_part, time_part = time_str.split("-")
+            days = int(days_part)
+        else:
+            days = 0
+            time_part = time_str
+
+        parts = list(map(int, time_part.split(":")))
+        
+        if len(parts) == 3:    # HH:MM:SS
+            return timedelta(days=days, hours=parts[0], minutes=parts[1], seconds=parts[2])
+        elif len(parts) == 2:  # MM:SS
+            return timedelta(days=days, minutes=parts[0], seconds=parts[1])
+        else:
+            raise ValueError(f"Format SLURM invalide ou non supporté : {time_str}")
+
+    def __mul__(self, multiplier: int) -> 'SlurmTime':
+        if not isinstance(multiplier, int):
+            raise TypeError(f"multiplier must be int, got {multiplier}")
+        return SlurmTime(self.td * multiplier)
+
+    def __rmul__(self, multiplier: int) -> 'SlurmTime':
+        return self.__mul__(multiplier)
+
+    def __str__(self) -> str:
+        days = self.td.days
+        remaining_seconds = self.td.seconds
+        
+        hours = remaining_seconds // 3600
+        minutes = (remaining_seconds % 3600) // 60
+        seconds = remaining_seconds % 60
+        
+        if days > 0:
+            return f"{days:02d}-{hours:02d}:{minutes:02d}:{seconds:02d}"
+        else:
+            return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+    def __repr__(self) -> str:
+        return f"SlurmTime('{self.__str__()}')"

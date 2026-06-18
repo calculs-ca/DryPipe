@@ -914,7 +914,7 @@ def tc_ar():
         slurm_account="dummy-account",
         extra_env={
             "PYTHONPATH": python_path_for_tests,
-            "DRYPIPE_TASK_DEBUG": "True",
+            #"DRYPIPE_TASK_DEBUG": "True",
             "DRYPIPE_SLEEP_SCHEDULE": "1"
         }
     ).with_sbatch_options(time="1:00:1")
