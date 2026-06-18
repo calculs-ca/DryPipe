@@ -1359,6 +1359,10 @@ class TaskProcess:
 
         step_number, control_dir, state_file, state_name = self.read_task_state(non_existant_ok=True)
 
+        if state_name == "completed" and self.is_array_child_task():
+            self.task_logger.info("task is completed, array tasks do not restart by default, will exit")
+            return
+
         step_invocations = list(self._resolve_steps())
 
         skip_transition_to_completed = False
