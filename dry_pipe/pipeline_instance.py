@@ -11,6 +11,7 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 from dry_pipe.core_lib import TimeLogger, current_stack_as_string
+from dry_pipe.state_file import StateFile
 from dry_pipe.state_machine import StateMachine, AllRunnableTasksCompletedOrInError
 from dry_pipe.state_file_tracker import StateFileTracker
 from dry_pipe.task_process import TaskProcess
@@ -286,9 +287,11 @@ class PipelineInstance:
             if key_universe is not None:
                 if task.key not in key_universe:
                     continue
+                        
+            state_file_path = self.state_file_tracker._find_state_file_path_in_task_control_dir(task.key)
+            state_file = StateFile(task.key, None, self.state_file_tracker.pipeline_work_dir, path=state_file_path)
 
-            _, state_file = self.state_file_tracker.create_true_state_if_new_else_fetch_from_memory(task)
-            yield state_file.key_state_step()
+            yield state_file
 
 
 class Monitor:

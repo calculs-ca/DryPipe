@@ -62,6 +62,16 @@ class StateFile:
     def transition_to_ready(self):
         self.path = os.path.join(self.pipeline_work_dir, self.task_key, "state.ready")
 
+    def rewind_to_step(self, step):
+        # validate that step is an int
+        step = int(step)
+        prev_path = self.path
+
+        self.path = os.path.join(self.pipeline_work_dir, self.task_key, f"state.ready.{step}")
+
+        os.rename(prev_path, self.path)
+
+
     def state_as_string(self):
         return os.path.basename(self.path)
 
