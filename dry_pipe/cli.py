@@ -893,7 +893,7 @@ class Cli:
 
 
     def upgrade_drypipe(self):
-        PipelineInstance.upgrade_drypipe_in(Path(self.parsed_args.pipeline_instance_dir).joinpath(".drypipe"))
+        PipelineInstance.upgrade_drypipe_in(Path(self.parsed_args.pipeline_instance_dir))
 
     def restart_failed_array_tasks(self):
         task_process = TaskProcess(
