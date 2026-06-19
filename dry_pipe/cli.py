@@ -1520,7 +1520,8 @@ class Cli:
         )
 
         if self.parsed_args.reset:
-            shutil.rmtree(task_process.task_output_dir)
+            if Path(task_process.task_output_dir).exists():
+                shutil.rmtree(task_process.task_output_dir)
             task_process.rewind_to_step(0)
 
         if self.parsed_args.at_step is not None:
