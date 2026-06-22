@@ -129,10 +129,10 @@ class TaskProcess:
             if self.slurm_job_id is not None:
                 self.slurm_tmp_dir = os.environ.get('SLURM_TMPDIR')
                 self.task_logger.info("SLURM_JOB_ID: %s, %s", self.slurm_job_id, self.slurm_tmp_dir)
-                if self.slurm_tmp_dir is None:
-                    self.slurm_tmp_dir = Path("/tmp", f"slurm_tmp_{self.slurm_job_id}")
+                if self.slurm_tmp_dir is None:                    
+                    self.slurm_tmp_dir = Path(self.task_output_dir, "scratch")
                     #TODO: stop constructing TaskProcess for other reasons than for execution
-                    self.slurm_tmp_dir.mkdir(exist_ok=True)
+                    self.slurm_tmp_dir.mkdir(exist_ok=True, parents=True)
                     self.task_logger.warning(
                         f"SLURM_JOB_ID is set, but SLURM_TMPDIR is unset, probably a test environment, or non standard slurm config, {self.slurm_tmp_dir} was created"
                     )
