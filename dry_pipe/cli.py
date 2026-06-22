@@ -1308,8 +1308,10 @@ class Cli:
                 i += 1
                 cmd = ["tail", f"-{n}", str(out_log)]
                 print(" ".join(cmd), file=file)
+                file.flush()
                 subprocess.check_call(cmd, stdout=file, stderr=file)
-                print("", file=file)
+                file.flush()
+                print("", file=file)                
 
 
     def complain_if_no_generator(self, msg):
