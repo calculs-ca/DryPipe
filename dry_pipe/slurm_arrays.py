@@ -46,7 +46,7 @@ class SAcctParser:
                     continue
                 job_id, long_code_state, job_name, exit_code, submit_time, start_time, end_time, empty = line.split("|")
                 assert empty == ""
-                if job_name in {"batch", "extern", "allocation"}:
+                if job_name in {"batch", "extern", "allocation", "bash"}:
                     continue
 
                 yield SAcctRow(line, job_id, long_code_state, job_name, exit_code, submit_time, start_time, end_time)
