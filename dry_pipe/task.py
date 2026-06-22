@@ -133,10 +133,27 @@ class Task:
         pathlib.Path(control_dir).mkdir(
             parents=True, exist_ok=True, mode=FileCreationDefaultModes.pipeline_instance_directories)
 
-        step_invocations = [
-            self.task_steps[step_number].get_invocation(control_dir, self, step_number)
-            for step_number in range(0, len(self.task_steps))
-        ]
+        step_invocations = []
+
+        snippets = []
+
+        for step_number in range(0, len(self.task_steps)):
+            i, snippet_if_any = self.task_steps[step_number].get_invocation(control_dir, self, step_number)        
+            step_invocations.append(i)
+            if snippet_if_any is not None:
+                snippets.append(snippet_if_any)
+
+        if len(snippets) > 0:
+            scr = os.path.join(control_dir, "steps.sh")
+            script_pre_exists = os.path.exists(scr)
+            with open(scr, "w") as steps_scripts:
+                for step_number, snippet in snippets:
+                    steps_scripts.write(f"#####__DRYPIPE_STEP-{step_number}\n")
+                    steps_scripts.write(snippet)
+                    steps_scripts.write("\n")
+            if not script_pre_exists:
+                os.chmod(scr, 0o764)                    
+
 
         self.task_conf.is_slurm_parent = self.is_slurm_parent
         self.task_conf.inputs = self.inputs.as_json()
@@ -181,6 +198,7 @@ class TaskStep:
     def get_invocation(self, control_dir, task, step_number):
 
         container = self.task_conf.container
+        snippet_if_any = None
 
         if self.python_call is not None:
             call = {
@@ -192,17 +210,8 @@ class TaskStep:
         else:
             if self.shell_snippet is not None:
 
-                s = f"step-{step_number}.sh"
-                script_or_snippet_file = \
-                    f"$__pipeline_instance_dir/.drypipe/{task.key}/{s}"
-
-                step_script = os.path.join(control_dir, s)
-
-                script_pre_exists = os.path.exists(step_script)
-                with open(step_script, "w") as _step_script:
-                    _step_script.write(self.shell_snippet)
-                if not script_pre_exists:
-                    os.chmod(step_script, 0o764)
+                snippet_if_any = (step_number, self.shell_snippet)
+                script_or_snippet_file = f"#STEP-{step_number}"
             elif self.shell_script is not None:
                 script_or_snippet_file = f"$__pipeline_code_dir/{self.shell_script}"
             else:
@@ -219,7 +228,7 @@ class TaskStep:
         if self.sbatch_options is not None:
             call["sbatch_options"] = self.sbatch_options
 
-        return call
+        return call, snippet_if_any
 
 
 class TaskInput:

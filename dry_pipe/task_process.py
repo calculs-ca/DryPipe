@@ -1124,11 +1124,30 @@ class TaskProcess:
         if os.path.exists(expanded_script_path):
             self.task_logger.debug("expanded script: %s resolves to: %s", script, expanded_script_path)
             return expanded_script_path
+        
+        if script.startswith("#STEP-"):
+            step_number = int(script[6:])
+            scratch_dir = Path(self.resolve_scratch_dir())
+            if not scratch_dir.exists():
+                scratch_dir.mkdir()
 
-        p = os.path.join(
-            env["__control_dir"],
-            os.path.basename(script)
-        )
+            tmp_script = scratch_dir.joinpath(f"step-{step_number}.sh")            
+            with open(tmp_script, "w") as scr:
+                with open(Path(self.control_dir).joinpath("steps.sh")) as steps:
+                    in_script = False
+                    for line in steps:
+                        if in_script:
+                            if line.startswith("#####__DRYPIPE_STEP-"):
+                                break
+                            scr.write(line)
+                        else:
+                            if not line.startswith(f"#####__DRYPIPE_STEP-{step_number}"):
+                                continue
+                            else:
+                                in_script = True
+            p = tmp_script
+        else:
+            p = os.path.join(env["__control_dir"], os.path.basename(script))
 
         self.task_logger.debug("script: %s resolves to: %s", script, p)
 
