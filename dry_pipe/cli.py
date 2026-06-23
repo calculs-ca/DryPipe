@@ -1470,7 +1470,19 @@ class Cli:
             print(f"{key}\t{state}\t{step}")
 
     def has_filters(self):
-        return self.parsed_args.py_filter is not None or self.parsed_args.filter != "*"
+        if self.parsed_args.py_filter is not None or self.parsed_args.filter != "*":
+            return True
+        if self.parsed_args.filter_completed:
+            return True
+        
+        if self.parsed_args.filter_not_completed:
+            return True
+        
+        if self.parsed_args.filter_failed:
+            return True
+        
+        return False
+
 
     def list_keys(self):
         for key, _, _, _ in self.filter_key_state_step():
