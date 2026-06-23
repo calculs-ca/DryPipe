@@ -1050,19 +1050,20 @@ class Cli:
 
         array_task_manager = task_process.create_array_task_manager(self.parsed_args.slurm_max_jobs)
 
-        array_task_manager.invoke_sacct()
+        if not self.has_filters():
+            array_task_manager.invoke_sacct()
 
-        is_restart = len(array_task_manager.arrays_submitted_sacct_info) > 0
+            is_restart = len(array_task_manager.arrays_submitted_sacct_info) > 0
 
-        if is_restart:
-            # task_process.rewind_to_step(0)
-            task_process.task_logger.info(f"submit_local_array is a restart")
-            if not task_process.for_dry_run:
-                for restart_file in Path(task_process.pipeline_work_dir).glob("*/restarts.tsv"):
-                    with open(restart_file, "a") as f:
-                        f.write("RESET\n")
-            else:
-                task_process.task_logger.info(f"no file changed, because it's a dry_run")
+            if is_restart:
+                # task_process.rewind_to_step(0)
+                task_process.task_logger.info(f"submit_local_array is a restart")
+                if not task_process.for_dry_run:
+                    for restart_file in Path(task_process.pipeline_work_dir).glob("*/restarts.tsv"):
+                        with open(restart_file, "a") as f:
+                            f.write("RESET\n")
+                else:
+                    task_process.task_logger.info(f"no file changed, because it's a dry_run")
 
         launch_count = 0
 
