@@ -1064,6 +1064,8 @@ class Cli:
                             f.write("RESET\n")
                 else:
                     task_process.task_logger.info(f"no file changed, because it's a dry_run")
+        else:
+            is_restart = False
 
         launch_count = 0
 
