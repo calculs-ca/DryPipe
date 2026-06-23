@@ -613,7 +613,7 @@ class Cli:
                 default=False
             )
 
-        yield Command('report-execution-times', task_key_optional, filter, include_steps,
+        yield Command('report-execution-times', task_key_optional, include_steps, *all_filters(),
                       help="execute time for all tasks, or all tasks matching filter expression")
 
         yield Command('run-from-slurm-job', task_key)
@@ -637,7 +637,7 @@ class Cli:
         yield Command('upload-drypipe-for-remote-instance', task_key)
         yield Command('upload-task-inputs', task_key)
 
-        yield Command('sbatch', task_key_optional, wait, regen, generator_optional, sbatch_options, filter, py_filter, reset, at_step,
+        yield Command('sbatch', task_key_optional, wait, regen, generator_optional, sbatch_options, reset, at_step, *all_filters(),
                       help="launch task (specified by --task-key, or by combination of --filter --py-filter) with sbatch")
 
         yield Command('sbatch-gen', task_key, regen, generator_optional, sbatch_options, reset,
@@ -665,7 +665,7 @@ class Cli:
 
         yield Command('array-submit',
                       task_key, limit, regen, generator_optional, tail, wait, include_all_incompleted_tasks,
-                      py_filter, filter, sbatch_options, reset, packed_job_size, slurm_max_jobs,
+                      sbatch_options, reset, packed_job_size, slurm_max_jobs, *all_filters(),
                       help="submit array")
 
         yield Command('array-upload', task_key, help="upload array task to remote location")
@@ -676,9 +676,9 @@ class Cli:
         yield Command('list-states', task_key, gen_rsync_list)
         yield Command('array-rsync-list', task_key)
 
-        yield Command('reset', task_key_optional, filter, py_filter, generator)
+        yield Command('reset', task_key_optional, generator, *all_filters(),)
 
-        yield Command( 'grep-logs', pipeline_instance_dir,py_filter, filter, grep_expr, generator, help="applies fgrep on out.log files of matching tasks")
+        yield Command( 'grep-logs', pipeline_instance_dir, grep_expr, generator, *all_filters(), help="applies fgrep on out.log files of matching tasks")
 
         def tar_file(parser):
             parser.add_argument(
@@ -705,11 +705,11 @@ class Cli:
             )
 
         yield Command(
-            'tar-gz', task_key_optional, tar_file, filter, py_filter, generator, tar_file_tail_log, tail_n,
+            'tar-gz', task_key_optional, tar_file, generator, tar_file_tail_log, tail_n, *all_filters(),
             help="creates a .tar.gz with .drypipe/<task_key>/* and output/<task_key>/*"
         )
 
-        yield Command('tail-logs', py_filter, filter, tail_n, generator, pipeline_instance_dir,
+        yield Command('tail-logs', tail_n, generator, pipeline_instance_dir, *all_filters(),
                       help="applies tail on out.log files of matching tasks")
 
 
