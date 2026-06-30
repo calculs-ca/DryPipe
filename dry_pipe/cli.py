@@ -1664,7 +1664,7 @@ class Cli:
             state, step = self.parsed_args.state.split(".")
             step = int(step)
         else:
-            state = self.parsed_args.state.split(".")
+            state = self.parsed_args.state
             step = None
 
         for key, _, _, state_file in self.filter_key_state_step():
