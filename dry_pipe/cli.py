@@ -1660,11 +1660,11 @@ class Cli:
 
     def set_state(self):
 
-        if "." in self.parse_args.state:
-            state, step = self.parse_args.state.split(".")
+        if "." in self.parsed_args.state:
+            state, step = self.parsed_args.state.split(".")
             step = int(step)
         else:
-            state = self.parse_args.state.split(".")
+            state = self.parsed_args.state.split(".")
             step = None
 
         for key, _, _, state_file in self.filter_key_state_step():
