@@ -1159,6 +1159,7 @@ class TaskProcess:
 
         env = {
             ** self.env,
+            ** dict(self.iterate_out_vars_from()),
             ** self._local_copy_adjusted_file_env_vars()
         }
 
