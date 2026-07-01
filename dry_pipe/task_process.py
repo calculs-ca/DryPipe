@@ -65,7 +65,7 @@ class TaskProcess:
             use_remote_drypipe_log=False,
             for_dry_run=False,
             cli_tail_logger=None,
-            packed_job_size=None,
+            tasks_per_job=None,
             packed_array_index=None
 
     ):
@@ -76,7 +76,7 @@ class TaskProcess:
         self.slurm_tmp_dir = None
 
         self.packed_array_index = packed_array_index
-        self.packed_job_size = packed_job_size
+        self.tasks_per_job = tasks_per_job
 
         self.cli_tail_logger = cli_tail_logger
 

@@ -1,5 +1,7 @@
 import glob
+import math
 import os.path
+import re
 import time
 from pathlib import Path
 
@@ -9,11 +11,16 @@ from dry_pipe.core_lib import UpstreamTasksNotCompleted
 from dry_pipe.pipeline import Pipeline
 from dry_pipe.task_process import TaskProcess
 
+from dry_pipe_tests.base_pipeline_test import BasePipelineTest
 from dry_pipe_tests.pipeline_tests_with_slurm_mockup import PipelineWithSlurmArray
 from dry_pipe.slurm_arrays import ArrayTaskManager
 from dry_pipe_tests.test_utils import TestSandboxDir
 from dry_pipe_tests.pipeline_tests_with_slurm_arrays import PipelineWithSlurmArrayForRealSlurmTest, \
-    PipelineWithSlurmArrayForRestarts
+    PipelineWithSlurmArrayForRestarts, dag_simple_array
+
+
+def simple_array_pipeline():
+    return DryPipe.create_pipeline(dag_simple_array)
 
 
 def create_cli(*args, **kwargs):
@@ -380,3 +387,95 @@ class CliTestScenario2(PipelineWithSlurmArray):
             '--generator', 'dry_pipe_tests.cli_tests:pipeline_with_slurm_array_2',
             '--until', 't_a*'
         )
+
+
+class CliTestArraySubmitTasksPerJob(BasePipelineTest):
+    """
+    Tests --tasks-per-job, using dag_simple_array (11 children, t01..t11) as the
+    pipeline definition: with --tasks-per-job=3, the 11 children should be bundled
+    into ceil(11/3)=4 slurm array slots, instead of one slot per child.
+    """
+
+    generator = 'dry_pipe_tests.cli_tests:simple_array_pipeline'
+    tasks_per_job = 3
+    number_of_children = 11
+
+    def test_run_pipeline(self):
+        pass
+
+    def test_array_submit_with_tasks_per_job(self):
+
+        d = TestSandboxDir(self)
+
+        test_cli(
+            self,
+            'prepare',
+            f'--pipeline-instance-dir={d.sandbox_dir}',
+            f'--generator={self.generator}'
+        )
+
+        test_cli(
+            self,
+            'array-submit',
+            f'-pid={d.sandbox_dir}',
+            f'--generator={self.generator}',
+            '-k=ap',
+            f'--tasks-per-job={self.tasks_per_job}',
+            '--wait'
+        )
+
+        # all children are now complete, running the array-parent task itself
+        # makes it observe that and transition to state.completed
+        test_cli(
+            self,
+            'task',
+            f'--pipeline-instance-dir={d.sandbox_dir}',
+            '--task-key=ap',
+            '--wait'
+        )
+
+        pipeline_instance = Pipeline.load_from_module_func(self.generator).create_pipeline_instance(
+            d.sandbox_dir, instance_log_level=self.instance_log_level()
+        )
+
+        tasks_by_keys = pipeline_instance.query_all_tasks_by_key()
+
+        array_task_id_of = {}
+
+        for i in range(1, self.number_of_children + 1):
+            task_key = f"t{i:02d}"
+            task = tasks_by_keys[task_key]
+
+            self.assertTrue(task.is_completed(), f"{task_key}: {task.state_name()}")
+            self.assertEqual(int(task.outputs.r), i * 2)
+
+            drypipe_log = Path(d.sandbox_dir, ".drypipe", task_key, "drypipe.log")
+            with open(drypipe_log) as f:
+                log_content = f.read()
+
+            m = re.search(r"SLURM_ARRAY_TASK_ID: (\d+)", log_content)
+            self.assertIsNotNone(m, f"no SLURM_ARRAY_TASK_ID logged for {task_key}")
+            array_task_id_of[task_key] = m.group(1)
+
+        self.assertTrue(tasks_by_keys["ap"].is_completed())
+
+        children_by_array_task_id = {}
+        for task_key, array_task_id in array_task_id_of.items():
+            children_by_array_task_id.setdefault(array_task_id, []).append(task_key)
+
+        expected_array_size = math.ceil(self.number_of_children / self.tasks_per_job)
+
+        self.assertEqual(
+            len(children_by_array_task_id),
+            expected_array_size,
+            f"expected {expected_array_size} packed slurm array slots for "
+            f"{self.number_of_children} tasks with tasks-per-job={self.tasks_per_job}, "
+            f"got {len(children_by_array_task_id)}: {children_by_array_task_id}"
+        )
+
+        for array_task_id, children in children_by_array_task_id.items():
+            self.assertLessEqual(
+                len(children), self.tasks_per_job,
+                f"slurm array slot {array_task_id} got {len(children)} packed tasks, "
+                f"more than tasks-per-job={self.tasks_per_job}: {children}"
+            )

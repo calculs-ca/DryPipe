@@ -264,7 +264,7 @@ class Cli:
             task_key = tcd.name.__str__()
             pid = tcd.parent.parent.__str__()            
 
-            is_packed_job = "DRYPIPE_PACKED_JOB_SIZE" in os.environ
+            is_packed_job = "DRYPIPE_TASKS_PER_JOB" in os.environ
 
             if is_packed_job:
                 cmd = "run-from-slurm-packed-job"
@@ -657,11 +657,11 @@ class Cli:
         yield Command('dump-env', task_key, help="dump all environment variables of specified task")
 
 
-        def packed_job_size(parser):
+        def tasks_per_job(parser):
             parser.add_argument(
-                '--packed-job-size',
+                '--tasks-per-job',
                 type=int,
-                help='group tasks in to jobs, that run sequentialy',
+                help='group N child tasks into each slurm array job, running them sequentially',
                 default=None
             )
 
@@ -676,7 +676,7 @@ class Cli:
 
         yield Command('array-submit',
                       task_key, limit, regen, generator_optional, tail, wait, include_all_incompleted_tasks,
-                      sbatch_options, reset, packed_job_size, slurm_max_jobs, *all_filters(),
+                      sbatch_options, reset, tasks_per_job, slurm_max_jobs, *all_filters(),
                       help="submit array")
 
         yield Command('array-upload', task_key, help="upload array task to remote location")
@@ -1053,8 +1053,8 @@ class Cli:
             tail_all=self.parsed_args.tail_all,
             cli_tail_logger=cli_tail_logger,
             for_dry_run=self.parsed_args.dry_run,
-            packed_job_size=self.parsed_args.packed_job_size
-        )        
+            tasks_per_job=self.parsed_args.tasks_per_job
+        )
 
         if not task_process.is_slurm_array_parent():
             raise Exception(f"task {self.parsed_args.task_key} is not a slurm array")
@@ -1517,7 +1517,7 @@ class Cli:
 
         TaskProcess.delete_array_child_launch_log_if_empty()
 
-        tasks_per_job = int(os.environ["DRYPIPE_PACKED_JOB_SIZE"])
+        tasks_per_job = int(os.environ["DRYPIPE_TASKS_PER_JOB"])
 
         last_task = None
 
@@ -1535,7 +1535,7 @@ class Cli:
                 task_process = TaskProcess(
                     self._control_dir(),
                     packed_array_index=packed_array_index,
-                    packed_job_size=tasks_per_job
+                    tasks_per_job=tasks_per_job
                 )
 
                 last_task_msg = ""

@@ -923,7 +923,7 @@ def tc_ar():
 # drypipe array-submit -pid dry_pipe_tests/sandboxes/ta1 --generator=dry_pipe_tests.pipeline_tests_with_slurm_arrays:dag_simple_array -k ap
 
 
-# drypipe array-submit -pid dry_pipe_tests/sandboxes/ta1 --generator=dry_pipe_tests.pipeline_tests_with_slurm_arrays:dag_simple_array -k ap --packed-job-size=2
+# drypipe array-submit -pid dry_pipe_tests/sandboxes/ta1 --generator=dry_pipe_tests.pipeline_tests_with_slurm_arrays:dag_simple_array -k ap --tasks-per-job=2
 
 def dag_simple_array(dsl):
 
@@ -955,7 +955,7 @@ def dag_simple_array(dsl):
         children_tasks=tasks
     )()
 
-all_tests = [
+all_tests = [    
     PipelineWithMultiCallSlurmArrayForRealSlurmTest,
     PipelineWithSlurmArrayWithUntil,
     PipelineWithSlurmArray2StepsWith2Sbatch,

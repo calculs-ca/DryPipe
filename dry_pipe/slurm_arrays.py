@@ -506,23 +506,23 @@ class ArrayTaskManager:
             yield f"--output={self.array_task_control_dir()}/launch-%A_%a.out"
 
             for o in sbatch_options:
-                if self.task_process.packed_job_size is None:
+                if self.task_process.tasks_per_job is None:
                     yield o
                 elif not o.startswith("--time="):
                     yield o
                 else:
                     _, t = o.split("=")
                     slurm_time = SlurmTime(t)
-                    scaled_time = slurm_time * self.task_process.packed_job_size
-                    self.logger().info(f"packed array, walltime is {self.task_process.packed_job_size} times longer, {slurm_time} becomes: {scaled_time}")
+                    scaled_time = slurm_time * self.task_process.tasks_per_job
+                    self.logger().info(f"packed array, walltime is {self.task_process.tasks_per_job} times longer, {slurm_time} becomes: {scaled_time}")
                     yield f"--time={scaled_time}"
 
             def gen_env():
                 yield f"DRYPIPE_TASK_CONTROL_DIR={self.array_task_control_dir()}"
                 yield f"DRYPIPE_TASK_KEY_FILE_BASENAME={os.path.basename(task_key_file)}"
                 yield f"DRYPIPE_TASK_DEBUG={self.task_process.is_debug()}"
-                if self.task_process.packed_job_size is not None:
-                    yield f"DRYPIPE_PACKED_JOB_SIZE={self.task_process.packed_job_size}"
+                if self.task_process.tasks_per_job is not None:
+                    yield f"DRYPIPE_TASKS_PER_JOB={self.task_process.tasks_per_job}"
 
             yield "--export={0}".format(",".join(gen_env()))
 
@@ -697,8 +697,8 @@ class ArrayTaskManager:
 
             sbatch_groups = list(self.group_by_sbatch_options(next_task_keys))
 
-            if len(sbatch_groups) > 1 and self.task_process.packed_job_size is not None:
-                raise Exception(f"--packed-job-size is not compatible with multi sbatch groups")
+            if len(sbatch_groups) > 1 and self.task_process.tasks_per_job is not None:
+                raise Exception(f"--tasks-per-job is not compatible with multi sbatch groups")
 
             for sbatch_options, task_keys in sbatch_groups:            
 
@@ -723,10 +723,10 @@ class ArrayTaskManager:
 
                 tasks_in_batch = len(task_keys)
 
-                if self.task_process.packed_job_size is None:                    
+                if self.task_process.tasks_per_job is None:
                     array_size = tasks_in_batch
-                else:                    
-                    array_size = math.ceil(tasks_in_batch / self.task_process.packed_job_size)
+                else:
+                    array_size = math.ceil(tasks_in_batch / self.task_process.tasks_per_job)
                     
 
                 command_args = self.prepare_sbatch_command(
