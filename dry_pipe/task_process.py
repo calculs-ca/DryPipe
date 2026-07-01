@@ -1476,12 +1476,16 @@ class TaskProcess:
                 self.control_dir
             )
 
-    def submit_sbatch_task(self, extra_sbatch_options=None):
+    def submit_sbatch_task(self, extra_sbatch_options=None, instance_logger=None):
 
         self._warn_if_pid_not_nfs()
 
+        cmd = list(self.sbatch_cmd_lines(extra_sbatch_options))
+
+        (instance_logger or self.task_logger).info("sbatch command: %s", " ".join(cmd))
+
         p = PortablePopen(
-            list(self.sbatch_cmd_lines(extra_sbatch_options)),
+            cmd,
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT
         )
 
@@ -1737,7 +1741,7 @@ class TaskProcess:
                     rsync_list_file.write(f)
                     rsync_list_file.write(f"\n")
 
-    def create_array_task_manager(self, slurm_max_jobs=None):
+    def create_array_task_manager(self, slurm_max_jobs=None, instance_logger=None):
 
         arm = None
         if self.task_conf.auto_restart_condition_regexp_per_log_file is not None:
@@ -1753,7 +1757,10 @@ class TaskProcess:
             parser = SAcctParser()
             self.task_logger.debug("SAcctParser created")
 
-        return ArrayTaskManager(self, arm, parser, for_dry_run=self.for_dry_run, slurm_max_jobs=slurm_max_jobs)
+        return ArrayTaskManager(
+            self, arm, parser, for_dry_run=self.for_dry_run, slurm_max_jobs=slurm_max_jobs,
+            instance_logger=instance_logger
+        )
 
     def _fs_type(self, file):
 

@@ -296,6 +296,7 @@ class SlurmArrayBatchSubmit:
             if self.array_task_manager.for_dry_run:
                 print(f"DRY RUN inhibited command: {' '.join(self.sbatch_command)}")
             else:
+                self.array_task_manager.logger().info("sbatch command: %s", " ".join(self.sbatch_command))
                 with PortablePopen(self.sbatch_command) as p:
                     p.wait_and_raise_if_non_zero()
                     job_id = p.stdout_as_string().strip()
@@ -305,7 +306,10 @@ class SlurmArrayBatchSubmit:
 
 class ArrayTaskManager:
 
-    def __init__(self, task_process, auto_restart_manager=None, sacct_parser=SAcctParser(), for_dry_run=False, slurm_max_jobs=None):
+    def __init__(
+        self, task_process, auto_restart_manager=None, sacct_parser=SAcctParser(), for_dry_run=False,
+        slurm_max_jobs=None, instance_logger=None
+    ):
         self.task_process = task_process
         self.arrays_submitted_sacct_info = None
         self.child_task_sacct_rows = None
@@ -318,6 +322,7 @@ class ArrayTaskManager:
         self.auto_restart_manager = auto_restart_manager
         self.sacct_parser=sacct_parser
         self.for_dry_run = for_dry_run
+        self.instance_logger = instance_logger
 
         if slurm_max_jobs is not None:
             int(slurm_max_jobs)
@@ -421,7 +426,7 @@ class ArrayTaskManager:
         return {k: r.long_code_state for k, r in self.last_sacct_row_per_task_key.items()}
 
     def logger(self):
-        return self.task_process.task_logger
+        return self.instance_logger or self.task_process.task_logger
 
     def is_log_level_debug(self):
         return self.task_process.is_task_logger_debug_level()

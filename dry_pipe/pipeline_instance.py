@@ -4,13 +4,10 @@ import logging
 import os
 import sys
 import time
-import traceback
-from io import StringIO
 from itertools import groupby
-from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-from dry_pipe.core_lib import TimeLogger, current_stack_as_string
+from dry_pipe.core_lib import TimeLogger, current_stack_as_string, create_instance_logger
 from dry_pipe.state_file import StateFile
 from dry_pipe.state_machine import StateMachine, AllRunnableTasksCompletedOrInError
 from dry_pipe.state_file_tracker import StateFileTracker
@@ -34,29 +31,9 @@ class PipelineInstance:
         if logger is not None:
             self.instance_logger = logger
         else:
-            self.instance_logger = logging.getLogger(f"pipeline-instance-logger-{os.path.basename(pipeline_instance_dir)}")
-            self.instance_logger.propagate = False
-            for h in self.instance_logger.handlers:
-                h.close()
-            self.instance_logger.handlers.clear()
+            logging_level = logging.DEBUG if instance_log_level == "DEBUG" else logging.INFO
 
-            file_handler = RotatingFileHandler(
-                filename=self.pipeline_instance_log(),
-                maxBytes=1024 * 1024 * 10, backupCount=3
-            )
-
-            if instance_log_level == "DEBUG":
-                logging_level = logging.DEBUG
-            else:
-                logging_level = logging.INFO
-
-            file_handler.setLevel(logging_level)
-            file_handler.setFormatter(
-                logging.Formatter("%(asctime)s - %(levelname)s - %(message)s", datefmt='%Y-%m-%d %H:%M:%S%z')
-            )
-            self.instance_logger.addHandler(file_handler)
-
-            self.instance_logger.setLevel(logging_level)
+            self.instance_logger = create_instance_logger(pipeline_instance_dir, level=logging_level)
 
             self.instance_logger.info("log level: %s", logging.getLevelName(logging_level))
 

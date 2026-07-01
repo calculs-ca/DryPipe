@@ -21,7 +21,7 @@ from os import environ
 from pathlib import Path
 
 from dry_pipe import PortablePopen, DryPipe
-from dry_pipe.core_lib import func_from_mod_func, is_inside_slurm_job
+from dry_pipe.core_lib import func_from_mod_func, is_inside_slurm_job, create_instance_logger
 from dry_pipe.pipeline_instance import Monitor, PipelineInstance
 from dry_pipe.task_process import TaskPackExchausted, TaskProcess, TaskFailedException
 from dry_pipe.slurm_array_task import SlurmArrayParentTask
@@ -228,6 +228,24 @@ class Cli:
             else:
                 self.command_names_to_method[command.name] = m
 
+        self.parse_args()
+
+        if is_inside_slurm_job():
+            # this process is a slurm job (or a step of one) that the CLI itself submitted;
+            # its logging belongs in the task's own drypipe.log, not instance.log:
+            # instance.log should read like what --verbose would show a user, and concurrent
+            # slurm jobs writing to one shared instance.log is a concurrency hazard.
+            self.instance_logger = None
+        else:
+            pid = getattr(self.parsed_args, 'pipeline_instance_dir', None)
+            if pid:
+                self.instance_logger = create_instance_logger(
+                    pid, level=logging.DEBUG if self.parsed_args.vv else logging.INFO
+                )
+                self.instance_logger.info("cli invoked: %s", self.raw_command_line)
+            else:
+                self.instance_logger = None
+
     def create_logger(self, logging_level):
 
         logger = logging.getLogger("cli")
@@ -254,15 +272,12 @@ class Cli:
         return logger
     
     def parse_args(self):
-        self.parsed_args = self.parser.parse_args(self.args)
-
-    def invoke(self):
 
         if is_inside_slurm_job():
 
             tcd = Path(os.environ["DRYPIPE_TASK_CONTROL_DIR"])
             task_key = tcd.name.__str__()
-            pid = tcd.parent.parent.__str__()            
+            pid = tcd.parent.parent.__str__()
 
             is_packed_job = "DRYPIPE_TASKS_PER_JOB" in os.environ
 
@@ -279,6 +294,7 @@ class Cli:
         else:
             self.parsed_args = self.parser.parse_args(self.args)
 
+    def invoke(self):
 
         if self.parsed_args.dry_run:
             print(f"DRY RUN {self.parsed_args.command}")
@@ -998,7 +1014,7 @@ class Cli:
             raise Exception(f"multiple state files in {control_dir}")
 
         if task_process.task_conf.executer_type == "slurm":
-            task_process.submit_sbatch_task()
+            task_process.submit_sbatch_task(instance_logger=self.instance_logger)
         else:
             task_process.launch_task()
 
@@ -1059,7 +1075,9 @@ class Cli:
         if not task_process.is_slurm_array_parent():
             raise Exception(f"task {self.parsed_args.task_key} is not a slurm array")
 
-        array_task_manager = task_process.create_array_task_manager(self.parsed_args.slurm_max_jobs)
+        array_task_manager = task_process.create_array_task_manager(
+            self.parsed_args.slurm_max_jobs, instance_logger=self.instance_logger
+        )
 
         if not self.has_filters():
             array_task_manager.invoke_sacct()
@@ -1177,7 +1195,7 @@ class Cli:
             for_dry_run=self.parsed_args.dry_run,
             alternate_logger=alternate_logger
         )
-        atm = task_process.create_array_task_manager()
+        atm = task_process.create_array_task_manager(instance_logger=self.instance_logger)
         report = atm.manage_auto_restarts_from_remote()
         print(json.dumps(report), file=self.output)
 
@@ -1221,14 +1239,16 @@ class Cli:
             
             control_dir = Path(self.parsed_args.pipeline_instance_dir, ".drypipe", key).__str__()
 
-            task_process = TaskProcess(control_dir, wait_for_completion=self._wait(), no_logger=True)
+            task_process = TaskProcess(
+                control_dir, wait_for_completion=self._wait(), no_logger=True
+            )
 
             if self.parsed_args.at_step is not None:
                 task_process.rewind_to_step(self.parsed_args.at_step)
             if self.parsed_args.reset:
                 task_process.rewind_to_step(0)                
 
-            task_process.submit_sbatch_task(self._extra_sbatch_options_if_any())
+            task_process.submit_sbatch_task(self._extra_sbatch_options_if_any(), instance_logger=self.instance_logger)
 
         if self.has_filters():
             for key, _, _, _ in self.filter_key_state_step():
@@ -1501,7 +1521,7 @@ class Cli:
         for key, _, _, _ in self.filter_key_state_step():
             print(key)
 
-    def run_from_slurm_job(self):        
+    def run_from_slurm_job(self):
         task_process = TaskProcess(
             self._control_dir()
         )
@@ -1600,7 +1620,7 @@ class Cli:
                 return
 
             if self.parsed_args.by_runner and not task_process.task_conf.is_slurm_parent:
-                task_process.submit_sbatch_task()
+                task_process.submit_sbatch_task(instance_logger=self.instance_logger)
                 return
 
         task_process.launch_task()
@@ -1611,7 +1631,7 @@ class Cli:
             self._control_dir(),
             wait_for_completion=self._wait() or self._tail(),
             use_remote_drypipe_log=self.parsed_args.from_remote,
-            tail=self._tail(),
+            tail=self._tail()
         )
 
         task_process.reset_restart_accounting()
