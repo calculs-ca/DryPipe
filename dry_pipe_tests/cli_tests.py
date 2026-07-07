@@ -23,6 +23,12 @@ def simple_array_pipeline():
     return DryPipe.create_pipeline(dag_simple_array)
 
 
+def func_filter_even_children(key, state_name, step):
+    """selects the even numbered children of dag_simple_array (t02, t04, ...), excludes the array parent 'ap'"""
+    m = re.match(r"t(\d+)$", key)
+    return m is not None and int(m.group(1)) % 2 == 0
+
+
 def create_cli(*args, **kwargs):
     test = args[0]
 
@@ -479,3 +485,106 @@ class CliTestArraySubmitTasksPerJob(BasePipelineTest):
                 f"slurm array slot {array_task_id} got {len(children)} packed tasks, "
                 f"more than tasks-per-job={self.tasks_per_job}: {children}"
             )
+
+
+class CliFuncFilterTests(BasePipelineTest):
+    """
+    Tests --func-filter, validated with list-keys. The pipeline is dag_simple_array
+    (children t01..t11 + array parent 'ap'). func_filter_even_children selects the
+    even numbered children, i.e. t02, t04, t06, t08, t10.
+    """
+
+    generator = 'dry_pipe_tests.cli_tests:simple_array_pipeline'
+
+    expected_even_children = ['t02', 't04', 't06', 't08', 't10']
+
+    def test_run_pipeline(self):
+        pass
+
+    def _prepare(self, d):
+        test_cli(
+            self,
+            'prepare',
+            f'--pipeline-instance-dir={d.sandbox_dir}',
+            f'--generator={self.generator}'
+        )
+
+    def _list_keys(self, d, *extra_args):
+        return sorted(Cli.invoke_and_iterate_lines(
+            'list-keys',
+            f'--pipeline-instance-dir={d.sandbox_dir}',
+            f'--generator={self.generator}',
+            *extra_args,
+            env={"DRYPIPE_SERVICE_SLEEP_SCHEDULE": self.custom_sleep_schedule()},
+            test_mode=True
+        ))
+
+    def test_no_filter_lists_all_keys(self):
+        d = TestSandboxDir(self)
+        self._prepare(d)
+
+        expected_all = sorted([f"t{i:02d}" for i in range(1, 12)] + ["ap"])
+        self.assertEqual(self._list_keys(d), expected_all)
+
+    def test_func_filter_with_full_module_func(self):
+        d = TestSandboxDir(self)
+        self._prepare(d)
+
+        self.assertEqual(
+            self._list_keys(d, '--func-filter=dry_pipe_tests.cli_tests:func_filter_even_children'),
+            self.expected_even_children
+        )
+
+    def test_func_filter_with_bare_name_resolved_against_generator_module(self):
+        d = TestSandboxDir(self)
+        self._prepare(d)
+
+        # bare name (no ":") must be looked up in the --generator module
+        self.assertEqual(
+            self._list_keys(d, '--func-filter=func_filter_even_children'),
+            self.expected_even_children
+        )
+
+    def test_func_filter_combines_with_glob_filter(self):
+        d = TestSandboxDir(self)
+        self._prepare(d)
+
+        # glob keeps t01..t09, func-filter keeps even children -> intersection
+        self.assertEqual(
+            self._list_keys(
+                d,
+                '--filter=t0*',
+                '--func-filter=func_filter_even_children'
+            ),
+            ['t02', 't04', 't06', 't08']
+        )
+
+    def _set_state(self, d, state, key_glob):
+        test_cli(
+            self,
+            'set-state',
+            f'--pipeline-instance-dir={d.sandbox_dir}',
+            f'--generator={self.generator}',
+            f'--state={state}',
+            f'--filter={key_glob}'
+        )
+
+    def test_filter_not_completed_then_func_filter(self):
+        d = TestSandboxDir(self)
+        self._prepare(d)
+
+        # mark two of the even children completed, so --filter-not-completed excludes them first
+        self._set_state(d, 'completed', 't02')
+        self._set_state(d, 'completed', 't04')
+
+        # --filter-not-completed first selects everything except t02, t04 (the completed ones),
+        # then --func-filter keeps only the even children among those survivors.
+        # t02 and t04 are even, but were already excluded by the not-completed filter.
+        self.assertEqual(
+            self._list_keys(
+                d,
+                '--filter-not-completed',
+                '--func-filter=func_filter_even_children'
+            ),
+            ['t06', 't08', 't10']
+        )

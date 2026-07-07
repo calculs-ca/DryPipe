@@ -10,7 +10,8 @@ from dry_pipe_tests import pipeline_tests_with_single_tasks
 from dry_pipe_tests import pipeline_tests_with_multiple_tasks
 from dry_pipe_tests import task_launch_tests
 from dry_pipe_tests import test_core_lib
-from dry_pipe_tests.cli_tests import CliArrayTests1, CliTestsPipelineWithSlurmArray, CliTestScenario2
+from dry_pipe_tests.cli_tests import CliArrayTests1, CliTestsPipelineWithSlurmArray, CliTestScenario2, \
+    CliFuncFilterTests
 from dry_pipe_tests.dsl_tests import TaskChangeTrackingTests
 from dry_pipe_tests.pipeline_tests_with_slurm_arrays import PipelineWithSlurmArray2StepsWith2Sbatch
 from dry_pipe_tests.pipeline_tests_with_slurm_mockup import all_low_level_tests_with_mockup_slurm
@@ -72,6 +73,7 @@ def cli_tests():
         CliArrayTests1,
         CliTestsPipelineWithSlurmArray,
         CliTestScenario2,
+        CliFuncFilterTests,
     ]
 
 

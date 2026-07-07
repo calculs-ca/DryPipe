@@ -397,7 +397,28 @@ class Cli:
         def filter(parser):
             parser.add_argument(
                 '--filter', '--key-filter',
-                help='glob expression applied to task keys',
+                help='''
+                glob expression applied to task keys, ex: "t_a*".
+
+                HOW FILTERS COMBINE
+                Filters come in three independent groups. A task is INCLUDED only when it passes ALL of the
+                filters that are set (logical AND); it is EXCLUDED as soon as it fails any one of them.
+                A group that is not set matches everything (it never excludes on its own).
+
+                  1. key       : --filter / --key-filter   (glob on the task key)
+                  2. state/step: --py-filter, --filter-completed, --filter-not-completed, --filter-failed
+                  3. function  : --func-filter              (a python function returning a boolean)
+
+                Within group 2 the options are mutually exclusive: if several are given, exactly one wins,
+                in this precedence order: --filter-completed > --filter-not-completed > --filter-failed > --py-filter.
+
+                So --filter and --func-filter (and one option from group 2) INTERSECT: e.g.
+                    --filter=t_a* --filter-failed --func-filter=mod:f
+                selects the tasks whose key matches t_a*, AND are failed, AND for which f(...) returns True.
+
+                With no filter set, all tasks are selected. Filters can be tested with "low consequence"
+                commands such as list-keys or summary before more consequential ones such as array-submit.
+                ''',
                 default='*'
             )
 
@@ -413,6 +434,21 @@ class Cli:
                     
                 Note: a --py-filter can be tested with "low consequence" commands such as list-keys or summary, 
                 before more consequential commands such as array-submit                                 
+                '''
+            )
+
+        def func_filter(parser):
+            parser.add_argument(
+                '--func-filter',
+                help='''
+                a function imported from a module on the PYTHONPATH, using the "module:function" object-reference
+                format (as in setuptools entry points / gunicorn), ex: a.b.c:f meaning "from a.b.c import f".
+                As a shortcut, a bare function name (no module, ex: f) is looked up in the --generator module.
+                The function is called with (key, state_name, step) for each task and must return a boolean
+                indicating whether the task is selected, ex:
+
+                   def f(key, state_name, step):
+                       return step > 3 and state_name == 'failed'
                 '''
             )
 
@@ -596,7 +632,7 @@ class Cli:
                         raise Exception(f"arg {a.__name__}  on command {name} failed with exception {e}")
 
         def all_filters():
-            return [filter, py_filter, filter_completed, filter_not_completed, filter_failed]
+            return [filter, py_filter, func_filter, filter_completed, filter_not_completed, filter_failed]
 
         yield Command('run', pipeline_instance_dir, generator, until, restart_failed, reset_failed, sleep_schedule,
                       help="generate tasks and run the pipeline")
@@ -1473,9 +1509,34 @@ class Cli:
                     sys.exit(1)
             return f
 
+        def create_func_filter():
+            if self.parsed_args.func_filter is None:
+                return tautology
+
+            mod_func = self.parsed_args.func_filter
+
+            # special case: a bare function name (no module, i.e. no ":") is looked up in the --generator module
+            if ":" not in mod_func:
+                generator = self.parsed_args.generator
+                if generator is None:
+                    raise Exception(
+                        f"--func-filter '{mod_func}' has no module, and can't be resolved against "
+                        f"the --generator module because --generator is not set"
+                    )
+                generator_module = generator.split(":")[0]
+                mod_func = f"{generator_module}:{mod_func}"
+
+            func = func_from_mod_func(mod_func)
+
+            def f(key, state_name, step):
+                return func(key, state_name, step)
+
+            return f
+
         def g():
             yield create_glob_filter()
             yield create_py_filter()
+            yield create_func_filter()
 
         return list(g())
 
@@ -1505,6 +1566,8 @@ class Cli:
     def has_filters(self):
         if self.parsed_args.py_filter is not None or self.parsed_args.filter != "*":
             return True
+        if self.parsed_args.func_filter is not None:
+            return True
         if self.parsed_args.filter_completed:
             return True
         
@@ -1519,7 +1582,7 @@ class Cli:
 
     def list_keys(self):
         for key, _, _, _ in self.filter_key_state_step():
-            print(key)
+            print(key, file=self.output)
 
     def run_from_slurm_job(self):
         task_process = TaskProcess(
