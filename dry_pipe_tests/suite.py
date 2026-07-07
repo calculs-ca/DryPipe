@@ -1,4 +1,8 @@
+import os
+import subprocess
 import sys
+import time
+from concurrent.futures import ThreadPoolExecutor
 
 from unittest import TextTestRunner, TestSuite, defaultTestLoader
 
@@ -107,14 +111,86 @@ def exhaustive_test_suite():
     return low_level_tests() + local_array_tests() + all_remote_tests()
 
 
+def _fullname(klass):
+    module = klass.__module__
+    if module == 'builtins':
+        return klass.__qualname__  # avoid outputs like 'builtins.str'
+    return module + '.' + klass.__qualname__
+
+
+def flatten_test_classes(test_classes_or_list_of_test_classes):
+    def g():
+        for t in test_classes_or_list_of_test_classes:
+            if isinstance(t, list):
+                yield from t
+            else:
+                yield t
+
+    # remove duplicate classes, keep first occurrence:
+    d = {}
+    for c in g():
+        d.setdefault(_fullname(c), c)
+
+    return list(d.values())
+
+
+def run_classes_in_parallel(test_classes, max_workers=None):
+    """
+    Runs each test class in its own `python -m unittest` subprocess, fanned out across
+    a thread pool. Test classes here are already isolated by sandbox dir (keyed by class
+    name), so this is safe: the parallelism comes from separate OS processes (fresh
+    interpreter, fresh logging handlers), not from threading within one process.
+    """
+
+    if max_workers is None:
+        max_workers = os.cpu_count()
+
+    classes = flatten_test_classes(test_classes)
+    cwd = os.path.dirname(os.path.abspath(__file__))
+
+    def run_one(cls):
+        target = _fullname(cls)
+        t0 = time.time()
+        p = subprocess.run(
+            [sys.executable, "-m", "unittest", target],
+            capture_output=True, text=True, cwd=cwd
+        )
+        return target, p.returncode, time.time() - t0, p.stdout + p.stderr
+
+    failures = []
+    t_start = time.time()
+
+    with ThreadPoolExecutor(max_workers=max_workers) as ex:
+        for target, code, dt, output in ex.map(run_one, classes):
+            status = "ok" if code == 0 else "FAIL"
+            print(f"{status:5} {dt:6.1f}s  {target}")
+            if code != 0:
+                failures.append((target, output))
+
+    total = time.time() - t_start
+
+    for target, output in failures:
+        print(f"\n===== {target} =====\n{output}")
+
+    print(
+        f"\nRan {len(classes)} test classes in {total:.1f}s using {max_workers} workers "
+        f"({'FAILED' if failures else 'OK'}, {len(failures)} failing)"
+    )
+
+    return len(failures) == 0
+
+
 if __name__ == '__main__':
 
     #log_4_debug_daemon_mode()
 
     suite_to_test = "low_level_tests"
 
-    if len(sys.argv) >= 2:
-        suite_to_test = sys.argv[1]
+    args = [a for a in sys.argv[1:] if a != "--parallel"]
+    parallel = "--parallel" in sys.argv[1:]
+
+    if len(args) >= 1:
+        suite_to_test = args[0]
 
     suite_funcs = {
         "low_level_tests": low_level_tests,
@@ -132,36 +208,17 @@ if __name__ == '__main__':
         "globus_tests": globus_tests
     }
 
-    def gen_test_classes(test_classes_or_list_of_test_classes):
-
-        def fullname(klass):
-            module = klass.__module__
-            if module == 'builtins':
-                return klass.__qualname__  # avoid outputs like 'builtins.str'
-            return module + '.' + klass.__qualname__
-
-        def g():
-            for t in test_classes_or_list_of_test_classes:
-                if isinstance(t, list):
-                    for t0 in t:
-                        yield fullname(t0), defaultTestLoader.loadTestsFromTestCase(t0)
-                else:
-                    yield fullname(t), defaultTestLoader.loadTestsFromTestCase(t)
-
-        # remove duplicate classes:
-        d = {
-            qn: t for qn, t in g()
-        }
-
-        yield from d.values()
-
     def build_suite(test_classes):
         suite = TestSuite()
-        for test_suite in gen_test_classes(test_classes):
-            suite.addTests(test_suite)
+        for cls in flatten_test_classes(test_classes):
+            suite.addTests(defaultTestLoader.loadTestsFromTestCase(cls))
         return suite
 
     chosen_suite_func = suite_funcs[suite_to_test]()
+
+    if parallel:
+        ok = run_classes_in_parallel(chosen_suite_func)
+        sys.exit(0 if ok else 1)
 
     failfast = False
 

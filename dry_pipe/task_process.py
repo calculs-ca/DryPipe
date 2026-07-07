@@ -1290,7 +1290,7 @@ class TaskProcess:
         custom_sleep_schedule = self.env.get("DRYPIPE_SLEEP_SCHEDULE")
 
         if custom_sleep_schedule is not None:
-            res = [int(s) for s in custom_sleep_schedule.split(",")]
+            res = [float(s) for s in custom_sleep_schedule.split(",")]
         else:
             res = value_when_absent
 

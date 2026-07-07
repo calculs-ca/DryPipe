@@ -55,10 +55,10 @@ class BasePipelineTest(TestWithDirectorySandbox):
         pass
 
     def custom_sleep_schedule(self):
-        return "1"
+        return "0.2"
 
     def custom_sleep_schedule_parsed(self):
-        return [int(s) for s in self.custom_sleep_schedule().split(",")]
+        return [float(s) for s in self.custom_sleep_schedule().split(",")]
 
     def spin_until_no_running_jobs(self, sleep_schedule=[0]):
         with SleepySpinner(sleep_schedule) as ss:

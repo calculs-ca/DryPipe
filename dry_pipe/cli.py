@@ -319,9 +319,9 @@ class Cli:
 
     def _enumerate_commands(self):
 
-        class ListOfInts:
+        class ListOfFloats:
             def __call__(self, txt):
-                return [int(s) for s in txt.split(",")]
+                return [float(s) for s in txt.split(",")]
 
 
 
@@ -558,7 +558,7 @@ class Cli:
                 env=self.env,
                 help="a list of sleep times in seconds, for the main loop of the service, can also be set with environment var DRYPIPE_SERVICE_SLEEP_SCHEDULE",
                 default="0,1,3,5,10,15,20",
-                type=ListOfInts()
+                type=ListOfFloats()
             )
 
         def config_generator(parser):
@@ -1725,6 +1725,7 @@ class Cli:
         for state_step, tuples in groupby(sorted(all, key=k), key=k):
             state, step = state_step
             cnt = len(list(tuples))
+            step = "" if step is None else step
             print(f"{state}\t{step}\t{cnt}")
 
 def run_cli():
