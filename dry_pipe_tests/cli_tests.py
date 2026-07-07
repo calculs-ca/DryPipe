@@ -23,10 +23,25 @@ def simple_array_pipeline():
     return DryPipe.create_pipeline(dag_simple_array)
 
 
-def func_filter_even_children(key, state_name, step):
-    """selects the even numbered children of dag_simple_array (t02, t04, ...), excludes the array parent 'ap'"""
+def _child_number(key):
     m = re.match(r"t(\d+)$", key)
-    return m is not None and int(m.group(1)) % 2 == 0
+    return None if m is None else int(m.group(1))
+
+
+def func_filter_even_children():
+    """factory: selects the even numbered children of dag_simple_array (t02, t04, ...), excludes parent 'ap'"""
+    def f(key, state_name, step):
+        n = _child_number(key)
+        return n is not None and n % 2 == 0
+    return f
+
+
+def func_filter_children_above(threshold):
+    """factory with an argument: selects children whose number is strictly above threshold"""
+    def f(key, state_name, step):
+        n = _child_number(key)
+        return n is not None and n > threshold
+    return f
 
 
 def create_cli(*args, **kwargs):
@@ -531,7 +546,7 @@ class CliFuncFilterTests(BasePipelineTest):
         self._prepare(d)
 
         self.assertEqual(
-            self._list_keys(d, '--func-filter=dry_pipe_tests.cli_tests:func_filter_even_children'),
+            self._list_keys(d, '--func-filter=dry_pipe_tests.cli_tests:func_filter_even_children()'),
             self.expected_even_children
         )
 
@@ -539,7 +554,8 @@ class CliFuncFilterTests(BasePipelineTest):
         d = TestSandboxDir(self)
         self._prepare(d)
 
-        # bare name (no ":") must be looked up in the --generator module
+        # bare name (no ":") is looked up in the --generator module; a bare name with no
+        # parens is a zero-arg factory call (equivalent to "func_filter_even_children()")
         self.assertEqual(
             self._list_keys(d, '--func-filter=func_filter_even_children'),
             self.expected_even_children
@@ -554,7 +570,7 @@ class CliFuncFilterTests(BasePipelineTest):
             self._list_keys(
                 d,
                 '--filter=t0*',
-                '--func-filter=func_filter_even_children'
+                '--func-filter=func_filter_even_children()'
             ),
             ['t02', 't04', 't06', 't08']
         )
@@ -584,7 +600,17 @@ class CliFuncFilterTests(BasePipelineTest):
             self._list_keys(
                 d,
                 '--filter-not-completed',
-                '--func-filter=func_filter_even_children'
+                '--func-filter=func_filter_even_children()'
             ),
             ['t06', 't08', 't10']
+        )
+
+    def test_func_filter_with_args(self):
+        d = TestSandboxDir(self)
+        self._prepare(d)
+
+        # the factory is called once with the parsed args and returns the (key, state_name, step) filter
+        self.assertEqual(
+            self._list_keys(d, '--func-filter=func_filter_children_above(threshold=8)'),
+            ['t09', 't10', 't11']
         )

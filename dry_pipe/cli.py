@@ -1,4 +1,5 @@
 import argparse
+import ast
 import ctypes
 import ctypes.util
 import fnmatch
@@ -154,6 +155,45 @@ def _cleanup_args(args):
         return args[idx + 2:]
     else:
         return args
+
+
+def _parse_func_filter_spec(spec):
+    """
+    Parses a --func-filter value into (module_func_reference, args, kwargs).
+
+    Accepts a bare reference ("a.b.c:f" or "f") or a call form ("a.b.c:f('z', threshold=3)").
+    The reference part is returned verbatim (the ':' and '.' make it invalid python, so it is not
+    parsed); the call arguments are parsed as python literals (ast.literal_eval, no code executed).
+    """
+    paren = spec.find("(")
+    if paren == -1:
+        return spec.strip(), [], {}
+
+    if not spec.rstrip().endswith(")"):
+        raise Exception(
+            f"--func-filter '{spec}' is malformed, expected 'module:func' or \"module:func(args...)\""
+        )
+
+    reference = spec[:paren].strip()
+    call_source = spec[paren:].strip()
+
+    try:
+        call_node = ast.parse(f"__f__{call_source}", mode="eval").body
+    except SyntaxError:
+        raise Exception(f"--func-filter '{spec}' has an invalid argument list")
+
+    if not isinstance(call_node, ast.Call):
+        raise Exception(f"--func-filter '{spec}' has an invalid argument list")
+
+    try:
+        args = [ast.literal_eval(a) for a in call_node.args]
+        kwargs = {kw.arg: ast.literal_eval(kw.value) for kw in call_node.keywords}
+    except ValueError:
+        raise Exception(
+            f"--func-filter '{spec}' arguments must be python literals (str, int, ...), not expressions"
+        )
+
+    return reference, args, kwargs
 
 
 class Cli:
@@ -441,14 +481,22 @@ class Cli:
             parser.add_argument(
                 '--func-filter',
                 help='''
-                a function imported from a module on the PYTHONPATH, using the "module:function" object-reference
-                format (as in setuptools entry points / gunicorn), ex: a.b.c:f meaning "from a.b.c import f".
-                As a shortcut, a bare function name (no module, ex: f) is looked up in the --generator module.
-                The function is called with (key, state_name, step) for each task and must return a boolean
-                indicating whether the task is selected, ex:
+                a factory function imported from a module on the PYTHONPATH, using the "module:function"
+                object-reference format (as in setuptools entry points / gunicorn), ex: a.b.c:f meaning
+                "from a.b.c import f". As a shortcut, a bare function name (no module) is looked up in the
+                --generator module.
 
-                   def f(key, state_name, step):
-                       return step > 3 and state_name == 'failed'
+                The referenced function is a FACTORY: it is invoked (with a call syntax, arguments are python
+                literals) and must RETURN the filter function, which is then called with (key, state_name, step)
+                for each task and returns a boolean indicating whether the task is selected, ex:
+
+                   --func-filter="a.b.c:make_filter()"                # zero-arg factory
+                   --func-filter="a.b.c:make_filter(threshold=3)"     # with arguments
+
+                   def make_filter(threshold=0):
+                       def f(key, state_name, step):
+                           return step > threshold
+                       return f
                 '''
             )
 
@@ -1513,23 +1561,37 @@ class Cli:
             if self.parsed_args.func_filter is None:
                 return tautology
 
-            mod_func = self.parsed_args.func_filter
+            spec = self.parsed_args.func_filter
+            reference, call_args, call_kwargs = _parse_func_filter_spec(spec)
 
             # special case: a bare function name (no module, i.e. no ":") is looked up in the --generator module
-            if ":" not in mod_func:
+            if ":" not in reference:
                 generator = self.parsed_args.generator
                 if generator is None:
                     raise Exception(
-                        f"--func-filter '{mod_func}' has no module, and can't be resolved against "
+                        f"--func-filter '{spec}' has no module, and can't be resolved against "
                         f"the --generator module because --generator is not set"
                     )
                 generator_module = generator.split(":")[0]
-                mod_func = f"{generator_module}:{mod_func}"
+                reference = f"{generator_module}:{reference}"
 
-            func = func_from_mod_func(mod_func)
+            factory = func_from_mod_func(reference)
+
+            # the referenced function is a factory: it receives the --func-filter args and returns the filter
+            try:
+                inspect.signature(factory).bind(*call_args, **call_kwargs)
+            except TypeError as e:
+                raise Exception(f"--func-filter '{spec}': arguments don't match {reference}: {e}")
+
+            filter_func = factory(*call_args, **call_kwargs)
+            if not callable(filter_func):
+                raise Exception(
+                    f"--func-filter '{spec}': {reference} must return a filter function(key, state_name, step), "
+                    f"got a {type(filter_func).__name__}"
+                )
 
             def f(key, state_name, step):
-                return func(key, state_name, step)
+                return filter_func(key, state_name, step)
 
             return f
 
