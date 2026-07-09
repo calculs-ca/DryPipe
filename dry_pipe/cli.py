@@ -769,7 +769,7 @@ class Cli:
             parser.add_argument(
                 '--slurm-max-jobs',
                 type=int,
-                help='adds %%N at the end of the sbatch array spec, ex: --array-2000%N',
+                help='adds %%N at the end of the sbatch array spec, ex: --array-2000%%N',
                 default=None
             )
 
