@@ -17,6 +17,8 @@ import logging.config
 import os
 import sys
 import textwrap
+import traceback
+
 from io import StringIO
 from os import environ
 from pathlib import Path
@@ -46,6 +48,7 @@ def call(mod_func):
         if task_process.as_subprocess:
             os._exit(1)
     except Exception:
+        traceback.print_exc(file=sys.stdout)
         if task_process.as_subprocess:
             os._exit(1)        
 
