@@ -1449,11 +1449,12 @@ class TaskProcess:
 
 
     def _warn_if_pid_not_nfs(self):
-        if not self._is_pipeline_instance_dir_nfs():
+        is_nfs, fs_type = self._is_pipeline_instance_dir_nfs()
+        if not is_nfs:
             self.task_logger.warning(
-                "Will launch sbatch task %s on non NFS drive, most slurm setups use NFS for file sharing between nodes " +
-                "and login node. In such setups, a non NFS PIPELINE_INSTANCE_DIR  results in a crash without any logs",
-                self.control_dir
+                "Will launch sbatch task %s on non network drive of type '%s', most slurm setups use network file sharing between nodes " +
+                "and login node. Jobs launched with the current setup may crash without any logs.",
+                self.control_dir, fs_type
             )
 
     def submit_sbatch_task(self, extra_sbatch_options=None):
@@ -1743,7 +1744,8 @@ class TaskProcess:
             return p.stdout_as_string().strip()
 
     def _is_pipeline_instance_dir_nfs(self):
-        return self._fs_type(self.pipeline_instance_dir) in {"nfs", "lustre"}
+        t = self._fs_type(self.pipeline_instance_dir)
+        return t in {"nfs", "lustre", "zfs"}, t
 
     def _set_apptainer_bind_in_env(self, env, script=None):
 
