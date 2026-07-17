@@ -1,4 +1,5 @@
 import argparse
+import ast
 import ctypes
 import ctypes.util
 import fnmatch
@@ -16,12 +17,14 @@ import logging.config
 import os
 import sys
 import textwrap
+import traceback
+
 from io import StringIO
 from os import environ
 from pathlib import Path
 
 from dry_pipe import PortablePopen, DryPipe
-from dry_pipe.core_lib import func_from_mod_func, is_inside_slurm_job
+from dry_pipe.core_lib import func_from_mod_func, is_inside_slurm_job, create_instance_logger
 from dry_pipe.pipeline_instance import Monitor, PipelineInstance
 from dry_pipe.task_process import TaskPackExchausted, TaskProcess, TaskFailedException
 from dry_pipe.slurm_array_task import SlurmArrayParentTask
@@ -45,6 +48,7 @@ def call(mod_func):
         if task_process.as_subprocess:
             os._exit(1)
     except Exception:
+        traceback.print_exc(file=sys.stdout)
         if task_process.as_subprocess:
             os._exit(1)        
 
@@ -156,6 +160,45 @@ def _cleanup_args(args):
         return args
 
 
+def _parse_func_filter_spec(spec):
+    """
+    Parses a --func-filter value into (module_func_reference, args, kwargs).
+
+    Accepts a bare reference ("a.b.c:f" or "f") or a call form ("a.b.c:f('z', threshold=3)").
+    The reference part is returned verbatim (the ':' and '.' make it invalid python, so it is not
+    parsed); the call arguments are parsed as python literals (ast.literal_eval, no code executed).
+    """
+    paren = spec.find("(")
+    if paren == -1:
+        return spec.strip(), [], {}
+
+    if not spec.rstrip().endswith(")"):
+        raise Exception(
+            f"--func-filter '{spec}' is malformed, expected 'module:func' or \"module:func(args...)\""
+        )
+
+    reference = spec[:paren].strip()
+    call_source = spec[paren:].strip()
+
+    try:
+        call_node = ast.parse(f"__f__{call_source}", mode="eval").body
+    except SyntaxError:
+        raise Exception(f"--func-filter '{spec}' has an invalid argument list")
+
+    if not isinstance(call_node, ast.Call):
+        raise Exception(f"--func-filter '{spec}' has an invalid argument list")
+
+    try:
+        args = [ast.literal_eval(a) for a in call_node.args]
+        kwargs = {kw.arg: ast.literal_eval(kw.value) for kw in call_node.keywords}
+    except ValueError:
+        raise Exception(
+            f"--func-filter '{spec}' arguments must be python literals (str, int, ...), not expressions"
+        )
+
+    return reference, args, kwargs
+
+
 class Cli:
 
     @staticmethod
@@ -228,6 +271,24 @@ class Cli:
             else:
                 self.command_names_to_method[command.name] = m
 
+        self.parse_args()
+
+        if is_inside_slurm_job():
+            # this process is a slurm job (or a step of one) that the CLI itself submitted;
+            # its logging belongs in the task's own drypipe.log, not instance.log:
+            # instance.log should read like what --verbose would show a user, and concurrent
+            # slurm jobs writing to one shared instance.log is a concurrency hazard.
+            self.instance_logger = None
+        else:
+            pid = getattr(self.parsed_args, 'pipeline_instance_dir', None)
+            if pid:
+                self.instance_logger = create_instance_logger(
+                    pid, level=logging.DEBUG if self.parsed_args.vv else logging.INFO
+                )
+                self.instance_logger.info("cli invoked: %s", self.raw_command_line)
+            else:
+                self.instance_logger = None
+
     def create_logger(self, logging_level):
 
         logger = logging.getLogger("cli")
@@ -254,17 +315,14 @@ class Cli:
         return logger
     
     def parse_args(self):
-        self.parsed_args = self.parser.parse_args(self.args)
-
-    def invoke(self):
 
         if is_inside_slurm_job():
 
             tcd = Path(os.environ["DRYPIPE_TASK_CONTROL_DIR"])
             task_key = tcd.name.__str__()
-            pid = tcd.parent.parent.__str__()            
+            pid = tcd.parent.parent.__str__()
 
-            is_packed_job = "DRYPIPE_PACKED_JOB_SIZE" in os.environ
+            is_packed_job = "DRYPIPE_TASKS_PER_JOB" in os.environ
 
             if is_packed_job:
                 cmd = "run-from-slurm-packed-job"
@@ -279,6 +337,7 @@ class Cli:
         else:
             self.parsed_args = self.parser.parse_args(self.args)
 
+    def invoke(self):
 
         if self.parsed_args.dry_run:
             print(f"DRY RUN {self.parsed_args.command}")
@@ -303,9 +362,9 @@ class Cli:
 
     def _enumerate_commands(self):
 
-        class ListOfInts:
+        class ListOfFloats:
             def __call__(self, txt):
-                return [int(s) for s in txt.split(",")]
+                return [float(s) for s in txt.split(",")]
 
 
 
@@ -381,7 +440,28 @@ class Cli:
         def filter(parser):
             parser.add_argument(
                 '--filter', '--key-filter',
-                help='glob expression applied to task keys',
+                help='''
+                glob expression applied to task keys, ex: "t_a*".
+
+                HOW FILTERS COMBINE
+                Filters come in three independent groups. A task is INCLUDED only when it passes ALL of the
+                filters that are set (logical AND); it is EXCLUDED as soon as it fails any one of them.
+                A group that is not set matches everything (it never excludes on its own).
+
+                  1. key       : --filter / --key-filter   (glob on the task key)
+                  2. state/step: --py-filter, --filter-completed, --filter-not-completed, --filter-failed
+                  3. function  : --func-filter              (a python function returning a boolean)
+
+                Within group 2 the options are mutually exclusive: if several are given, exactly one wins,
+                in this precedence order: --filter-completed > --filter-not-completed > --filter-failed > --py-filter.
+
+                So --filter and --func-filter (and one option from group 2) INTERSECT: e.g.
+                    --filter=t_a* --filter-failed --func-filter=mod:f
+                selects the tasks whose key matches t_a*, AND are failed, AND for which f(...) returns True.
+
+                With no filter set, all tasks are selected. Filters can be tested with "low consequence"
+                commands such as list-keys or summary before more consequential ones such as array-submit.
+                ''',
                 default='*'
             )
 
@@ -399,6 +479,54 @@ class Cli:
                 before more consequential commands such as array-submit                                 
                 '''
             )
+
+        def func_filter(parser):
+            parser.add_argument(
+                '--func-filter',
+                help='''
+                a factory function imported from a module on the PYTHONPATH, using the "module:function"
+                object-reference format (as in setuptools entry points / gunicorn), ex: a.b.c:f meaning
+                "from a.b.c import f". As a shortcut, a bare function name (no module) is looked up in the
+                --generator module.
+
+                The referenced function is a FACTORY: it is invoked (with a call syntax, arguments are python
+                literals) and must RETURN the filter function, which is then called with (key, state_name, step)
+                for each task and returns a boolean indicating whether the task is selected, ex:
+
+                   --func-filter="a.b.c:make_filter()"                # zero-arg factory
+                   --func-filter="a.b.c:make_filter(threshold=3)"     # with arguments
+
+                   def make_filter(threshold=0):
+                       def f(key, state_name, step):
+                           return step > threshold
+                       return f
+                '''
+            )
+
+        def filter_not_completed(parser):
+            parser.add_argument(
+                '--filter-not-completed',
+                help='filters all incomplete tasks',
+                action='store_true',
+                default=False
+            )
+        
+        def filter_completed(parser):
+            parser.add_argument(
+                '--filter-completed',
+                help='filters all incomplete tasks',
+                action='store_true',
+                default=False
+            )            
+
+        def filter_failed(parser):
+            parser.add_argument(
+                '--filter-failed',
+                help='filters failed tasks',
+                action='store_true',
+                default=False
+            )
+            
 
         def grep_expr(parser):
             parser.add_argument(
@@ -443,6 +571,14 @@ class Cli:
                 help='restarts the task at the specified step (zero based).',
                 default=None
             )
+
+        def state(parser):
+            parser.add_argument(
+                '--state',
+                type=str,
+                help='state of a task (ready.0, failed.3, etc)',
+                default=None
+            )            
 
         def wait(parser):
             parser.add_argument(
@@ -509,7 +645,7 @@ class Cli:
                 env=self.env,
                 help="a list of sleep times in seconds, for the main loop of the service, can also be set with environment var DRYPIPE_SERVICE_SLEEP_SCHEDULE",
                 default="0,1,3,5,10,15,20",
-                type=ListOfInts()
+                type=ListOfFloats()
             )
 
         def config_generator(parser):
@@ -546,24 +682,29 @@ class Cli:
                     except Exception as e:
                         raise Exception(f"arg {a.__name__}  on command {name} failed with exception {e}")
 
+        def all_filters():
+            return [filter, py_filter, func_filter, filter_completed, filter_not_completed, filter_failed]
 
         yield Command('run', pipeline_instance_dir, generator, until, restart_failed, reset_failed, sleep_schedule,
                       help="generate tasks and run the pipeline")
 
-        yield Command('rewind', pipeline_instance_dir, generator, at_step, py_filter, filter,
+        yield Command('rewind', pipeline_instance_dir, generator, at_step, *all_filters(),
                       help="transition all selected tasks (--filter and --py-filter) to step X sepcified by --at-step=X")
+        
+        yield Command('set-state', pipeline_instance_dir, generator, state, *all_filters(),
+                      help="transition all selected tasks (--filter and --py-filter) to state S sepcified by --state")        
 
-        yield Command('list-keys', pipeline_instance_dir, generator, filter, py_filter,
+        yield Command('list-keys', pipeline_instance_dir, generator, *all_filters(),
                       help="list keys in the pipeline instance that can possibly generated by the DAG")
 
-        yield Command('list', pipeline_instance_dir, generator, filter, py_filter,
+        yield Command('list', pipeline_instance_dir, generator, *all_filters(),
                       help="list keys, states, and step in the pipeline instance that can possibly generated by the DAG")
 
 
-        yield Command('status', pipeline_instance_dir, filter, py_filter, generator_optional,
+        yield Command('status', pipeline_instance_dir, *all_filters(), generator_optional,
                       help="list the states of tasks that exist so far in the pipeline instance")
         
-        yield Command('summary', pipeline_instance_dir, filter, py_filter, generator_optional,
+        yield Command('summary', pipeline_instance_dir, *all_filters(), generator_optional,
                       help="last aggregate counts of (state, step)")
 
         yield Command('prepare', pipeline_instance_dir, generator, until, sleep_schedule,
@@ -586,7 +727,7 @@ class Cli:
                 default=False
             )
 
-        yield Command('report-execution-times', task_key_optional, filter, include_steps,
+        yield Command('report-execution-times', task_key_optional, include_steps, *all_filters(),
                       help="execute time for all tasks, or all tasks matching filter expression")
 
         yield Command('run-from-slurm-job', task_key)
@@ -610,7 +751,7 @@ class Cli:
         yield Command('upload-drypipe-for-remote-instance', task_key)
         yield Command('upload-task-inputs', task_key)
 
-        yield Command('sbatch', task_key_optional, wait, regen, generator_optional, sbatch_options, filter, py_filter, reset, at_step,
+        yield Command('sbatch', task_key_optional, wait, regen, generator_optional, sbatch_options, reset, at_step, *all_filters(),
                       help="launch task (specified by --task-key, or by combination of --filter --py-filter) with sbatch")
 
         yield Command('sbatch-gen', task_key, regen, generator_optional, sbatch_options, reset,
@@ -619,11 +760,11 @@ class Cli:
         yield Command('dump-env', task_key, help="dump all environment variables of specified task")
 
 
-        def packed_job_size(parser):
+        def tasks_per_job(parser):
             parser.add_argument(
-                '--packed-job-size',
+                '--tasks-per-job',
                 type=int,
-                help='group tasks in to jobs, that run sequentialy',
+                help='group N child tasks into each slurm array job, running them sequentially',
                 default=None
             )
 
@@ -631,14 +772,14 @@ class Cli:
             parser.add_argument(
                 '--slurm-max-jobs',
                 type=int,
-                help='adds %N at the end of the sbatch array spec, ex: --array-2000%N',
+                help='adds %%N at the end of the sbatch array spec, ex: --array-2000%%N',
                 default=None
             )
 
 
         yield Command('array-submit',
                       task_key, limit, regen, generator_optional, tail, wait, include_all_incompleted_tasks,
-                      py_filter, filter, sbatch_options, reset, packed_job_size, slurm_max_jobs,
+                      sbatch_options, reset, tasks_per_job, slurm_max_jobs, *all_filters(),
                       help="submit array")
 
         yield Command('array-upload', task_key, help="upload array task to remote location")
@@ -649,9 +790,9 @@ class Cli:
         yield Command('list-states', task_key, gen_rsync_list)
         yield Command('array-rsync-list', task_key)
 
-        yield Command('reset', task_key_optional, filter, py_filter, generator)
+        yield Command('reset', task_key_optional, generator, *all_filters(),)
 
-        yield Command( 'grep-logs', pipeline_instance_dir,py_filter, filter, grep_expr, generator, help="applies fgrep on out.log files of matching tasks")
+        yield Command( 'grep-logs', pipeline_instance_dir, grep_expr, generator, *all_filters(), help="applies fgrep on out.log files of matching tasks")
 
         def tar_file(parser):
             parser.add_argument(
@@ -678,11 +819,11 @@ class Cli:
             )
 
         yield Command(
-            'tar-gz', task_key_optional, tar_file, filter, py_filter, generator, tar_file_tail_log, tail_n,
+            'tar-gz', task_key_optional, tar_file, generator, tar_file_tail_log, tail_n, *all_filters(),
             help="creates a .tar.gz with .drypipe/<task_key>/* and output/<task_key>/*"
         )
 
-        yield Command('tail-logs', py_filter, filter, tail_n, generator, pipeline_instance_dir,
+        yield Command('tail-logs', tail_n, generator, pipeline_instance_dir, *all_filters(),
                       help="applies tail on out.log files of matching tasks")
 
 
@@ -960,7 +1101,7 @@ class Cli:
             raise Exception(f"multiple state files in {control_dir}")
 
         if task_process.task_conf.executer_type == "slurm":
-            task_process.submit_sbatch_task()
+            task_process.submit_sbatch_task(instance_logger=self.instance_logger)
         else:
             task_process.launch_task()
 
@@ -1015,27 +1156,32 @@ class Cli:
             tail_all=self.parsed_args.tail_all,
             cli_tail_logger=cli_tail_logger,
             for_dry_run=self.parsed_args.dry_run,
-            packed_job_size=self.parsed_args.packed_job_size
-        )        
+            tasks_per_job=self.parsed_args.tasks_per_job
+        )
 
         if not task_process.is_slurm_array_parent():
             raise Exception(f"task {self.parsed_args.task_key} is not a slurm array")
 
-        array_task_manager = task_process.create_array_task_manager(self.parsed_args.slurm_max_jobs)
+        array_task_manager = task_process.create_array_task_manager(
+            self.parsed_args.slurm_max_jobs, instance_logger=self.instance_logger
+        )
 
-        array_task_manager.invoke_sacct()
+        if not self.has_filters():
+            array_task_manager.invoke_sacct()
 
-        is_restart = len(array_task_manager.arrays_submitted_sacct_info) > 0
+            is_restart = len(array_task_manager.arrays_submitted_sacct_info) > 0
 
-        if is_restart:
-            # task_process.rewind_to_step(0)
-            task_process.task_logger.info(f"submit_local_array is a restart")
-            if not task_process.for_dry_run:
-                for restart_file in Path(task_process.pipeline_work_dir).glob("*/restarts.tsv"):
-                    with open(restart_file, "a") as f:
-                        f.write("RESET\n")
-            else:
-                task_process.task_logger.info(f"no file changed, because it's a dry_run")
+            if is_restart:
+                # task_process.rewind_to_step(0)
+                task_process.task_logger.info(f"submit_local_array is a restart")
+                if not task_process.for_dry_run:
+                    for restart_file in Path(task_process.pipeline_work_dir).glob("*/restarts.tsv"):
+                        with open(restart_file, "a") as f:
+                            f.write("RESET\n")
+                else:
+                    task_process.task_logger.info(f"no file changed, because it's a dry_run")
+        else:
+            is_restart = False
 
         launch_count = 0
 
@@ -1136,7 +1282,7 @@ class Cli:
             for_dry_run=self.parsed_args.dry_run,
             alternate_logger=alternate_logger
         )
-        atm = task_process.create_array_task_manager()
+        atm = task_process.create_array_task_manager(instance_logger=self.instance_logger)
         report = atm.manage_auto_restarts_from_remote()
         print(json.dumps(report), file=self.output)
 
@@ -1180,14 +1326,16 @@ class Cli:
             
             control_dir = Path(self.parsed_args.pipeline_instance_dir, ".drypipe", key).__str__()
 
-            task_process = TaskProcess(control_dir, wait_for_completion=self._wait(), no_logger=True)
+            task_process = TaskProcess(
+                control_dir, wait_for_completion=self._wait(), no_logger=True
+            )
 
             if self.parsed_args.at_step is not None:
                 task_process.rewind_to_step(self.parsed_args.at_step)
             if self.parsed_args.reset:
                 task_process.rewind_to_step(0)                
 
-            task_process.submit_sbatch_task(self._extra_sbatch_options_if_any())
+            task_process.submit_sbatch_task(self._extra_sbatch_options_if_any(), instance_logger=self.instance_logger)
 
         if self.has_filters():
             for key, _, _, _ in self.filter_key_state_step():
@@ -1389,6 +1537,15 @@ class Cli:
 
         def create_py_filter():
 
+            if self.parsed_args.filter_completed:
+                return lambda key, state_name, step: state_name == 'completed'
+            
+            if self.parsed_args.filter_not_completed:
+                return lambda key, state_name, step: state_name != 'completed'
+            
+            if self.parsed_args.filter_failed:
+                return lambda key, state_name, step: state_name.startswith("failed")
+
             if self.parsed_args.py_filter is None:
                 return tautology
 
@@ -1403,9 +1560,48 @@ class Cli:
                     sys.exit(1)
             return f
 
+        def create_func_filter():
+            if self.parsed_args.func_filter is None:
+                return tautology
+
+            spec = self.parsed_args.func_filter
+            reference, call_args, call_kwargs = _parse_func_filter_spec(spec)
+
+            # special case: a bare function name (no module, i.e. no ":") is looked up in the --generator module
+            if ":" not in reference:
+                generator = self.parsed_args.generator
+                if generator is None:
+                    raise Exception(
+                        f"--func-filter '{spec}' has no module, and can't be resolved against "
+                        f"the --generator module because --generator is not set"
+                    )
+                generator_module = generator.split(":")[0]
+                reference = f"{generator_module}:{reference}"
+
+            factory = func_from_mod_func(reference)
+
+            # the referenced function is a factory: it receives the --func-filter args and returns the filter
+            try:
+                inspect.signature(factory).bind(*call_args, **call_kwargs)
+            except TypeError as e:
+                raise Exception(f"--func-filter '{spec}': arguments don't match {reference}: {e}")
+
+            filter_func = factory(*call_args, **call_kwargs)
+            if not callable(filter_func):
+                raise Exception(
+                    f"--func-filter '{spec}': {reference} must return a filter function(key, state_name, step), "
+                    f"got a {type(filter_func).__name__}"
+                )
+
+            def f(key, state_name, step):
+                return filter_func(key, state_name, step)
+
+            return f
+
         def g():
             yield create_glob_filter()
             yield create_py_filter()
+            yield create_func_filter()
 
         return list(g())
 
@@ -1433,13 +1629,27 @@ class Cli:
             print(f"{key}\t{state}\t{step}")
 
     def has_filters(self):
-        return self.parsed_args.py_filter is not None or self.parsed_args.filter != "*"
+        if self.parsed_args.py_filter is not None or self.parsed_args.filter != "*":
+            return True
+        if self.parsed_args.func_filter is not None:
+            return True
+        if self.parsed_args.filter_completed:
+            return True
+        
+        if self.parsed_args.filter_not_completed:
+            return True
+        
+        if self.parsed_args.filter_failed:
+            return True
+        
+        return False
+
 
     def list_keys(self):
         for key, _, _, _ in self.filter_key_state_step():
-            print(key)
+            print(key, file=self.output)
 
-    def run_from_slurm_job(self):        
+    def run_from_slurm_job(self):
         task_process = TaskProcess(
             self._control_dir()
         )
@@ -1455,7 +1665,7 @@ class Cli:
 
         TaskProcess.delete_array_child_launch_log_if_empty()
 
-        tasks_per_job = int(os.environ["DRYPIPE_PACKED_JOB_SIZE"])
+        tasks_per_job = int(os.environ["DRYPIPE_TASKS_PER_JOB"])
 
         last_task = None
 
@@ -1473,7 +1683,7 @@ class Cli:
                 task_process = TaskProcess(
                     self._control_dir(),
                     packed_array_index=packed_array_index,
-                    packed_job_size=tasks_per_job
+                    tasks_per_job=tasks_per_job
                 )
 
                 last_task_msg = ""
@@ -1538,7 +1748,7 @@ class Cli:
                 return
 
             if self.parsed_args.by_runner and not task_process.task_conf.is_slurm_parent:
-                task_process.submit_sbatch_task()
+                task_process.submit_sbatch_task(instance_logger=self.instance_logger)
                 return
 
         task_process.launch_task()
@@ -1549,7 +1759,7 @@ class Cli:
             self._control_dir(),
             wait_for_completion=self._wait() or self._tail(),
             use_remote_drypipe_log=self.parsed_args.from_remote,
-            tail=self._tail(),
+            tail=self._tail()
         )
 
         task_process.reset_restart_accounting()
@@ -1596,6 +1806,18 @@ class Cli:
         for key, state, step, state_file in self.filter_key_state_step():
             state_file.rewind_to_step(self.parsed_args.at_step)            
 
+    def set_state(self):
+
+        if "." in self.parsed_args.state:
+            state, step = self.parsed_args.state.split(".")
+            step = int(step)
+        else:
+            state = self.parsed_args.state
+            step = None
+
+        for key, _, _, state_file in self.filter_key_state_step():
+            state_file.transition_to_state(state, step)
+
     def instance_info(self):
         pid = os.environ.get("DRYPIPE_PIPELINE_INSTANCE_DIR")
         print(f"DRYPIPE_PIPELINE_INSTANCE_DIR={pid}")
@@ -1631,6 +1853,7 @@ class Cli:
         for state_step, tuples in groupby(sorted(all, key=k), key=k):
             state, step = state_step
             cnt = len(list(tuples))
+            step = "" if step is None else step
             print(f"{state}\t{step}\t{cnt}")
 
 def run_cli():

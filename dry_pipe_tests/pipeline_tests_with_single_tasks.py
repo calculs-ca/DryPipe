@@ -239,6 +239,50 @@ class PipelineWithVarSharingBetweenSteps(BasePipelineTest):
 
 
 @DryPipe.python_call()
+def triple_squared(squared):
+    return {
+        "tripled": squared * 3
+    }
+
+
+class Bash2Py2BashVariablePassing(BasePipelineTest):
+    """
+    Regression test for a bug where a bash step running after a python step
+    could not see variables exported by that python step: run_script built
+    its subprocess environment from self.env only, never re-reading the
+    output_vars file written by the python step.
+    """
+
+    def dag_gen(self, dsl):
+        yield dsl.task(
+            key="t",
+            task_conf=self.task_conf()
+        ).inputs(
+            x=4
+        ).outputs(
+            squared=int,
+            tripled=int,
+            result=int
+        ).calls("""
+            #!/usr/bin/env bash
+            export squared=$(( x * x ))
+        """).calls(
+            triple_squared
+        ).calls("""
+            #!/usr/bin/env bash
+            export result=$(( tripled + x ))
+        """)()
+
+    def validate(self, tasks_by_keys):
+        t = tasks_by_keys["t"]
+
+        self.assertTrue(t.is_completed())
+        self.assertEqual(int(t.outputs.squared), 16)
+        self.assertEqual(int(t.outputs.tripled), 48)
+        self.assertEqual(int(t.outputs.result), 52)
+
+
+@DryPipe.python_call()
 def crash_on_first_run_then_succeed(__task_control_dir, x1):
 
     f = Path(__task_control_dir, "f")
@@ -940,6 +984,7 @@ def all_basic_tests():
         PipelineWithSingleBashTask,
         PipelineWithVarAndFileOutput,
         PipelineWithVarSharingBetweenSteps,
+        Bash2Py2BashVariablePassing,
         PipelineWith4MixedStepsPythonCrash,
         TestPythonPathInExtraEnv,
         TestPythonPathInExtraEnv2,

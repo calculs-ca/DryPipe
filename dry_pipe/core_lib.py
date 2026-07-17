@@ -1,9 +1,45 @@
 import importlib
+import logging
 import os
 import subprocess
 import re
 import time
 import traceback
+from logging.handlers import RotatingFileHandler
+
+
+def instance_log_file(pipeline_instance_dir):
+    return os.path.join(pipeline_instance_dir, ".drypipe", "instance.log")
+
+
+def create_instance_logger(pipeline_instance_dir, level=logging.INFO):
+    """
+    Every pipeline instance has a single instance.log, shared by the daemon (PipelineInstance)
+    and by every standalone CLI invocation (sbatch, array-submit, task, etc.) operating on that
+    same instance. This returns a logger bound to that file, creating .drypipe/ if needed.
+    """
+    log_file = instance_log_file(pipeline_instance_dir)
+
+    os.makedirs(os.path.dirname(log_file), exist_ok=True)
+
+    l = logging.getLogger(f"pipeline-instance-logger-{os.path.basename(pipeline_instance_dir)}")
+    l.propagate = False
+    for h in l.handlers:
+        h.close()
+    l.handlers.clear()
+
+    file_handler = RotatingFileHandler(
+        filename=log_file,
+        maxBytes=1024 * 1024 * 10, backupCount=3
+    )
+    file_handler.setLevel(level)
+    file_handler.setFormatter(
+        logging.Formatter("%(asctime)s - %(levelname)s - %(message)s", datefmt='%Y-%m-%d %H:%M:%S%z')
+    )
+    l.addHandler(file_handler)
+    l.setLevel(level)
+
+    return l
 
 
 class RetryableRsyncException(Exception):

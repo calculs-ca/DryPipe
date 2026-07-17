@@ -71,6 +71,20 @@ class StateFile:
 
         os.rename(prev_path, self.path)
 
+    def transition_to_state(self, state_name, step=None):
+        
+        if step is not None:
+            step = int(step)
+
+        prev_path = self.path
+
+        if step is not None:
+            self.path = os.path.join(self.pipeline_work_dir, self.task_key, f"state.{state_name}.{step}")
+        else:
+            self.path = os.path.join(self.pipeline_work_dir, self.task_key, f"state.{state_name}")
+
+        os.rename(prev_path, self.path)        
+
 
     def state_as_string(self):
         return os.path.basename(self.path)

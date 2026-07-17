@@ -65,7 +65,7 @@ class TaskProcess:
             use_remote_drypipe_log=False,
             for_dry_run=False,
             cli_tail_logger=None,
-            packed_job_size=None,
+            tasks_per_job=None,
             packed_array_index=None
 
     ):
@@ -76,7 +76,7 @@ class TaskProcess:
         self.slurm_tmp_dir = None
 
         self.packed_array_index = packed_array_index
-        self.packed_job_size = packed_job_size
+        self.tasks_per_job = tasks_per_job
 
         self.cli_tail_logger = cli_tail_logger
 
@@ -129,10 +129,10 @@ class TaskProcess:
             if self.slurm_job_id is not None:
                 self.slurm_tmp_dir = os.environ.get('SLURM_TMPDIR')
                 self.task_logger.info("SLURM_JOB_ID: %s, %s", self.slurm_job_id, self.slurm_tmp_dir)
-                if self.slurm_tmp_dir is None:
-                    self.slurm_tmp_dir = Path("/tmp", f"slurm_tmp_{self.slurm_job_id}")
+                if self.slurm_tmp_dir is None:                    
+                    self.slurm_tmp_dir = Path(self.task_output_dir, "scratch")
                     #TODO: stop constructing TaskProcess for other reasons than for execution
-                    self.slurm_tmp_dir.mkdir(exist_ok=True)
+                    self.slurm_tmp_dir.mkdir(exist_ok=True, parents=True)
                     self.task_logger.warning(
                         f"SLURM_JOB_ID is set, but SLURM_TMPDIR is unset, probably a test environment, or non standard slurm config, {self.slurm_tmp_dir} was created"
                     )
@@ -1124,11 +1124,30 @@ class TaskProcess:
         if os.path.exists(expanded_script_path):
             self.task_logger.debug("expanded script: %s resolves to: %s", script, expanded_script_path)
             return expanded_script_path
+        
+        if script.startswith("#STEP-"):
+            step_number = int(script[6:])
+            scratch_dir = Path(self.resolve_scratch_dir())
+            if not scratch_dir.exists():
+                scratch_dir.mkdir()
 
-        p = os.path.join(
-            env["__control_dir"],
-            os.path.basename(script)
-        )
+            tmp_script = scratch_dir.joinpath(f"step-{step_number}.sh")            
+            with open(tmp_script, "w") as scr:
+                with open(Path(self.control_dir).joinpath("steps.sh")) as steps:
+                    in_script = False
+                    for line in steps:
+                        if in_script:
+                            if line.startswith("#####__DRYPIPE_STEP-"):
+                                break
+                            scr.write(line)
+                        else:
+                            if not line.startswith(f"#####__DRYPIPE_STEP-{step_number}"):
+                                continue
+                            else:
+                                in_script = True
+            p = tmp_script
+        else:
+            p = os.path.join(env["__control_dir"], os.path.basename(script))
 
         self.task_logger.debug("script: %s resolves to: %s", script, p)
 
@@ -1140,6 +1159,7 @@ class TaskProcess:
 
         env = {
             ** self.env,
+            ** dict(self.iterate_out_vars_from()),
             ** self._local_copy_adjusted_file_env_vars()
         }
 
@@ -1270,7 +1290,7 @@ class TaskProcess:
         custom_sleep_schedule = self.env.get("DRYPIPE_SLEEP_SCHEDULE")
 
         if custom_sleep_schedule is not None:
-            res = [int(s) for s in custom_sleep_schedule.split(",")]
+            res = [float(s) for s in custom_sleep_schedule.split(",")]
         else:
             res = value_when_absent
 
@@ -1457,12 +1477,16 @@ class TaskProcess:
                 self.control_dir, fs_type
             )
 
-    def submit_sbatch_task(self, extra_sbatch_options=None):
+    def submit_sbatch_task(self, extra_sbatch_options=None, instance_logger=None):
 
         self._warn_if_pid_not_nfs()
 
+        cmd = list(self.sbatch_cmd_lines(extra_sbatch_options))
+
+        (instance_logger or self.task_logger).info("sbatch command: %s", " ".join(cmd))
+
         p = PortablePopen(
-            list(self.sbatch_cmd_lines(extra_sbatch_options)),
+            cmd,
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT
         )
 
@@ -1718,7 +1742,7 @@ class TaskProcess:
                     rsync_list_file.write(f)
                     rsync_list_file.write(f"\n")
 
-    def create_array_task_manager(self, slurm_max_jobs=None):
+    def create_array_task_manager(self, slurm_max_jobs=None, instance_logger=None):
 
         arm = None
         if self.task_conf.auto_restart_condition_regexp_per_log_file is not None:
@@ -1734,7 +1758,10 @@ class TaskProcess:
             parser = SAcctParser()
             self.task_logger.debug("SAcctParser created")
 
-        return ArrayTaskManager(self, arm, parser, for_dry_run=self.for_dry_run, slurm_max_jobs=slurm_max_jobs)
+        return ArrayTaskManager(
+            self, arm, parser, for_dry_run=self.for_dry_run, slurm_max_jobs=slurm_max_jobs,
+            instance_logger=instance_logger
+        )
 
     def _fs_type(self, file):
 

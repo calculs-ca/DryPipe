@@ -8,7 +8,7 @@ from dry_pipe_tests.pipeline_tests_with_single_tasks import PipelineWithSinglePy
     PipelineWith3StepsCrash3
 from dry_pipe_tests.pipeline_tests_with_slurm_mockup import PipelineWithSlurmArray
 
-python_path_for_tests = str(Path(__file__).resolve().parent)
+python_path_for_tests = str(Path(__file__).resolve().parent.parent)
 
 def task_conf_with_local_slurm(test):    
     return TaskConf(
