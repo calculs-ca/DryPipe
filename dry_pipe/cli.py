@@ -3,6 +3,7 @@ import ast
 import ctypes
 import ctypes.util
 import fnmatch
+import grp
 import inspect
 from itertools import groupby
 import shutil
@@ -1862,9 +1863,44 @@ def run_cli():
 def setup_file_creation_mask():
     os.umask(0o007)
 
+def enforce_primary_group():
+    """
+    When DRYPIPE_PRIMARY_GROUP is set, require that the process' primary group
+    (the group stamped on every newly created file/dir) matches it. This lets
+    several unix users collaborate under DRYPIPE_PIPELINE_INSTANCE_DIR: files
+    created by any of them are owned by the shared project group, so the others
+    (members of that group) can read, write and delete them.
+
+    An unprivileged process cannot switch its primary group to a supplementary
+    group, only newgrp/sg can, so on mismatch we refuse and tell the user how.
+    """
+    group_name = os.environ.get("DRYPIPE_PRIMARY_GROUP")
+    if not group_name:
+        return
+
+    try:
+        expected_gid = grp.getgrnam(group_name).gr_gid
+    except KeyError:
+        raise Exception(f"DRYPIPE_PRIMARY_GROUP={group_name} is not a known group")
+
+    current_gid = os.getegid()
+    if current_gid == expected_gid:
+        return
+
+    try:
+        current_group_name = grp.getgrgid(current_gid).gr_name
+    except KeyError:
+        current_group_name = str(current_gid)
+
+    raise Exception(
+        f"DRYPIPE_PRIMARY_GROUP={group_name}, and current group is "
+        f"{current_group_name}, please run newgrp {group_name}"
+    )
+
 def handle_script_lib_main():
     try:
         setup_file_creation_mask()
+        enforce_primary_group()
         cli = Cli(sys.argv[1:])
         cli.invoke()
     except Exception as e:
@@ -1887,6 +1923,7 @@ if __name__ == '__main__':
 
     if "SLURM_JOB_ID" in os.environ:
         setup_file_creation_mask()
+        enforce_primary_group()
         call(sys.argv[2])
     else:
         handle_script_lib_main()
