@@ -391,6 +391,120 @@ class StateMachineTests(unittest.TestCase):
         )
 
 
+    def test_gen_all_tasks_query_sees_previously_yielded_tasks(self):
+        """
+        Regression test for the bug where CLI functions (status, list-keys, etc.) miss tasks.
+
+        Those functions go through filter_key_state_step -> iterate_key_state_steps ->
+        StateMachine.gen_all_tasks(). gen_all_tasks() used to just `yield from task_generator(self)`
+        WITHOUT registering the yielded tasks into the state_file_tracker's in-memory map.
+
+        A dsl.query_all_or_nothing(...) only looks at state_file_tracker.all_state_files()
+        (== the in-memory map). With no registration, tasks yielded earlier in the SAME generator
+        pass were invisible to the query, which returned [], silently skipping every gated task.
+
+        gen_all_tasks() now registers each task as it is yielded, resolving to the on-disk state
+        when a state file exists, so a query sees everything yielded before it.
+        """
+
+        def dag_gen(dsl):
+            yield TaskMockup("t1")
+            yield TaskMockup("t2")
+            for _ in dsl.query_all_or_nothing("t*"):
+                yield TaskMockup("A1")
+
+        d = TestSandboxDir(self)
+
+        # 1) Drive a full run so that t1, t2 AND the query-gated A1 all end up
+        #    completed on disk (i.e. this is a real, fully materialized instance dir).
+        state_file_tracker = StateFileTracker(d.sandbox_dir)
+        tester = StateMachineTester(self, dag_gen, state_file_tracker)
+
+        tester.iterate_once_and_mutate_set_of_next_state_files_ready()
+        tester.assert_set_of_next_tasks_ready("t1", "t2")
+
+        state_file_tracker.set_completed_on_disk("t1")
+        state_file_tracker.set_completed_on_disk("t2")
+
+        tester.iterate_once_and_mutate_set_of_next_state_files_ready()
+        tester.iterate_once_and_mutate_set_of_next_state_files_ready()
+        tester.assert_set_of_next_tasks_ready("A1")
+
+        state_file_tracker.set_completed_on_disk("A1")
+
+        # 2) Now mimic what the CLI does: build a FRESH StateMachine (fresh, empty
+        #    in-memory tracker) over the same instance dir and walk gen_all_tasks().
+        cli_state_machine = StateMachine(StateFileTracker(d.sandbox_dir), dag_gen)
+
+        keys_seen_by_cli = {task.key for task in cli_state_machine.gen_all_tasks()}
+
+        # t1/t2 resolve to their on-disk "completed" state, so query_all_or_nothing("t*")
+        # is satisfied and the gated task A1 is revealed.
+        self.assertEqual(
+            {"t1", "t2", "A1"},
+            keys_seen_by_cli,
+            "gen_all_tasks() must reveal the query-gated task A1"
+        )
+
+    def test_gen_all_tasks_hides_gated_task_until_gate_satisfied(self):
+        """
+        Companion to the regression test above: on a NOT-yet-completed instance, the query is
+        (correctly) unsatisfied, so the gated task stays hidden. Enumeration reflects what the
+        state machine can actually see given current on-disk progress, rather than fabricating
+        membership. This keeps gen_all_tasks() consistent with the run-path.
+        """
+
+        def dag_gen(dsl):
+            yield TaskMockup("t1")
+            yield TaskMockup("t2")
+            for _ in dsl.query_all_or_nothing("t*"):  # state="completed"
+                yield TaskMockup("A1")
+
+        d = TestSandboxDir(self)
+
+        # materialize t1, t2 on disk but complete only t1 (t2 stays waiting)
+        state_file_tracker = StateFileTracker(d.sandbox_dir)
+        tester = StateMachineTester(self, dag_gen, state_file_tracker)
+        tester.iterate_once_and_mutate_set_of_next_state_files_ready()
+        tester.assert_set_of_next_tasks_ready("t1", "t2")
+        state_file_tracker.set_completed_on_disk("t1")
+
+        cli_state_machine = StateMachine(StateFileTracker(d.sandbox_dir), dag_gen)
+        keys_seen_by_cli = {task.key for task in cli_state_machine.gen_all_tasks()}
+
+        self.assertEqual({"t1", "t2"}, keys_seen_by_cli)
+        self.assertNotIn("A1", keys_seen_by_cli)
+
+    def test_gen_all_tasks_does_not_write_to_disk_for_read_commands(self):
+        """
+        gen_all_tasks() backs "read kind" CLI commands (list-keys, status, ...), so enumerating a
+        never-run instance must not materialize anything on disk. Not-yet-materialized tasks are
+        represented in memory only; the on-disk work dir stays empty.
+        """
+
+        def dag_gen(dsl):
+            yield TaskMockup("t1")
+            yield TaskMockup("t2")
+            for _ in dsl.query_all_or_nothing("t*"):
+                yield TaskMockup("A1")
+
+        d = TestSandboxDir(self)
+        state_file_tracker = StateFileTracker(d.sandbox_dir)
+        state_file_tracker.prepare_instance_dir({})
+
+        work_dir = Path(state_file_tracker.pipeline_work_dir)
+        control_dirs_before = {p.name for p in work_dir.iterdir() if p.is_dir()}
+
+        state_machine = StateMachine(state_file_tracker, dag_gen)
+        keys_seen = {task.key for task in state_machine.gen_all_tasks()}
+
+        # nothing yet completed on disk -> the gate is unsatisfied and no task control dir is created
+        self.assertEqual({"t1", "t2"}, keys_seen)
+        control_dirs_after = {p.name for p in work_dir.iterdir() if p.is_dir()}
+        self.assertEqual(control_dirs_before, control_dirs_after)
+        for task_key in ("t1", "t2"):
+            self.assertIsNone(state_file_tracker._find_state_file_path_in_task_control_dir(task_key))
+
     def test_invalid_dag_with_query_all_completed(self):
 
         counter = Counter()

@@ -300,7 +300,9 @@ class StateMachine:
         return set(self.state_file_tracker.completed_task_keys())
 
     def gen_all_tasks(self):
-        yield from self._task_generator(self)
+        for task in self._task_generator(self):
+            self.state_file_tracker.fetch_true_state_or_in_memory_only(task)
+            yield task
 
     def _ready_state_files_from_generator(self):
 

@@ -330,6 +330,37 @@ class StateFileTracker:
                         upstream_task_keys.add(k)
                 yield False, state_file, upstream_task_keys
 
+    def fetch_true_state_or_in_memory_only(self, task):
+        """
+        Read-only counterpart of create_true_state_if_new_else_fetch_from_memory, for enumeration
+        by "read like" commands (list-keys, status, ...) via StateMachine.gen_all_tasks().
+
+        Never writes to disk:
+          - if the task is already in memory, return it (cache is trusted, as by design),
+          - else if a state file exists on disk, that is the source of truth: load it,
+          - else the freshly yielded task is the source of truth: register an in-memory-only
+            StateFile (initial 'waiting' state) WITHOUT materializing anything on disk.
+
+        The returned state_file lands in state_files_in_memory, so a dsl.query_all_or_nothing(...)
+        later in the same generator pass can see tasks yielded before it.
+        """
+        state_file_in_memory = self.state_files_in_memory.get(task.key)
+        if state_file_in_memory is not None:
+            return state_file_in_memory
+
+        state_file_path = self._find_state_file_path_in_task_control_dir(task.key)
+        if state_file_path is not None:
+            state_file_in_memory = StateFile(task.key, None, self.pipeline_work_dir, path=state_file_path)
+        else:
+            state_file_in_memory = StateFile(task.key, task.compute_hash_code(), self.pipeline_work_dir)
+
+        state_file_in_memory.is_slurm_array_child = task.is_slurm_array_child
+        if task.is_slurm_parent:
+            state_file_in_memory.is_parent_task = True
+
+        self.state_files_in_memory[task.key] = state_file_in_memory
+        return state_file_in_memory
+
     def create_true_state_if_new_else_fetch_from_memory(self, task, force_save=False):
         """
         :return: (task_is_new, state_file)

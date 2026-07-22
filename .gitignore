@@ -29,3 +29,5 @@ dry_pipe_tests/containers/*.sif
 /test-slurm/
 /tests/tok.json
 /.env
+
+/docs/build
