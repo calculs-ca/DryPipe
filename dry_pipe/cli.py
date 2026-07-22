@@ -431,8 +431,11 @@ class Cli:
             parser.add_argument(
                 '--sbatch-options',
                 type=str,
-                help="a list of space separated options that will be appended directly to sbatch",
-                required=False
+                help="a list of space separated options that will be appended directly to the sbatch command",
+                required=False,
+                action=EnvDefault,
+                envvar="DRYPIPE_SBATCH_OPTIONS",
+                env=self.env
             )
 
         def from_remote(parser):
