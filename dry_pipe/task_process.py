@@ -1452,10 +1452,7 @@ class TaskProcess:
                 if not self.has_transitioned_to_failed:
                     self._transition_state_file(state_file, "failed", step_number)
 
-    def sbatch_cmd_lines(self, override_options=None, is_spawn=False, extra_sbatch_options=None):
-
-        #if self.task_conf.executer_type != "slurm":
-        #    raise Exception(f"not a slurm task")
+    def sbatch_cmd_lines(self, sbatch_option_overrider=None, is_spawn=False):
 
         yield "sbatch"
 
@@ -1466,10 +1463,11 @@ class TaskProcess:
         if sacc is not None:
             yield f"--account={sacc}"
 
-        if override_options is not None:
-            yield from override_options
-        else:
+        if sbatch_option_overrider is None:
             yield from self.task_conf.sbatch_options
+        else:
+            overriden_options = sbatch_option_overrider(self.task_conf.sbatch_options)
+            yield from overriden_options
 
         yield f"--output={self.control_dir}/out.log"
 
@@ -1483,9 +1481,6 @@ class TaskProcess:
         yield "--export={0}".format(",".join(job_env()))
         yield "--signal=B:USR1@50"
 
-        if extra_sbatch_options is not None:
-            yield extra_sbatch_options
-
         yield f"{self.pipeline_instance_dir}/.drypipe/cli"
 
 
@@ -1498,11 +1493,11 @@ class TaskProcess:
                 self.control_dir, fs_type
             )
 
-    def submit_sbatch_task(self, extra_sbatch_options=None, instance_logger=None):
+    def submit_sbatch_task(self, sbatch_option_overrider=None, instance_logger=None):
 
         self._warn_if_pid_not_nfs()
 
-        cmd = list(self.sbatch_cmd_lines(extra_sbatch_options))
+        cmd = list(self.sbatch_cmd_lines(sbatch_option_overrider))
 
         (instance_logger or self.task_logger).info("sbatch command: %s", " ".join(cmd))
 

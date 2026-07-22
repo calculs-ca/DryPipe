@@ -711,7 +711,7 @@ class ArrayTaskManager:
         return list(g())
 
 
-    def next_submits(self, restart_failed=False, include_all_incompleted=False, set_of_task_keys=None, sbatch_option_overrider=lambda o: o):
+    def next_submits(self, restart_failed=False, include_all_incompleted=False, set_of_task_keys=None, sbatch_option_overrider=None):
 
         if set_of_task_keys is None:
             next_task_keys = self.task_keys_for_next_batch(restart_failed, include_all_incompleted)
@@ -728,9 +728,15 @@ class ArrayTaskManager:
 
             if len(sbatch_groups) > 1 and self.task_process.tasks_per_job is not None:
                 raise Exception(f"--tasks-per-job is not compatible with multi sbatch groups")
+            
+            if len(sbatch_groups) > 1 and sbatch_option_overrider is not None:
+                raise Exception(f"--sbatch-options is not compatible with step defined sbatch_option")
 
-            for sbatch_options, task_keys in sbatch_groups:            
+            for sbatch_options, task_keys in sbatch_groups:
 
+                if sbatch_option_overrider is not None:
+                    sbatch_options = sbatch_option_overrider(sbatch_options)
+                    
                 self.logger().info(f"sbatch_options: {sbatch_options}")
 
                 next_task_key_file, next_array_number = self.next_array_file_name_and_number()

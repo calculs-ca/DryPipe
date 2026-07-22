@@ -5,7 +5,7 @@ import re
 import time
 from pathlib import Path
 
-from dry_pipe import DryPipe
+from dry_pipe import DryPipe, TaskConf
 from dry_pipe.cli import Cli
 from dry_pipe.core_lib import UpstreamTasksNotCompleted
 from dry_pipe.pipeline import Pipeline
@@ -614,3 +614,235 @@ class CliFuncFilterTests(BasePipelineTest):
             self._list_keys(d, '--func-filter=func_filter_children_above(threshold=8)'),
             ['t09', 't10', 't11']
         )
+
+
+# ---------------------------------------------------------------------------
+# --sbatch-options override tests
+#
+# The original sbatch options are defined in the pipeline definition (via
+# task_conf.sbatch_options). The --sbatch-options cli option produces an
+# "overrider" function (Cli.sbatch_options_overrider_func_if_option_exists),
+# and this function is threaded into:
+#   - TaskProcess.sbatch_cmd_lines(overrider)          (plain slurm task)
+#   - ArrayTaskManager.next_submits(sbatch_option_overrider=overrider)  (slurm array)
+#
+# Overriding semantics: options with the same name are replaced, new options
+# are added, and options only present in the original are kept untouched.
+# ---------------------------------------------------------------------------
+
+# original sbatch options, defined in the pipeline definition below
+SBATCH_OVERRIDE_ORIGINAL_OPTIONS = ["--mem=10G", "--cpus-per-task=4", "--time=1:00:00"]
+
+
+def _sbatch_override_task_conf():
+    return TaskConf(
+        executer_type="slurm",
+        slurm_account="acct",
+        sbatch_options=list(SBATCH_OVERRIDE_ORIGINAL_OPTIONS)
+    )
+
+
+def dag_sbatch_override(dsl):
+    # a plain (non array) slurm task, exercised by TaskProcess.sbatch_cmd_lines()
+    yield dsl.task(
+        key="solo",
+        task_conf=_sbatch_override_task_conf()
+    ).calls("""
+        #!/usr/bin/env bash
+        echo solo
+    """)()
+
+    # slurm array children, exercised by ArrayTaskManager.next_submits()
+    for i in [1, 2, 3]:
+        yield dsl.task(
+            key=f"c{i}",
+            is_slurm_array_child=True,
+            task_conf=TaskConf(executer_type="slurm")
+        ).calls("""
+            #!/usr/bin/env bash
+            echo child
+        """)()
+
+    for match in dsl.query_all_or_nothing("c*", state="ready"):
+        yield dsl.task(
+            key="ap",
+            task_conf=_sbatch_override_task_conf()
+        ).slurm_array_parent(
+            children_tasks=match.tasks
+        )()
+
+
+def sbatch_override_pipeline():
+    return DryPipe.create_pipeline(dag_sbatch_override)
+
+
+class CliSbatchOptionsOverrideTests(BasePipelineTest):
+    """
+    Validates that a --sbatch-options cli option correctly overrides the sbatch
+    options declared in the pipeline definition (task_conf), both for a plain
+    slurm task (TaskProcess.sbatch_cmd_lines) and for a slurm array
+    (ArrayTaskManager.next_submits).
+    """
+
+    generator = 'dry_pipe_tests.cli_tests:sbatch_override_pipeline'
+
+    # this class does not run a pipeline, it only inspects generated commands
+    def test_run_pipeline(self):
+        pass
+
+    def _prepare(self, d):
+        test_cli(
+            self,
+            'prepare',
+            f'--pipeline-instance-dir={d.sandbox_dir}',
+            f'--generator={self.generator}'
+        )
+
+    def _cli_with_sbatch_options(self, d, command, task_key, sbatch_options=None):
+        args = [
+            self,
+            command,
+            f'--pipeline-instance-dir={d.sandbox_dir}',
+            f'--generator={self.generator}',
+            f'--task-key={task_key}',
+        ]
+        if sbatch_options is not None:
+            args.append(f'--sbatch-options={sbatch_options}')
+
+        c = create_cli(*args)
+        c.parse_args()
+        return c
+
+    def _solo_sbatch_options(self, d, sbatch_options=None):
+        """the sbatch options portion of the sbatch command for the plain 'solo' task"""
+        c = self._cli_with_sbatch_options(d, 'sbatch-gen', 'solo', sbatch_options)
+
+        task_process = TaskProcess(
+            Path(d.sandbox_dir, ".drypipe", "solo").__str__(), no_logger=True
+        )
+
+        overrider = c.sbatch_options_overrider_func_if_option_exists()
+        return list(task_process.sbatch_cmd_lines(overrider))
+
+    def _array_sbatch_options(self, d, sbatch_options=None):
+        """the sbatch command of the single submit produced for the 'ap' slurm array"""
+        c = self._cli_with_sbatch_options(d, 'array-submit', 'ap', sbatch_options)
+
+        task_process = TaskProcess(
+            Path(d.sandbox_dir, ".drypipe", "ap").__str__(), no_logger=True
+        )
+        self.assertTrue(task_process.is_slurm_array_parent())
+
+        atm = task_process.create_array_task_manager()
+
+        overrider = c.sbatch_options_overrider_func_if_option_exists()
+        submits = list(atm.next_submits(sbatch_option_overrider=overrider))
+        self.assertEqual(len(submits), 1)
+        return submits[0].sbatch_command
+
+    # ---- plain slurm task : TaskProcess.sbatch_cmd_lines ------------------
+
+    def test_solo_no_override_keeps_original_options(self):
+        d = TestSandboxDir(self)
+        self._prepare(d)
+
+        cmd = self._solo_sbatch_options(d)
+
+        # with no --sbatch-options, the original options are emitted verbatim
+        for o in SBATCH_OVERRIDE_ORIGINAL_OPTIONS:
+            self.assertIn(o, cmd)
+
+    def test_solo_override_replaces_same_name_and_adds_new(self):
+        d = TestSandboxDir(self)
+        self._prepare(d)
+
+        cmd = self._solo_sbatch_options(d, sbatch_options="--mem=20G --partition=gpu")
+
+        # --mem is replaced (same name)
+        self.assertIn("--mem=20G", cmd)
+        self.assertNotIn("--mem=10G", cmd)
+        # --partition is added (new name)
+        self.assertIn("--partition=gpu", cmd)
+        # untouched original options are kept
+        self.assertIn("--cpus-per-task=4", cmd)
+        self.assertIn("--time=1:00:00", cmd)
+
+    def test_solo_override_only_adds_new_options(self):
+        d = TestSandboxDir(self)
+        self._prepare(d)
+
+        cmd = self._solo_sbatch_options(d, sbatch_options="--gpus-per-node=2")
+
+        # no name collision : every original option is kept, the new one is added
+        for o in SBATCH_OVERRIDE_ORIGINAL_OPTIONS:
+            self.assertIn(o, cmd)
+        self.assertIn("--gpus-per-node=2", cmd)
+
+    def test_solo_override_replaces_all_original_options(self):
+        d = TestSandboxDir(self)
+        self._prepare(d)
+
+        cmd = self._solo_sbatch_options(
+            d, sbatch_options="--mem=99G --cpus-per-task=8 --time=2:00:00"
+        )
+
+        # every option has the same name as an original : all are replaced,
+        # none of the original values survive
+        self.assertIn("--mem=99G", cmd)
+        self.assertIn("--cpus-per-task=8", cmd)
+        self.assertIn("--time=2:00:00", cmd)
+        for o in SBATCH_OVERRIDE_ORIGINAL_OPTIONS:
+            self.assertNotIn(o, cmd)
+
+    def test_solo_override_with_surrounding_whitespace(self):
+        d = TestSandboxDir(self)
+        self._prepare(d)
+
+        # leading/trailing spaces around the option string must not create empty
+        # tokens (the overrider strips before splitting on spaces)
+        cmd = self._solo_sbatch_options(d, sbatch_options="  --mem=20G  ")
+
+        self.assertIn("--mem=20G", cmd)
+        self.assertNotIn("--mem=10G", cmd)
+        self.assertIn("--cpus-per-task=4", cmd)
+        self.assertIn("--time=1:00:00", cmd)
+
+    # ---- slurm array : ArrayTaskManager.next_submits ----------------------
+
+    def test_array_no_override_keeps_original_options(self):
+        d = TestSandboxDir(self)
+        self._prepare(d)
+
+        cmd = self._array_sbatch_options(d)
+
+        for o in SBATCH_OVERRIDE_ORIGINAL_OPTIONS:
+            self.assertIn(o, cmd)
+
+    def test_array_override_replaces_same_name_and_adds_new(self):
+        d = TestSandboxDir(self)
+        self._prepare(d)
+
+        cmd = self._array_sbatch_options(d, sbatch_options="--mem=20G --partition=gpu")
+
+        # --mem replaced
+        self.assertIn("--mem=20G", cmd)
+        self.assertNotIn("--mem=10G", cmd)
+        # --partition added
+        self.assertIn("--partition=gpu", cmd)
+        # untouched originals kept
+        self.assertIn("--cpus-per-task=4", cmd)
+        self.assertIn("--time=1:00:00", cmd)
+
+    def test_array_override_replaces_all_original_options(self):
+        d = TestSandboxDir(self)
+        self._prepare(d)
+
+        cmd = self._array_sbatch_options(
+            d, sbatch_options="--mem=99G --cpus-per-task=8 --time=2:00:00"
+        )
+
+        self.assertIn("--mem=99G", cmd)
+        self.assertIn("--cpus-per-task=8", cmd)
+        self.assertIn("--time=2:00:00", cmd)
+        for o in SBATCH_OVERRIDE_ORIGINAL_OPTIONS:
+            self.assertNotIn(o, cmd)

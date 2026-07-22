@@ -232,6 +232,9 @@ class Cli:
         self._has_implicit_pid = False
         self._has_implicit_task_key = False
 
+        self.task_process = None 
+        self.array_task_manager = None
+
         self.test_mode = test_mode
 
         if env is None:
@@ -1122,32 +1125,32 @@ class Cli:
         else:
             task_process.launch_task()
 
-    def sbatch_options_overrider_func(self, original_options):
+    def sbatch_options_overrider_func_if_option_exists(self):
 
-        if self.parsed_args.sbatch_options is None:
-            return original_options
+        def func(original_options):
+
+            def options_to_dict(options):
+                def g():
+                    for o in options:
+                        k, v = o.split("=")
+                        yield k.strip(), v.strip()
+
+                return dict(g())
+                
+            d1 = options_to_dict(original_options)
+            d2 = options_to_dict(self.parsed_args.sbatch_options.strip().split(" "))
+
+            res = {** d1, ** d2}
+
+            return [
+                f"{k}={v}"
+                for k, v in res.items()
+            ]
         
-        def options_to_dict(options):
-
-            def g():
-                for o in options:
-                    k, v = o.split("=")
-                    yield k, v
-
-            return dict(g())
-            
-            
-            
-        d1 = options_to_dict(original_options)
-        d2 = options_to_dict(self.parsed_args.sbatch_options.strip().split(" "))
-
-
-        res = {** d1, ** d2}
-
-        return [
-            f"{k}={v}"
-            for k, v in res.items()
-        ]
+        if self.parsed_args.sbatch_options is None:
+            return None
+        else:
+            return func
                 
 
     def array_submit(self):
@@ -1164,7 +1167,7 @@ class Cli:
 
         self.prepare()
 
-        task_process = TaskProcess(
+        self.task_process = TaskProcess(
             self._control_dir(),
             wait_for_completion=self._wait() or self._tail(),
             test_mode=self.test_mode,
@@ -1175,29 +1178,29 @@ class Cli:
             for_dry_run=self.parsed_args.dry_run,
             tasks_per_job=self.parsed_args.tasks_per_job,
             stop_after_step=self.parsed_args.stop_after_step
-        )
+        )        
 
-        if not task_process.is_slurm_array_parent():
+        if not self.task_process.is_slurm_array_parent():
             raise Exception(f"task {self.parsed_args.task_key} is not a slurm array")
 
-        array_task_manager = task_process.create_array_task_manager(
+        self.array_task_manager = self.task_process.create_array_task_manager(
             self.parsed_args.slurm_max_jobs, instance_logger=self.instance_logger
         )
 
         if not self.has_filters():
-            array_task_manager.invoke_sacct()
+            self.array_task_manager.invoke_sacct()
 
-            is_restart = len(array_task_manager.arrays_submitted_sacct_info) > 0
+            is_restart = len(self.array_task_manager.arrays_submitted_sacct_info) > 0
 
             if is_restart:
                 # task_process.rewind_to_step(0)
-                task_process.task_logger.info(f"submit_local_array is a restart")
-                if not task_process.for_dry_run:
-                    for restart_file in Path(task_process.pipeline_work_dir).glob("*/restarts.tsv"):
+                self.task_process.task_logger.info(f"submit_local_array is a restart")
+                if not self.task_process.for_dry_run:
+                    for restart_file in Path(self.task_process.pipeline_work_dir).glob("*/restarts.tsv"):
                         with open(restart_file, "a") as f:
                             f.write("RESET\n")
                 else:
-                    task_process.task_logger.info(f"no file changed, because it's a dry_run")
+                    self.task_process.task_logger.info(f"no file changed, because it's a dry_run")
         else:
             is_restart = False
 
@@ -1208,7 +1211,7 @@ class Cli:
                 return None
 
             def g():
-                for key, _, _, _ in self.filter_key_state_step(array_task_manager.children_task_keys()):
+                for key, _, _, _ in self.filter_key_state_step(self.array_task_manager.children_task_keys()):
                     yield key
 
             return set(g())
@@ -1216,11 +1219,11 @@ class Cli:
         set_of_task_keys = set_of_task_keys_if_has_filter()
 
 
-        for submit in array_task_manager.next_submits(
+        for submit in self.array_task_manager.next_submits(
             restart_failed=is_restart,
             include_all_incompleted=self.parsed_args.include_all_incompleted_tasks,
             set_of_task_keys=set_of_task_keys,
-            sbatch_option_overrider=lambda o: self.sbatch_options_overrider_func(o)
+            sbatch_option_overrider=self.sbatch_options_overrider_func_if_option_exists()
         ):
 
             submit.invoke()
@@ -1329,13 +1332,6 @@ class Cli:
         upload_task_inputs_rsync.func(task_process)
         task_process.upload_drypipe_for_remote_instance()
 
-    def _extra_sbatch_options_if_any(self):
-        if self.parsed_args.sbatch_options is not None:
-            return self.parsed_args.sbatch_options.split(" ")
-        else:
-            return None
-
-
     def sbatch(self):
 
         def submit_one(key):
@@ -1344,17 +1340,20 @@ class Cli:
             
             control_dir = Path(self.parsed_args.pipeline_instance_dir, ".drypipe", key).__str__()
 
-            task_process = TaskProcess(
+            self.task_process = TaskProcess(
                 control_dir, wait_for_completion=self._wait(), no_logger=True,
                 stop_after_step=self.parsed_args.stop_after_step
             )
 
             if self.parsed_args.at_step is not None:
-                task_process.rewind_to_step(self.parsed_args.at_step)
+                self.task_process.rewind_to_step(self.parsed_args.at_step)
             if self.parsed_args.reset:
-                task_process.rewind_to_step(0)                
+                self.task_process.rewind_to_step(0)
 
-            task_process.submit_sbatch_task(self._extra_sbatch_options_if_any(), instance_logger=self.instance_logger)
+            self.task_process.submit_sbatch_task(
+                self.sbatch_options_overrider_func_if_option_exists(),
+                instance_logger=self.instance_logger
+            )
 
         if self.has_filters():
             for key, _, _, _ in self.filter_key_state_step():
@@ -1366,10 +1365,10 @@ class Cli:
 
     def sbatch_gen(self):
         self._maybe_regen_task()
-        task_process = TaskProcess(
+        self.task_process = TaskProcess(
             self._control_dir(), stop_after_step=self.parsed_args.stop_after_step
         )
-        print(" ".join(task_process.sbatch_cmd_lines(self._extra_sbatch_options_if_any())), file=self.output)
+        print(" ".join(self.task_process.sbatch_cmd_lines(self.sbatch_options_overrider_func_if_option_exists())), file=self.output)
 
     def dump_env(self):
         task_process = TaskProcess(self._control_dir(), no_logger=True)
