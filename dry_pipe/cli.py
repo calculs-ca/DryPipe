@@ -733,10 +733,23 @@ class Cli:
 
         yield Command('report-execution-times', task_key_optional, include_steps, *all_filters(),
                       help="execute time for all tasks, or all tasks matching filter expression")
+        
+        def stop_after_step(parser):
+            parser.add_argument(
+                "--stop-after-step",
+                action=EnvDefault,
+                envvar="DRYPIPE_STOP_AFTER_STEP",
+                type=int,
+                default=None,
+                env=self.env,
+                required=False,
+                metavar='N',
+                help="stops the task after step, the task state will be at ready.S (where S = N + 1)",
+            )
 
-        yield Command('run-from-slurm-job', task_key)
+        yield Command('run-from-slurm-job', task_key, stop_after_step)
 
-        yield Command('run-from-slurm-packed-job', task_key)
+        yield Command('run-from-slurm-packed-job', task_key, stop_after_step)
 
         yield Command('task', task_key, wait, tail, by_runner, from_remote, ssh_remote_dest, regen, generator_optional, at_step, reset,
                       help="run specified task, or restarts it if in failed state (see restart command)")
@@ -755,10 +768,10 @@ class Cli:
         yield Command('upload-drypipe-for-remote-instance', task_key)
         yield Command('upload-task-inputs', task_key)
 
-        yield Command('sbatch', task_key_optional, wait, regen, generator_optional, sbatch_options, reset, at_step, *all_filters(),
+        yield Command('sbatch', task_key_optional, wait, regen, generator_optional, sbatch_options, reset, at_step, stop_after_step, *all_filters(),
                       help="launch task (specified by --task-key, or by combination of --filter --py-filter) with sbatch")
 
-        yield Command('sbatch-gen', task_key, regen, generator_optional, sbatch_options, reset,
+        yield Command('sbatch-gen', task_key, regen, generator_optional, sbatch_options, reset, stop_after_step,
                       help="print sbatch command for launching task, without invoking it")
 
         yield Command('dump-env', task_key, help="dump all environment variables of specified task")
@@ -783,7 +796,7 @@ class Cli:
 
         yield Command('array-submit',
                       task_key, limit, regen, generator_optional, tail, wait, include_all_incompleted_tasks,
-                      sbatch_options, reset, tasks_per_job, slurm_max_jobs, *all_filters(),
+                      sbatch_options, reset, tasks_per_job, slurm_max_jobs, stop_after_step, *all_filters(),
                       help="submit array")
 
         yield Command('array-upload', task_key, help="upload array task to remote location")
@@ -1160,7 +1173,8 @@ class Cli:
             tail_all=self.parsed_args.tail_all,
             cli_tail_logger=cli_tail_logger,
             for_dry_run=self.parsed_args.dry_run,
-            tasks_per_job=self.parsed_args.tasks_per_job
+            tasks_per_job=self.parsed_args.tasks_per_job,
+            stop_after_step=self.parsed_args.stop_after_step
         )
 
         if not task_process.is_slurm_array_parent():
@@ -1331,7 +1345,8 @@ class Cli:
             control_dir = Path(self.parsed_args.pipeline_instance_dir, ".drypipe", key).__str__()
 
             task_process = TaskProcess(
-                control_dir, wait_for_completion=self._wait(), no_logger=True
+                control_dir, wait_for_completion=self._wait(), no_logger=True,
+                stop_after_step=self.parsed_args.stop_after_step
             )
 
             if self.parsed_args.at_step is not None:
@@ -1351,7 +1366,9 @@ class Cli:
 
     def sbatch_gen(self):
         self._maybe_regen_task()
-        task_process = TaskProcess(self._control_dir())
+        task_process = TaskProcess(
+            self._control_dir(), stop_after_step=self.parsed_args.stop_after_step
+        )
         print(" ".join(task_process.sbatch_cmd_lines(self._extra_sbatch_options_if_any())), file=self.output)
 
     def dump_env(self):
@@ -1616,7 +1633,11 @@ class Cli:
 
         filter_chain = self.create_filter_chain()
 
+        stop_after_step = getattr(self.parsed_args, "stop_after_step", None)
+
         def accept(key, state, step):
+            if stop_after_step is not None and step is not None and step > stop_after_step:
+                return False
             for f in filter_chain:
                 if not f(key, state, step):
                     return False
@@ -1655,7 +1676,8 @@ class Cli:
 
     def run_from_slurm_job(self):
         task_process = TaskProcess(
-            self._control_dir()
+            self._control_dir(),
+            stop_after_step=self.parsed_args.stop_after_step
         )
 
         if task_process.is_array_child_task():
@@ -1687,7 +1709,8 @@ class Cli:
                 task_process = TaskProcess(
                     self._control_dir(),
                     packed_array_index=packed_array_index,
-                    tasks_per_job=tasks_per_job
+                    tasks_per_job=tasks_per_job,
+                    stop_after_step=self.parsed_args.stop_after_step
                 )
 
                 last_task_msg = ""

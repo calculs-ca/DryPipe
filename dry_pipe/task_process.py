@@ -66,7 +66,8 @@ class TaskProcess:
             for_dry_run=False,
             cli_tail_logger=None,
             tasks_per_job=None,
-            packed_array_index=None
+            packed_array_index=None,
+            stop_after_step=None
 
     ):
 
@@ -77,6 +78,7 @@ class TaskProcess:
 
         self.packed_array_index = packed_array_index
         self.tasks_per_job = tasks_per_job
+        self.stop_after_step = stop_after_step
 
         self.cli_tail_logger = cli_tail_logger
 
@@ -1394,6 +1396,14 @@ class TaskProcess:
 
             for i in range(step_number, len(step_invocations)):
 
+                if self.stop_after_step is not None and i > self.stop_after_step:
+                    # already at a step past the stop point, nothing left to run before stopping
+                    self.task_logger.info(
+                        "task at step %s is past stop-after-step %s, nothing to run", i, self.stop_after_step
+                    )
+                    skip_transition_to_completed = True
+                    break
+
                 step_invocation = step_invocations[i]
 
                 if self._launch_next_step_on_new_sbatch_if_required(step_invocation, state_file, step_number):
@@ -1422,6 +1432,15 @@ class TaskProcess:
                         raise Exception(f"unknown step invocation type: {call}")
 
                 state_file, step_number = self.transition_to_step_completed(state_file, step_number)
+
+                if self.stop_after_step is not None and i >= self.stop_after_step:
+                    self.task_logger.info(
+                        "stopping after step %s (DRYPIPE_STOP_AFTER_STEP), task state will be ready.%s",
+                        i, step_number
+                    )
+                    self._transition_state_file(state_file, "ready", step_number)
+                    skip_transition_to_completed = True
+                    break
 
             if self._is_work_on_local_copy():
                 self._rsync_outputs_from_scratch()
@@ -1458,6 +1477,8 @@ class TaskProcess:
             yield f"DRYPIPE_TASK_CONTROL_DIR={self.control_dir}"
             if is_spawn:
                 yield "ARRAY_SPAWN=True"
+            if self.stop_after_step is not None:
+                yield f"DRYPIPE_STOP_AFTER_STEP={self.stop_after_step}"
 
         yield "--export={0}".format(",".join(job_env()))
         yield "--signal=B:USR1@50"

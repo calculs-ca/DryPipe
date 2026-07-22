@@ -528,6 +528,8 @@ class ArrayTaskManager:
                 yield f"DRYPIPE_TASK_DEBUG={self.task_process.is_debug()}"
                 if self.task_process.tasks_per_job is not None:
                     yield f"DRYPIPE_TASKS_PER_JOB={self.task_process.tasks_per_job}"
+                if self.task_process.stop_after_step is not None:
+                    yield f"DRYPIPE_STOP_AFTER_STEP={self.task_process.stop_after_step}"
 
             yield "--export={0}".format(",".join(gen_env()))
 
@@ -605,6 +607,22 @@ class ArrayTaskManager:
             self.logger().debug("TASKS INCLUDED OR EXCLUDED in next submit")
 
             for task_key in self.children_task_keys():
+
+                # when stopping after step X, never (re)submit a task already at a step past X:
+                # it has nothing left to run before the stop point. the decision is based on the
+                # step index of the on-disk state file (authoritative), regardless of the state
+                # name, and is checked before the sacct branches, which may lag behind.
+                stop_after_step = self.task_process.stop_after_step
+                if stop_after_step is not None:
+                    sf = self.find_state_file_for_task_key(task_key)
+                    if sf is not None:
+                        step_idx = sf.step_idx()
+                        if step_idx is not None and step_idx > stop_after_step:
+                            self.logger().debug(
+                                f"EXCLUDED %s\t at step %s, past stop-after-step %s",
+                                task_key, step_idx, stop_after_step)
+                            continue
+
                 sacct_row = self.last_sacct_row_per_task_key.get(task_key)
                 if sacct_row is None:
                     #never launched
@@ -651,6 +669,12 @@ class ArrayTaskManager:
                         self.logger().debug(f"INCLUDED %s\t failed, and restart_failed is %s ", task_key, restart_failed)
                         yield task_key
                         continue
+
+                state_file = self.find_state_file_for_task_key(task_key)
+                if state_file is not None and state_file.state() == "ready":
+                    self.logger().debug(f"INCLUDED %s\t ready, runnable", task_key)
+                    yield task_key
+                    continue
 
                 if include_all_incompleted:
                     self.logger().debug(f"INCLUDED %s\t matches no criteria for inclusion, state: %s", task_key,
