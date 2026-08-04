@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+#JOBCK disable script_interpreter
 
 import os
 import sys
