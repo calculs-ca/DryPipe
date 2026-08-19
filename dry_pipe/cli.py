@@ -37,6 +37,9 @@ from dry_pipe.task_lib import submit_local_array, upload_task_inputs_rsync
 
 logger = logging.getLogger(__name__)
 
+# squeue can block for a long time when slurmctld is backed up, don't let array-summary hang on it
+SQUEUE_TIMEOUT_SECS = 30
+
 def call(mod_func):
 
     python_task = func_from_mod_func(mod_func)
@@ -1427,9 +1430,9 @@ class Cli:
 
     def array_summary(self):
         """
-        summary (state and step counts) of the child tasks of an array task, followed by the
-        slurm view (squeue) of the array jobs submitted so far, i.e. the job ids found in
-        .drypipe/<array_task_key>/array.<n>.job.<job_id>
+        the slurm view (squeue) of the array jobs submitted so far, i.e. the job ids found in
+        .drypipe/<array_task_key>/array.<n>.job.<job_id>, followed by the summary (state and
+        step counts) of the array task's children
         """
 
         task_process = TaskProcess(self._control_dir(), no_logger=True)
@@ -1437,9 +1440,7 @@ class Cli:
         if not task_process.is_slurm_array_parent():
             raise Exception(f"task {self.parsed_args.task_key} is not a slurm array")
 
-        array_task_manager = task_process.create_array_task_manager(instance_logger=self.instance_logger)
-
-        self._dump_state_step_counts(array_task_manager.children_task_keys())
+        array_task_manager = task_process.create_array_task_manager(instance_logger=self.instance_logger)        
 
         job_ids = [job_id for _, job_id, _ in array_task_manager.submitted_arrays_files()]
 
@@ -1450,19 +1451,26 @@ class Cli:
         # one squeue call per job, otherwise a single ended (purged) job in the list makes
         # squeue fail for all of them, with "Invalid job id specified"
         for job_id in job_ids:
-            with PortablePopen(f"squeue --jobs={job_id}", shell=True) as p:
-                p.wait()
-                if p.popen.returncode == 0:
-                    print(p.stdout_as_string().strip(), file=self.output)
+            with PortablePopen(["squeue", "--jobs", job_id]) as p:
+                try:
+                    # communicate(), NOT wait(): squeue on a large array writes more than the
+                    # pipe buffer can hold, and wait() deadlocks, since it never drains stdout
+                    stdout, stderr = p.communicate(timeout=SQUEUE_TIMEOUT_SECS)
+                except subprocess.TimeoutExpired:
+                    p.popen.kill()
+                    print(f"job {job_id} squeue timed out after {SQUEUE_TIMEOUT_SECS} seconds", file=self.output)
                     continue
 
-                stderr = p.safe_stderr_as_string().strip()
-                if "Invalid job id" in stderr:
+                if p.popen.returncode == 0:
+                    print(stdout.strip(), file=self.output)
+                elif "Invalid job id" in stderr:
                     print(f"job {job_id} inactive ", file=self.output)
                 else:
                     # squeue might not be installed, ex: when inspecting an instance from a
                     # machine that is not a slurm submit host, not fatal here
-                    print(stderr, file=self.output)
+                    print(stderr.strip(), file=self.output)
+
+        self._dump_state_step_counts(array_task_manager.children_task_keys())
 
     def list_states(self):
 

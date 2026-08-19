@@ -103,6 +103,23 @@ class PortablePopen:
         except Exception as e:
             return f"failed to capture process stderr ({i}): {e}"
 
+    def communicate(self, timeout=None):
+        """
+        wait for the process to end, and return its (stdout, stderr) as strings.
+
+        Unlike wait(), it doesn't deadlock when the process writes more than the OS pipe buffer
+        (64k on linux) can hold, ex: squeue on a large array, because it reads both pipes while
+        waiting, instead of waiting for an end that can't come until the pipes are drained.
+        """
+
+        def as_string(b):
+            if b is None:
+                return ""
+            return b.decode("utf8")
+
+        out, err = self.popen.communicate(timeout=timeout)
+        return as_string(out), as_string(err)
+
     def raise_if_non_zero(self):
         r = self.popen.returncode
         if r != 0:
