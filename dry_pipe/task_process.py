@@ -355,7 +355,6 @@ class TaskProcess:
         yield from g(self.task_key)
 
         yield ".drypipe/cli"
-        yield ".drypipe/cli-init.sh"
 
         for py_file in glob.glob(os.path.join(os.path.dirname(__file__), "*.py")):
             yield f".drypipe/dry_pipe/{os.path.basename(py_file)}"

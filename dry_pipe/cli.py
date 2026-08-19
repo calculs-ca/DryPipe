@@ -392,7 +392,11 @@ class Cli:
 
         def task_key(parser):
             pipeline_instance_dir(parser)
-            parser.add_argument('--task-key', '-k', required=True, help="task key")
+            parser.add_argument('--task-key', '-k', required=True, help="task key",
+                action=EnvDefault,
+                envvar="DRYPIPE_TASK_KEY",
+                env=self.env
+            )
 
         def task_key_optional(parser):
             pipeline_instance_dir(parser)
@@ -809,6 +813,10 @@ class Cli:
         yield Command('array-create-parent', task_key, help="create a parent array task with matching tasks")
         yield Command('list-states', task_key, gen_rsync_list)
         yield Command('array-rsync-list', task_key)
+
+        yield Command('array-summary', task_key, generator_optional, *all_filters(),
+                      help="same as summary, but restricted to the child tasks of an array, "
+                           "followed by squeue on the array's submitted job ids")
 
         yield Command('reset', task_key_optional, generator, *all_filters(),)
 
@@ -1417,6 +1425,45 @@ class Cli:
     def array_rsync_list(self):
         return
 
+    def array_summary(self):
+        """
+        summary (state and step counts) of the child tasks of an array task, followed by the
+        slurm view (squeue) of the array jobs submitted so far, i.e. the job ids found in
+        .drypipe/<array_task_key>/array.<n>.job.<job_id>
+        """
+
+        task_process = TaskProcess(self._control_dir(), no_logger=True)
+
+        if not task_process.is_slurm_array_parent():
+            raise Exception(f"task {self.parsed_args.task_key} is not a slurm array")
+
+        array_task_manager = task_process.create_array_task_manager(instance_logger=self.instance_logger)
+
+        self._dump_state_step_counts(array_task_manager.children_task_keys())
+
+        job_ids = [job_id for _, job_id, _ in array_task_manager.submitted_arrays_files()]
+
+        if len(job_ids) == 0:
+            print(f"no array submitted yet for {self.parsed_args.task_key}", file=self.output)
+            return
+
+        # one squeue call per job, otherwise a single ended (purged) job in the list makes
+        # squeue fail for all of them, with "Invalid job id specified"
+        for job_id in job_ids:
+            with PortablePopen(f"squeue --jobs={job_id}", shell=True) as p:
+                p.wait()
+                if p.popen.returncode == 0:
+                    print(p.stdout_as_string().strip(), file=self.output)
+                    continue
+
+                stderr = p.safe_stderr_as_string().strip()
+                if "Invalid job id" in stderr:
+                    print(f"job {job_id} inactive ", file=self.output)
+                else:
+                    # squeue might not be installed, ex: when inspecting an instance from a
+                    # machine that is not a slurm submit host, not fatal here
+                    print(stderr, file=self.output)
+
     def list_states(self):
 
 
@@ -1867,10 +1914,13 @@ class Cli:
             
 
     def summary(self):
+        self._dump_state_step_counts()
+
+    def _dump_state_step_counts(self, key_universe=None):
 
         all = [
             (state, step, key)
-            for key, state, step, _ in self.filter_key_state_step()
+            for key, state, step, _ in self.filter_key_state_step(key_universe)
         ]                     
 
         def k(t):
@@ -1880,7 +1930,7 @@ class Cli:
             state, step = state_step
             cnt = len(list(tuples))
             step = "" if step is None else step
-            print(f"{state}\t{step}\t{cnt}")
+            print(f"{state}\t{step}\t{cnt}", file=self.output)
 
 def run_cli():
     handle_script_lib_main()

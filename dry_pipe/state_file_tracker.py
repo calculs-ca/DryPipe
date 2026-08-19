@@ -87,12 +87,6 @@ class StateFileTracker:
         for py_file in glob.glob(os.path.join(src_dir_drypipe, "*.py")):
             _copy(py_file, dp_dir)
 
-        cli_init = os.path.join(src_dir_drypipe, "cli-init.sh")
-        _copy(cli_init, pipeline_work_dir)
-
-        if generator_mod_func is not None:
-            with open(Path(pipeline_work_dir, "cli-init.sh"), "a") as f:
-                f.write(f"\nexport DRYPIPE_PIPELINE_GENERATOR={generator_mod_func}\n")
 
     def conf_file(self):
         return Path(self.pipeline_work_dir, "conf.json")
