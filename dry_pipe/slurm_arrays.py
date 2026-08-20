@@ -287,7 +287,7 @@ class SlurmArrayBatchSubmit:
 
     def invoke(self, fake_job_id=None):
         
-        self.pre_submit_func()
+        written_array_file = self.pre_submit_func()
 
         if fake_job_id is not None:
             job_id = fake_job_id
@@ -297,9 +297,21 @@ class SlurmArrayBatchSubmit:
                 print(f"DRY RUN inhibited command: {' '.join(self.sbatch_command)}")
             else:
                 self.array_task_manager.logger().info("sbatch command: %s", " ".join(self.sbatch_command))
-                with PortablePopen(self.sbatch_command) as p:
-                    p.wait_and_raise_if_non_zero()
-                    job_id = p.stdout_as_string().strip()
+                try:
+                    with PortablePopen(self.sbatch_command) as p:
+                        p.wait_and_raise_if_non_zero()
+                        job_id = p.stdout_as_string().strip()
+                except Exception:
+                    # sbatch failed, so the file written by pre_submit_func describes an array
+                    # that was never launched: erase it, otherwise it lingers as an array.<n>.tsv
+                    # with no array.<n>.job.<job_id>, and the next submit is numbered n + 1, as
+                    # if array.<n> had been launched
+                    if written_array_file is not None and os.path.exists(written_array_file):
+                        self.array_task_manager.logger().info(
+                            "sbatch failed, erasing %s", written_array_file
+                        )
+                        os.remove(written_array_file)
+                    raise
 
         if not self.array_task_manager.for_dry_run:
             self.post_submit_func(job_id)
@@ -755,6 +767,9 @@ class ArrayTaskManager:
                     with open(ntkf, "w") as _next_task_key_file:
                         for task_key in task_keys_for_saving:
                             _next_task_key_file.write(f"{task_key}\n")
+
+                    # returned so that it can be erased if the sbatch that follows fails
+                    return ntkf
 
                 tasks_in_batch = len(task_keys)
 
