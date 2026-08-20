@@ -1487,55 +1487,80 @@ class Cli:
 
     def array_summary(self):
         """
-        a line per submitted array job (array.<n>), with the number of its tasks slurm is
-        currently running, and the total it still has in the queue (running + pending + ...),
-        followed by the summary (state and step counts) of the array task's children
+        a line per submitted array job (array.<n>), with how many of its tasks are in each
+        slurm state, out of the total it was submitted with, followed by the summary (state
+        and step counts) of the array task's children
         """
 
         array_task_manager = self._array_manage()
 
-        running_short_code = SlurmJobStateCodes.RUNNING.short_code
+        # the counted columns, in print order, the other states slurm can report for a task
+        # (completing, cancelled, suspended, ...) have no column of their own
+        counted_codes = [
+            SlurmJobStateCodes.PENDING,
+            SlurmJobStateCodes.RUNNING,
+            SlurmJobStateCodes.FAILED,
+            SlurmJobStateCodes.COMPLETED,
+            SlurmJobStateCodes.TIMEOUT
+        ]
+
+        def row(array_n, job_id, cells):
+            return "\t".join([f"array.{array_n}", job_id] + cells)
+
+        def task_count_in_array_file(array_n):
+            # the total is the number of tasks the array was submitted with, NOT the number of
+            # rows squeue returns: squeue only reports what is still in the queue
+            array_file = array_task_manager.array_files_sequence.file_name(array_n)
+            with open(array_file) as f:
+                return len([line for line in f if line.strip() != ""])
 
         # without squeue there is no slurm view to report, but the state counts below still stand
-        submitted_arrays = array_task_manager.submitted_arrays_files() if self._has_squeue() else []
+        submitted_arrays = list(array_task_manager.submitted_arrays_files()) if self._has_squeue() else []
+
+        if len(submitted_arrays) > 0:
+            print("\t".join(
+                ["array_n", "job_id"] + [c.long_code.lower() for c in counted_codes] + ["total"]
+            ), file=self.output)
 
         for array_n, job_id, _ in submitted_arrays:
 
-            # -r expands the array into one line per task, --format="%i %t" keeps that line
-            # short, since a large array can have tens of thousands of them
-            with PortablePopen(["squeue", "-r", "--noheader", "--format=%i %t", "--jobs", job_id]) as p:
+            # -r expands the array into one line per task, and --format="%i %t" keeps each
+            # line short, since a large array has many
+            squeue_cmd = ["squeue", "-r", "--noheader", "--format=%i %t", "--jobs", job_id]
+
+            with PortablePopen(squeue_cmd) as p:
                 try:
                     # communicate(), NOT wait(): squeue on a large array writes more than the
                     # pipe buffer can hold, and wait() deadlocks, since it never drains stdout
                     stdout, stderr = p.communicate(timeout=SQUEUE_TIMEOUT_SECS)
                 except subprocess.TimeoutExpired:
                     p.popen.kill()
-                    print(f"array.{array_n}\tjob {job_id} squeue timed out after {SQUEUE_TIMEOUT_SECS} seconds", file=self.output)
+                    print(row(array_n, job_id, [f"squeue timed out after {SQUEUE_TIMEOUT_SECS} seconds"]), file=self.output)
                     continue
 
             if p.popen.returncode != 0:
                 if "Invalid job id" in stderr:
-                    # slurm has purged the job, none of its tasks are in the queue anymore
-                    print(f"array.{array_n}\tjob {job_id} inactive", file=self.output)
+                    # slurm has purged the job, it remembers nothing of its tasks anymore
+                    print(row(array_n, job_id, ["inactive"]), file=self.output)
                 else:
                     # any other squeue failure, ex: slurmctld unreachable, report it and
                     # carry on with the other arrays
-                    print(f"array.{array_n}\t{stderr.strip()}", file=self.output)
+                    print(row(array_n, job_id, [stderr.strip()]), file=self.output)
                 continue
 
-            total = 0
-            running = 0
+            count_per_short_code = {c.short_code: 0 for c in counted_codes}
 
             for line in stdout.split("\n"):
                 line = line.strip()
                 if line == "":
                     continue
                 _, short_code = line.split()
-                total += 1
-                if short_code == running_short_code:
-                    running += 1
+                if short_code in count_per_short_code:
+                    count_per_short_code[short_code] += 1
 
-            print(f"array.{array_n}.{job_id}\t{running}\t{total}", file=self.output)
+            print(row(array_n, job_id, [
+                str(count_per_short_code[c.short_code]) for c in counted_codes
+            ] + [str(task_count_in_array_file(array_n))]), file=self.output)
 
         self._dump_state_step_counts(array_task_manager.children_task_keys())
 
