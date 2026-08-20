@@ -1705,7 +1705,7 @@ class Cli:
                 return lambda key, state_name, step: state_name == 'completed'
 
             if self.parsed_args.filter_timed_out:
-                return lambda key, state_name, step: state_name == 'time-out'
+                return lambda key, state_name, step: state_name == 'timed-out'
 
             if self.parsed_args.filter_ready:
                 return lambda key, state_name, step: state_name == 'ready'
