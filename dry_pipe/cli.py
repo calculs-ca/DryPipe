@@ -29,6 +29,7 @@ from dry_pipe.core_lib import func_from_mod_func, is_inside_slurm_job, create_in
 from dry_pipe.pipeline_instance import Monitor, PipelineInstance
 from dry_pipe.task_process import TaskPackExchausted, TaskProcess, TaskFailedException
 from dry_pipe.slurm_array_task import SlurmArrayParentTask
+from dry_pipe.slurm_codes import SlurmJobStateCodes
 from dry_pipe.reports import timers_for_tasks
 from dry_pipe.state_machine import StateFileTracker
 from dry_pipe.service import PipelineRunner
@@ -817,9 +818,12 @@ class Cli:
         yield Command('list-states', task_key, gen_rsync_list)
         yield Command('array-rsync-list', task_key)
 
+        yield Command('array-squeue', task_key,
+                      help="dump squeue's output for each job id submitted by an array task")
+
         yield Command('array-summary', task_key, generator_optional, *all_filters(),
-                      help="same as summary, but restricted to the child tasks of an array, "
-                           "followed by squeue on the array's submitted job ids")
+                      help="running and queued task counts of each submitted array job, followed "
+                           "by summary (state and step counts) of the array task's children")
 
         yield Command('reset', task_key_optional, generator, *all_filters(),)
 
@@ -1428,24 +1432,35 @@ class Cli:
     def array_rsync_list(self):
         return
 
-    def array_summary(self):
-        """
-        the slurm view (squeue) of the array jobs submitted so far, i.e. the job ids found in
-        .drypipe/<array_task_key>/array.<n>.job.<job_id>, followed by the summary (state and
-        step counts) of the array task's children
-        """
-
+    def _array_manage(self):
         task_process = TaskProcess(self._control_dir(), no_logger=True)
 
         if not task_process.is_slurm_array_parent():
             raise Exception(f"task {self.parsed_args.task_key} is not a slurm array")
 
-        array_task_manager = task_process.create_array_task_manager(instance_logger=self.instance_logger)        
+        return task_process.create_array_task_manager(instance_logger=self.instance_logger)        
+
+    def _has_squeue(self):
+        """
+        squeue is absent when the instance is inspected from a machine that is not a slurm
+        submit host, which is not fatal for the commands that report on arrays
+        """
+        if shutil.which("squeue") is not None:
+            return True
+        print("squeue is not installed on this machine", file=self.output)
+        return False
+
+    def array_squeue(self):
+
+        array_task_manager = self._array_manage()
 
         job_ids = [job_id for _, job_id, _ in array_task_manager.submitted_arrays_files()]
 
         if len(job_ids) == 0:
             print(f"no array submitted yet for {self.parsed_args.task_key}", file=self.output)
+            return
+
+        if not self._has_squeue():
             return
 
         # one squeue call per job, otherwise a single ended (purged) job in the list makes
@@ -1466,9 +1481,61 @@ class Cli:
                 elif "Invalid job id" in stderr:
                     print(f"job {job_id} inactive ", file=self.output)
                 else:
-                    # squeue might not be installed, ex: when inspecting an instance from a
-                    # machine that is not a slurm submit host, not fatal here
+                    # any other squeue failure, ex: slurmctld unreachable, report it and
+                    # carry on with the other jobs
                     print(stderr.strip(), file=self.output)
+
+    def array_summary(self):
+        """
+        a line per submitted array job (array.<n>), with the number of its tasks slurm is
+        currently running, and the total it still has in the queue (running + pending + ...),
+        followed by the summary (state and step counts) of the array task's children
+        """
+
+        array_task_manager = self._array_manage()
+
+        running_short_code = SlurmJobStateCodes.RUNNING.short_code
+
+        # without squeue there is no slurm view to report, but the state counts below still stand
+        submitted_arrays = array_task_manager.submitted_arrays_files() if self._has_squeue() else []
+
+        for array_n, job_id, _ in submitted_arrays:
+
+            # -r expands the array into one line per task, --format="%i %t" keeps that line
+            # short, since a large array can have tens of thousands of them
+            with PortablePopen(["squeue", "-r", "--noheader", "--format=%i %t", "--jobs", job_id]) as p:
+                try:
+                    # communicate(), NOT wait(): squeue on a large array writes more than the
+                    # pipe buffer can hold, and wait() deadlocks, since it never drains stdout
+                    stdout, stderr = p.communicate(timeout=SQUEUE_TIMEOUT_SECS)
+                except subprocess.TimeoutExpired:
+                    p.popen.kill()
+                    print(f"array.{array_n}\tjob {job_id} squeue timed out after {SQUEUE_TIMEOUT_SECS} seconds", file=self.output)
+                    continue
+
+            if p.popen.returncode != 0:
+                if "Invalid job id" in stderr:
+                    # slurm has purged the job, none of its tasks are in the queue anymore
+                    print(f"array.{array_n}\tjob {job_id} inactive", file=self.output)
+                else:
+                    # any other squeue failure, ex: slurmctld unreachable, report it and
+                    # carry on with the other arrays
+                    print(f"array.{array_n}\t{stderr.strip()}", file=self.output)
+                continue
+
+            total = 0
+            running = 0
+
+            for line in stdout.split("\n"):
+                line = line.strip()
+                if line == "":
+                    continue
+                _, short_code = line.split()
+                total += 1
+                if short_code == running_short_code:
+                    running += 1
+
+            print(f"array.{array_n}\t{running}\t{total}", file=self.output)
 
         self._dump_state_step_counts(array_task_manager.children_task_keys())
 
