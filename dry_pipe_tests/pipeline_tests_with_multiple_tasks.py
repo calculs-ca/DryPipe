@@ -5,35 +5,46 @@ from dry_pipe_tests.base_pipeline_test import BasePipelineTest
 from dry_pipe import DryPipe, TaskConf
 
 
+def dag_variable_passing(dsl):
+    t1 = dsl.task(
+        key="produce_a_var"
+    ).outputs(
+        v=int
+    ).calls(
+        """
+        #!/usr/bin/bash                
+        export v=1234        
+        """
+    )()
+
+    yield t1
+
+    yield dsl.task(
+        key="consume_and_produce_a_var"
+    ).inputs(
+        v=t1.outputs.v
+    ).outputs(
+        result=int
+    ).calls(
+        """
+        #!/usr/bin/bash
+        export static_result=abc
+        export result=$((v * 2))
+        """
+    )()
+
+
+def variable_passing_pipeline():
+    return DryPipe.create_pipeline(dag_variable_passing)
+
+
 class PipelineWithVariablePassing(BasePipelineTest):
 
+    # the CLI commands invoked in validate() need a --generator, i.e. a module level function
+    generator = 'dry_pipe_tests.pipeline_tests_with_multiple_tasks:variable_passing_pipeline'
+
     def dag_gen(self, dsl):
-        t1 = dsl.task(
-            key="produce_a_var"
-        ).outputs(
-            v=int
-        ).calls(
-            """
-            #!/usr/bin/bash                
-            export v=1234        
-            """
-        )()
-
-        yield t1
-
-        yield dsl.task(
-            key="consume_and_produce_a_var"
-        ).inputs(
-            v=t1.outputs.v
-        ).outputs(
-            result=int
-        ).calls(
-            """
-            #!/usr/bin/bash
-            export static_result=abc
-            export result=$((v * 2))
-            """
-        )()
+        yield from dag_variable_passing(dsl)
 
 
     def validate(self, tasks_by_keys):
@@ -46,7 +57,8 @@ class PipelineWithVariablePassing(BasePipelineTest):
 
         lines = Cli.invoke_and_iterate_lines(
             "report-execution-times",
-            f"-pid={self.pipeline_instance_dir}"
+            f"-pid={self.pipeline_instance_dir}",
+            f"--generator={self.generator}"
         )
 
         def g():

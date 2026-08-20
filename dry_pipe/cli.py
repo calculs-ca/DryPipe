@@ -742,7 +742,7 @@ class Cli:
                 default=False
             )
 
-        yield Command('report-execution-times', task_key_optional, include_steps, *all_filters(),
+        yield Command('times', task_key_optional, include_steps, generator_optional, *all_filters(),
                       help="execute time for all tasks, or all tasks matching filter expression")
         
         def stop_after_step(parser):
@@ -1566,16 +1566,23 @@ class Cli:
             print(f"{task_key}/{state}", file=self.output)
 
 
-    def report_execution_times(self):
+    def times(self):
 
-        if self.parsed_args.task_key is not None and self.parsed_args.filter == "*":
-            f = self.parsed_args.task_key
+        # --task-key restricts the universe the filters (--filter, --py-filter, --func-filter, ...)
+        # are applied to, so that this command selects tasks the same way status, summary,
+        # tail-logs, etc do
+        if self.parsed_args.task_key is not None:
+            key_universe = {self.parsed_args.task_key}
         else:
-            f = self.parsed_args.filter
+            key_universe = None
+
+        task_keys = (
+            key for key, _, _, _ in self.filter_key_state_step(key_universe)
+        )
 
         for task_key, timer_label, hms, s in timers_for_tasks(
             self.parsed_args.pipeline_instance_dir,
-            f,
+            task_keys,
             include_steps=self.parsed_args.include_steps,
         ):
             print(f"{timer_label}\t{task_key}\t{hms}\t{s}", file=self.output)

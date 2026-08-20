@@ -1,11 +1,16 @@
 import argparse
-import glob
 from pathlib import Path
 
 
-def timers_for_tasks(pipeline_instance_dir, glob_filter, include_steps=False):
-    for task_log_file in glob.glob(str(Path(pipeline_instance_dir, ".drypipe", glob_filter, "drypipe.log"))):
-        task_key = Path(task_log_file).parent.name
+def timers_for_tasks(pipeline_instance_dir, task_keys, include_steps=False):
+    """
+    task_keys is the already filtered selection of tasks (see Cli.filter_key_state_step), tasks
+    that have no drypipe.log yet (never launched) are silently skipped
+    """
+    for task_key in task_keys:
+        task_log_file = Path(pipeline_instance_dir, ".drypipe", task_key, "drypipe.log")
+        if not task_log_file.exists():
+            continue
         for label, h_m_s, s in parse_timers_in_log(task_log_file):
             if not include_steps and label.startswith("STEP-"):
                 continue
