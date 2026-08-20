@@ -1535,7 +1535,7 @@ class Cli:
                 if short_code == running_short_code:
                     running += 1
 
-            print(f"array.{array_n}\t{running}\t{total}", file=self.output)
+            print(f"array.{array_n}.{job_id}\t{running}\t{total}", file=self.output)
 
         self._dump_state_step_counts(array_task_manager.children_task_keys())
 
