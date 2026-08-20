@@ -1457,8 +1457,7 @@ class Cli:
     def _array_squeue(self, array_task_manager):
         """
         a line per submitted array job (array.<n>), with how many of its tasks are in each
-        slurm state, out of the total it was submitted with, followed by the summary (state
-        and step counts) of the array task's children
+        slurm state, out of the total it was submitted with
         """        
 
         # the counted columns, in print order, the other states slurm can report for a task
@@ -1471,9 +1470,6 @@ class Cli:
             SlurmJobStateCodes.TIMEOUT
         ]
 
-        def row(array_n, job_id, cells):
-            return "\t".join([f"array.{array_n}", job_id] + cells)
-
         def task_count_in_array_file(array_n):
             # the total is the number of tasks the array was submitted with, NOT the number of
             # rows squeue returns: squeue only reports what is still in the queue
@@ -1484,12 +1480,20 @@ class Cli:
         # without squeue there is no slurm view to report, but the state counts below still stand
         submitted_arrays = list(array_task_manager.submitted_arrays_files()) if self._has_squeue() else []
 
-        if len(submitted_arrays) > 0:
-            print("\t".join(
-                ["array_n", "job_id"] + [c.long_code.lower() for c in counted_codes] + ["total"]
-            ), file=self.output)
+        def rows():
 
-        for array_n, job_id, _ in submitted_arrays:
+            if len(submitted_arrays) == 0:
+                return
+
+            yield ["array_n", "job_id"] + [c.long_code.lower() for c in counted_codes] + ["total"]
+
+            for array_n, job_id, _ in submitted_arrays:
+                yield row_of_array(array_n, job_id)
+
+        def row_of_array(array_n, job_id):
+
+            def row(cells):
+                return [f"array.{array_n}", job_id] + cells
 
             # -r expands the array into one line per task, and --format="%i %t" keeps each
             # line short, since a large array has many
@@ -1502,18 +1506,15 @@ class Cli:
                     stdout, stderr = p.communicate(timeout=SQUEUE_TIMEOUT_SECS)
                 except subprocess.TimeoutExpired:
                     p.popen.kill()
-                    print(row(array_n, job_id, [f"squeue timed out after {SQUEUE_TIMEOUT_SECS} seconds"]), file=self.output)
-                    continue
+                    return row([f"squeue timed out after {SQUEUE_TIMEOUT_SECS} seconds"])
 
             if p.popen.returncode != 0:
                 if "Invalid job id" in stderr:
                     # slurm has purged the job, it remembers nothing of its tasks anymore
-                    print(row(array_n, job_id, ["inactive"]), file=self.output)
-                else:
-                    # any other squeue failure, ex: slurmctld unreachable, report it and
-                    # carry on with the other arrays
-                    print(row(array_n, job_id, [stderr.strip()]), file=self.output)
-                continue
+                    return row(["inactive"])
+                # any other squeue failure, ex: slurmctld unreachable, report it and
+                # carry on with the other arrays
+                return row([stderr.strip()])
 
             count_per_short_code = {c.short_code: 0 for c in counted_codes}
 
@@ -1525,9 +1526,12 @@ class Cli:
                 if short_code in count_per_short_code:
                     count_per_short_code[short_code] += 1
 
-            print(row(array_n, job_id, [
-                str(count_per_short_code[c.short_code]) for c in counted_codes
-            ] + [str(task_count_in_array_file(array_n))]), file=self.output)
+            return row(
+                [str(count_per_short_code[c.short_code]) for c in counted_codes] +
+                [str(task_count_in_array_file(array_n))]
+            )
+
+        self._print_table(list(rows()))
 
     def array_summary(self):
 
@@ -1986,6 +1990,38 @@ class Cli:
 
     def summary(self):
         self._dump_state_step_counts()
+
+    def _print_table(self, rows):
+        """
+        prints rows (lists of strings, the first one being the header), tab separated, or
+        aligned in columns when the output is a terminal: aligned is what reads well in a
+        shell, tab separated is what cut, awk, and the tests can parse
+        """
+
+        if len(rows) == 0:
+            return
+
+        if not self.output.isatty():
+            for row in rows:
+                print("\t".join(row), file=self.output)
+            return
+
+        column_count = max([len(row) for row in rows])
+
+        def cells_of_column(i):
+            return [row[i] for row in rows if i < len(row)]
+
+        widths = [max([len(c) for c in cells_of_column(i)]) for i in range(column_count)]
+
+        # numbers read better right aligned, ex: 1000 lining up under 999, labels left aligned.
+        # the choice is per cell, NOT per column, so that a count keeps its alignment in a
+        # column where another row has text, ex: "inactive"
+        for row in rows:
+            line = "  ".join([
+                cell.rjust(widths[i]) if cell.isdigit() else cell.ljust(widths[i])
+                for i, cell in enumerate(row)
+            ])
+            print(line.rstrip(), file=self.output)
 
     def _dump_state_step_counts(self, key_universe=None):
 
