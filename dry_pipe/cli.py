@@ -533,6 +533,21 @@ class Cli:
                 action='store_true',
                 default=False
             )            
+        def filter_timed_out(parser):
+            parser.add_argument(
+                '--filter-timed-out',
+                help='filters all timed out tasks',
+                action='store_true',
+                default=False
+            )            
+
+        def filter_ready(parser):
+            parser.add_argument(
+                '--filter-ready',
+                help='filters all ready tasks',
+                action='store_true',
+                default=False
+            )            
 
         def filter_failed(parser):
             parser.add_argument(
@@ -698,7 +713,7 @@ class Cli:
                         raise Exception(f"arg {a.__name__}  on command {name} failed with exception {e}")
 
         def all_filters():
-            return [filter, py_filter, func_filter, filter_completed, filter_not_completed, filter_failed]
+            return [filter, py_filter, func_filter, filter_completed, filter_not_completed, filter_failed, filter_timed_out, filter_ready]
 
         yield Command('run', pipeline_instance_dir, generator, until, restart_failed, reset_failed, sleep_schedule,
                       help="generate tasks and run the pipeline")
@@ -1688,6 +1703,12 @@ class Cli:
 
             if self.parsed_args.filter_completed:
                 return lambda key, state_name, step: state_name == 'completed'
+
+            if self.parsed_args.filter_timed_out:
+                return lambda key, state_name, step: state_name == 'time-out'
+
+            if self.parsed_args.filter_ready:
+                return lambda key, state_name, step: state_name == 'ready'
             
             if self.parsed_args.filter_not_completed:
                 return lambda key, state_name, step: state_name != 'completed'
