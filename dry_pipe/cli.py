@@ -2048,7 +2048,7 @@ class Cli:
                 cnt = len(list(tuples))
                 step = "" if step is None else step
                 #print(f"{state}\t{step}\t{cnt}", file=self.output)
-                yield [state, step, cnt]
+                yield [state, str(step), str(cnt)]
 
         self._print_table(list(rows()))
 
