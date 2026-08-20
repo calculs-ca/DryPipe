@@ -2039,12 +2039,18 @@ class Cli:
 
         def k(t):
             return t[0], t[1]
-    
-        for state_step, tuples in groupby(sorted(all, key=k), key=k):
-            state, step = state_step
-            cnt = len(list(tuples))
-            step = "" if step is None else step
-            print(f"{state}\t{step}\t{cnt}", file=self.output)
+
+
+        def rows():
+            yield ["state", "step", "count"]        
+            for state_step, tuples in groupby(sorted(all, key=k), key=k):
+                state, step = state_step
+                cnt = len(list(tuples))
+                step = "" if step is None else step
+                #print(f"{state}\t{step}\t{cnt}", file=self.output)
+                yield [state, step, cnt]
+
+        self._print_table(list(rows()))
 
 def run_cli():
     handle_script_lib_main()
