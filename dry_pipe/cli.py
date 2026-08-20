@@ -1533,7 +1533,7 @@ class Cli:
 
         m = self._array_manage()        
         self._array_squeue(m)
-        self._dump_state_step_counts(m)
+        self._dump_state_step_counts(m.children_task_keys())
 
     def list_states(self):
 
