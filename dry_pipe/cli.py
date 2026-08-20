@@ -1451,48 +1451,15 @@ class Cli:
         return False
 
     def array_squeue(self):
+        m = self._array_manage()        
+        self._array_squeue(m)
 
-        array_task_manager = self._array_manage()
-
-        job_ids = [job_id for _, job_id, _ in array_task_manager.submitted_arrays_files()]
-
-        if len(job_ids) == 0:
-            print(f"no array submitted yet for {self.parsed_args.task_key}", file=self.output)
-            return
-
-        if not self._has_squeue():
-            return
-
-        # one squeue call per job, otherwise a single ended (purged) job in the list makes
-        # squeue fail for all of them, with "Invalid job id specified"
-        for job_id in job_ids:
-            with PortablePopen(["squeue", "--jobs", job_id]) as p:
-                try:
-                    # communicate(), NOT wait(): squeue on a large array writes more than the
-                    # pipe buffer can hold, and wait() deadlocks, since it never drains stdout
-                    stdout, stderr = p.communicate(timeout=SQUEUE_TIMEOUT_SECS)
-                except subprocess.TimeoutExpired:
-                    p.popen.kill()
-                    print(f"job {job_id} squeue timed out after {SQUEUE_TIMEOUT_SECS} seconds", file=self.output)
-                    continue
-
-                if p.popen.returncode == 0:
-                    print(stdout.strip(), file=self.output)
-                elif "Invalid job id" in stderr:
-                    print(f"job {job_id} inactive ", file=self.output)
-                else:
-                    # any other squeue failure, ex: slurmctld unreachable, report it and
-                    # carry on with the other jobs
-                    print(stderr.strip(), file=self.output)
-
-    def array_summary(self):
+    def _array_squeue(self, array_task_manager):
         """
         a line per submitted array job (array.<n>), with how many of its tasks are in each
         slurm state, out of the total it was submitted with, followed by the summary (state
         and step counts) of the array task's children
-        """
-
-        array_task_manager = self._array_manage()
+        """        
 
         # the counted columns, in print order, the other states slurm can report for a task
         # (completing, cancelled, suspended, ...) have no column of their own
@@ -1562,7 +1529,11 @@ class Cli:
                 str(count_per_short_code[c.short_code]) for c in counted_codes
             ] + [str(task_count_in_array_file(array_n))]), file=self.output)
 
-        self._dump_state_step_counts(array_task_manager.children_task_keys())
+    def array_summary(self):
+
+        m = self._array_manage()        
+        self._array_squeue(m)
+        self._dump_state_step_counts(m)
 
     def list_states(self):
 
