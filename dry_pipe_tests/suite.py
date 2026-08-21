@@ -10,6 +10,8 @@ from dry_pipe_tests import pipeline_tests_with_single_tasks
 from dry_pipe_tests import pipeline_tests_with_multiple_tasks
 from dry_pipe_tests import task_launch_tests
 from dry_pipe_tests import test_core_lib
+from dry_pipe_tests import test_reports
+from dry_pipe_tests import test_task_timers
 from dry_pipe_tests.cli_tests import CliArrayTests1, CliTestsPipelineWithSlurmArray, CliTestScenario2, \
     CliFuncFilterTests
 from dry_pipe_tests.dsl_tests import TaskChangeTrackingTests
@@ -88,7 +90,9 @@ def quick_sanity_tests():
         pipeline_tests_with_single_tasks.PipelineWithSinglePythonTask,
         pipeline_tests_with_single_tasks.PipelineWithVarAndFileOutput,
         all_low_level_tests_with_mockup_slurm(),
-        test_core_lib.all_tests
+        test_core_lib.all_tests,
+        test_reports.all_tests,
+        test_task_timers.all_tests
     ]
 
 def low_level_tests():
@@ -103,7 +107,9 @@ def low_level_tests():
         TaskChangeTrackingTests,
         CliArrayTests1,
         all_with_local_slurm(),
-        test_core_lib.all_tests
+        test_core_lib.all_tests,
+        test_reports.all_tests,
+        test_task_timers.all_tests
     ]
 
 def all_local_tests():

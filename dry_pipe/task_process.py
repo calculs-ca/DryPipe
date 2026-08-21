@@ -110,6 +110,11 @@ class TaskProcess:
         self.for_dry_run = for_dry_run
         self.timed_out_or_killed_signal_received = False
         self.has_transitioned_to_failed = False
+        # a task runs at most two timers, the outer one for the task, the inner one for the
+        # step it is on, held here so the signal handlers can close them, see
+        # _log_elapsed_for_active_time_loggers
+        self.task_timer = None
+        self.step_timer = None
 
         try:
             self.task_conf = None
@@ -201,6 +206,24 @@ class TaskProcess:
 
     def create_time_logger(self, label, logger_func):
         return TimeLogger(label, logger_func)
+
+    def _log_elapsed_for_active_time_loggers(self):
+        """
+        Called from the signal handlers, which end the process with os._exit(), skipping every
+        "with" block on the way out, in a thread that isn't even the one running them (the task
+        runs in a worker thread, see launch_task, while signals are delivered to the main
+        thread). Without this, a task that times out or is killed logs no TIME_ELAPSED_FOR at
+        all, and the time it ran, the number that tells you what to ask for next, is lost.
+
+        The step timer goes first, the order the two would unwind in. Either can be an already
+        ended timer, ex: the step timer between two steps, closing one is idempotent.
+        """
+        for time_logger in [self.step_timer, self.task_timer]:
+            if time_logger is not None:
+                try:
+                    time_logger.__exit__(None, None, None)
+                except Exception:
+                    pass
 
     def _create_task_logger(self):
 
@@ -1009,6 +1032,7 @@ class TaskProcess:
         def timeout_handler(s, frame):
             self.timed_out_or_killed_signal_received = True
             self.task_logger.info("time out signal recieved")
+            self._log_elapsed_for_active_time_loggers()
             step_number, control_dir, state_file, state_name = self.read_task_state()
             self._transition_state_file(state_file, "timed-out", step_number)            
             self._terminate_descendants()
@@ -1026,6 +1050,7 @@ class TaskProcess:
             self.timed_out_or_killed_signal_received = True
             try:
                 self.task_logger.info(f"signal SIGTERM received, will transition to killed ptid = {self._thread_id()}")                
+                self._log_elapsed_for_active_time_loggers()
                 step_number, control_dir, state_file, state_name = self.read_task_state()
                 self._transition_state_file(state_file, "killed", step_number)                
                 self._terminate_descendants()
@@ -1415,7 +1440,8 @@ class TaskProcess:
 
                 call = step_invocation["call"]
 
-                with self.create_time_logger(f"STEP-{i}", self.task_logger.info):
+                self.step_timer = self.create_time_logger(f"STEP-{i}", self.task_logger.info)
+                with self.step_timer:
                     if call == "python":
                         module_function = step_invocation["module_function"]
                         self.task_logger.debug("step %s, %s %s", i, call, module_function)
@@ -1658,7 +1684,8 @@ class TaskProcess:
 
         def task_func_wrapper():
             try:
-                with self.create_time_logger("TASK", self.task_logger.info):
+                self.task_timer = self.create_time_logger("TASK", self.task_logger.info)
+                with self.task_timer:
                     self._run_steps()
             except Exception as ex:
                 if not self.as_subprocess:

@@ -56,7 +56,7 @@ class PipelineWithVariablePassing(BasePipelineTest):
         self.assertEqual(int(consume_and_produce_a_var.outputs.result), 2468)
 
         lines = Cli.invoke_and_iterate_lines(
-            "report-execution-times",
+            "times",
             f"-pid={self.pipeline_instance_dir}",
             f"--generator={self.generator}"
         )

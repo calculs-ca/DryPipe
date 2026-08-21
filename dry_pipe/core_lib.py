@@ -329,12 +329,19 @@ class TimeLogger:
         self.end_time = None
         self.label = label
         self.logger_func = logger_func
+        self.has_logged_elapsed = False
 
     def __enter__(self):
         self.logger_func(f"START_TIMER_FOR:{self.label}")
         self.start_time = time.time()
 
     def __exit__(self, exc_type, exc_val, exc_tb):
+        # a timer logs its elapsed time once: TaskProcess closes its timers from the signal
+        # handlers, and a signal can land at any point, including on an already ended timer
+        if self.has_logged_elapsed:
+            return
+        self.has_logged_elapsed = True
+
         self.end_time = time.time()
         t = self.end_time - self.start_time
 
