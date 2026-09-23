@@ -381,7 +381,7 @@ class Cli:
 
 
         def pipeline_instance_dir(parser):
-            parser.add_argument(
+            return parser.add_argument(
                 '--pipeline-instance-dir', '-pid',
                 help='pipeline instance directory, can also be set with environment var DRYPIPE_PIPELINE_INSTANCE_DIR',
                 action=EnvDefault,
@@ -766,8 +766,20 @@ class Cli:
                 default=None
             )
 
+        def pipeline_instance_dir_optional(parser):
+            arg = pipeline_instance_dir(parser)
+            arg.required = False
+
+        def empty_db(parser):
+            parser.add_argument(
+                '--empty-db',
+                help='only create an sqlite db with the status-db schema at the specified path, ex: to aggregate --tsv files',
+                metavar="PATH",
+                default=None
+            )
+
         yield Command(
-            'status-db', pipeline_instance_dir, generator, tsv, instance_name, *all_filters(),
+            'status-db', pipeline_instance_dir_optional, generator_optional, tsv, instance_name, empty_db, *all_filters(),
             help="""
                 creates an sqlite3 database with tables : 
 
@@ -2142,7 +2154,19 @@ class Cli:
         self._print_table(list(rows()))
 
 
-    def status_db(self):        
+    def status_db(self):
+
+        if self.parsed_args.empty_db is not None:
+            if self.parsed_args.tsv:
+                raise Exception("--empty-db creates an sqlite db, it can't be combined with --tsv")
+            PipelineInstance.create_empty_status_db(Path(self.parsed_args.empty_db)).close()
+            return
+
+        if self.parsed_args.pipeline_instance_dir is None:
+            raise Exception("--pipeline-instance-dir is required unless --empty-db is specified")
+
+        self.complain_if_no_generator("unless --empty-db is specified")
+
         def iterate_key_state_steps():
             for key, state, step, _ in self.filter_key_state_step():
                 yield key, state, step

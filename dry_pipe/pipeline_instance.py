@@ -324,10 +324,20 @@ class PipelineInstance:
             write_tsv("instance_status.tsv", instance_rows)
             return
 
-        db_file = drypipe_dir.joinpath("status.db")
+        with PipelineInstance.create_empty_status_db(drypipe_dir.joinpath("status.db")) as conn:
+            conn.executemany("insert into task_status values (?, ?, ?, ?, ?, ?)", task_rows)
+            conn.executemany("insert into instance_status values (?, ?, ?)", instance_rows)
+
+
+        conn.close()
+
+    @staticmethod
+    def create_empty_status_db(db_file):
+
         db_file.unlink(missing_ok=True)
 
-        with sqlite3.connect(db_file) as conn:
+        conn = sqlite3.connect(db_file)
+        with conn:
             conn.execute("""
                 create table task_status (
                     instance_name text,
@@ -345,10 +355,12 @@ class PipelineInstance:
                     error text
                 )
             """)
-            conn.executemany("insert into task_status values (?, ?, ?, ?, ?, ?)", task_rows)
-            conn.executemany("insert into instance_status values (?, ?, ?)", instance_rows)
+            conn.execute("create index task_status_instance_name on task_status (instance_name)")
+            conn.execute("create index task_status_state on task_status (state)")
+            conn.execute("create index task_status_key on task_status (key)")
+            conn.execute("create index task_status_instance_name_key on task_status (instance_name, key)")
 
-        conn.close()
+        return conn
 
 
 class Monitor:

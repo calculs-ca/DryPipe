@@ -742,6 +742,47 @@ class CliStatusDbTests(BasePipelineTest):
         self.assertEqual(drypipe_log, "before nul\ufffdafter nul")
 
 
+    def test_status_db_empty_aggregates_tsvs(self):
+        d = TestSandboxDir(self)
+        Path(d.sandbox_dir).mkdir(parents=True, exist_ok=True)
+
+        db_file = Path(d.sandbox_dir, "aggregate.db")
+
+        # no --pipeline-instance-dir nor --generator: --empty-db only creates the schema
+        test_cli(self, 'status-db', f'--empty-db={db_file}')
+
+        def query(sql):
+            with sqlite3.connect(db_file) as conn:
+                rows = conn.execute(sql).fetchall()
+            conn.close()
+            return rows
+
+        self.assertEqual(query("select * from task_status"), [])
+        self.assertEqual(query("select * from instance_status"), [])
+
+        for name in ["i1", "i2"]:
+            pid = Path(d.sandbox_dir, name)
+            test_cli(self, 'prepare', f'--pipeline-instance-dir={pid}', f'--generator={self.generator}')
+            test_cli(
+                self, 'status-db', f'--pipeline-instance-dir={pid}', f'--generator={self.generator}',
+                '--tsv', '--filter=t01'
+            )
+            for table in ["task_status", "instance_status"]:
+                subprocess.run(
+                    ["sqlite3", db_file, ".mode tabs", f".import {pid.joinpath('.drypipe', f'{table}.tsv')} {table}"],
+                    check=True
+                )
+
+        self.assertEqual(
+            query("select instance_name, key from task_status order by instance_name"),
+            [("i1", "t01"), ("i2", "t01")]
+        )
+        self.assertEqual(
+            query("select instance_name, state from instance_status order by instance_name"),
+            [("i1", "ok"), ("i2", "ok")]
+        )
+
+
 # ---------------------------------------------------------------------------
 # --sbatch-options override tests
 #
