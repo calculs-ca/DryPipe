@@ -766,6 +766,15 @@ class Cli:
                 default=None
             )
 
+        def lean(parser):
+            parser.add_argument(
+                "--lean",
+                help='produces smaller database (or tsv) by storing only non completed tasks, and only the last 50 lines',
+                action='store_true',
+                default=False
+            )
+
+
         def pipeline_instance_dir_optional(parser):
             arg = pipeline_instance_dir(parser)
             arg.required = False
@@ -779,7 +788,7 @@ class Cli:
             )
 
         yield Command(
-            'status-db', pipeline_instance_dir_optional, generator_optional, tsv, instance_name, empty_db, *all_filters(),
+            'status-db', pipeline_instance_dir_optional, generator_optional, tsv, instance_name, empty_db, lean, *all_filters(),
             help="""
                 creates an sqlite3 database with tables : 
 
@@ -2175,7 +2184,8 @@ class Cli:
             self.parsed_args.pipeline_instance_dir,
             iterate_key_state_steps,
             self.parsed_args.instance_name,
-            self.parsed_args.tsv
+            self.parsed_args.tsv,
+            self.parsed_args.lean
         )
 
 

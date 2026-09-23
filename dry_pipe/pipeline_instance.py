@@ -274,7 +274,7 @@ class PipelineInstance:
             yield state_file
 
     @staticmethod
-    def write_status_db(pipeline_instance_dir, iterate_key_state_steps, instance_name=None, as_tsv=False):
+    def write_status_db(pipeline_instance_dir, iterate_key_state_steps, instance_name=None, as_tsv=False, lean=False):
 
         drypipe_dir = Path(pipeline_instance_dir, ".drypipe")
 
@@ -284,13 +284,32 @@ class PipelineInstance:
         task_rows = []
         error = None
 
-        def read_all_or_none(f):
+        lean_line_count = 50
+
+        def read_last_lines(f, line_count):
+            block_size = 8192
+            with open(f, "rb") as _f:
+                position = _f.seek(0, os.SEEK_END)
+                data = b""
+                # line_count + 1 newlines guarantee that the first of the last line_count lines is complete
+                while position > 0 and data.count(b"\n") <= line_count:
+                    read_size = min(block_size, position)
+                    position -= read_size
+                    _f.seek(position)
+                    data = _f.read(read_size) + data
+            return b"".join(data.splitlines(keepends=True)[-line_count:])
+
+        def read_log_or_none(f):
             if not f.exists():
                 return None
-            # a stray binary byte in a log should not fail the whole digest
-            with open(f, errors="replace", newline="") as _f:
-                # the sqlite3 shell's .import truncates a field at NUL
-                return _f.read().replace("\x00", "�")
+            if lean:
+                data = read_last_lines(f, lean_line_count)
+            else:
+                with open(f, "rb") as _f:
+                    data = _f.read()
+            # a stray binary byte in a log should not fail the whole digest,
+            # and the sqlite3 shell's .import truncates a field at NUL
+            return data.decode(errors="replace").replace("\x00", "\ufffd")
 
         if not drypipe_dir.exists():
             instance_state = "missing .drypipe"
@@ -300,10 +319,11 @@ class PipelineInstance:
                 task_rows = [
                     (
                         instance_name, key, state, step,
-                        read_all_or_none(drypipe_dir.joinpath(key, "drypipe.log")),
-                        read_all_or_none(drypipe_dir.joinpath(key, "out.log"))
+                        read_log_or_none(drypipe_dir.joinpath(key, "drypipe.log")),
+                        read_log_or_none(drypipe_dir.joinpath(key, "out.log"))
                     )
                     for key, state, step in iterate_key_state_steps()
+                    if not (lean and state == "completed")
                 ]
                 instance_state = "ok"
             except Exception:

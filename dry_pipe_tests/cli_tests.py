@@ -667,6 +667,29 @@ class CliStatusDbTests(BasePipelineTest):
         # t02 never ran, it has no logs
         self.assertEqual(task_rows[1], ("z", "t02", "waiting", None, None, None))
 
+    def test_status_db_lean(self):
+        d = TestSandboxDir(self)
+        test_cli(self, 'prepare', f'--pipeline-instance-dir={d.sandbox_dir}', f'--generator={self.generator}')
+        test_cli(
+            self, 'set-state', f'--pipeline-instance-dir={d.sandbox_dir}', f'--generator={self.generator}',
+            '--state=completed', '--filter=t02'
+        )
+
+        # 60 lines of 200 chars span more than one of the 8192 bytes blocks read from the end
+        out_lines = [f"{i:03d} {'x' * 195}\r\n" for i in range(60)]
+        Path(d.sandbox_dir, ".drypipe", "t01", "out.log").write_text("".join(out_lines), newline="")
+        # fewer than 50 lines, and no newline at the end
+        Path(d.sandbox_dir, ".drypipe", "t01", "drypipe.log").write_text("a\nb\nc")
+
+        self._status_db(d, '--lean', '--filter=t0[123]')
+
+        task_rows = self._query(d, "select key, drypipe_log, out_log from task_status order by key")
+        # t02 is completed, --lean leaves it out
+        self.assertEqual([key for key, _, _ in task_rows], ["t01", "t03"])
+        _, drypipe_log, out_log = task_rows[0]
+        self.assertEqual(out_log, "".join(out_lines[-50:]))
+        self.assertEqual(drypipe_log, "a\nb\nc")
+
     def test_status_db_missing_drypipe(self):
         d = TestSandboxDir(self)
         Path(d.sandbox_dir).mkdir(parents=True, exist_ok=True)
