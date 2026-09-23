@@ -322,8 +322,7 @@ class PipelineInstance:
                         read_log_or_none(drypipe_dir.joinpath(key, "drypipe.log")),
                         read_log_or_none(drypipe_dir.joinpath(key, "out.log"))
                     )
-                    for key, state, step in iterate_key_state_steps()
-                    if not (lean and state == "completed")
+                    for key, state, step in iterate_key_state_steps()                    
                 ]
                 instance_state = "ok"
             except Exception:
