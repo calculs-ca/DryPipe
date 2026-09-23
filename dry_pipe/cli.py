@@ -239,7 +239,8 @@ class Cli:
         self.task_process = None 
         self.array_task_manager = None
 
-        self.test_mode = test_mode
+        self.test_mode = test_mode        
+        self.logger = None
 
         if env is None:
             self.env = os.environ
@@ -280,7 +281,7 @@ class Cli:
                 self.command_names_to_method[command.name] = m
 
         self.parse_args()
-
+        
         if is_inside_slurm_job():
             # this process is a slurm job (or a step of one) that the CLI itself submitted;
             # its logging belongs in the task's own drypipe.log, not instance.log:
