@@ -738,7 +738,7 @@ class Cli:
         yield Command('summary', pipeline_instance_dir, *all_filters(), generator_optional,
                       help="last aggregate counts of (state, step)")
 
-        yield Command('prepare', pipeline_instance_dir, generator, until, sleep_schedule,
+        yield Command('prepare', pipeline_instance_dir, generator, until, sleep_schedule, *all_filters(),
                       help="generate tasks, WITHOUT running the pipeline")
 
         yield Command('service', pipeline_instances_dir, config_generator, sleep_schedule, log_conf, exit_on_parent_death,
