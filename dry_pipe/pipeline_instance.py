@@ -1,9 +1,12 @@
+import csv
 import fnmatch
 import json
 import logging
 import os
+import sqlite3
 import sys
 import time
+import traceback
 from itertools import groupby
 from pathlib import Path
 
@@ -269,6 +272,83 @@ class PipelineInstance:
             state_file = StateFile(task.key, None, self.state_file_tracker.pipeline_work_dir, path=state_file_path)
 
             yield state_file
+
+    @staticmethod
+    def write_status_db(pipeline_instance_dir, iterate_key_state_steps, instance_name=None, as_tsv=False):
+
+        drypipe_dir = Path(pipeline_instance_dir, ".drypipe")
+
+        if instance_name is None:
+            instance_name = os.path.basename(os.path.abspath(pipeline_instance_dir))
+        
+        task_rows = []
+        error = None
+
+        def read_all_or_none(f):
+            if not f.exists():
+                return None
+            # a stray binary byte in a log should not fail the whole digest
+            with open(f, errors="replace", newline="") as _f:
+                # the sqlite3 shell's .import truncates a field at NUL
+                return _f.read().replace("\x00", "�")
+
+        if not drypipe_dir.exists():
+            instance_state = "missing .drypipe"
+            drypipe_dir.mkdir()
+        else:
+            try:
+                task_rows = [
+                    (
+                        instance_name, key, state, step,
+                        read_all_or_none(drypipe_dir.joinpath(key, "drypipe.log")),
+                        read_all_or_none(drypipe_dir.joinpath(key, "out.log"))
+                    )
+                    for key, state, step in iterate_key_state_steps()
+                ]
+                instance_state = "ok"
+            except Exception:
+                instance_state = "digest failed"
+                error = traceback.format_exc()
+
+        instance_rows = [(instance_name, instance_state, error)]
+
+        if as_tsv:
+            def write_tsv(file_name, rows):
+                with open(drypipe_dir.joinpath(file_name), "w", newline="") as f:
+                    # csv quoting, because the sqlite3 shell's .import also parses quoted fields in tabs mode,
+                    # this keeps the tabs, newlines and quotes of logs and stack dumps from breaking rows
+                    writer = csv.writer(f, delimiter="\t", lineterminator="\n")
+                    writer.writerows(rows)
+
+            write_tsv("task_status.tsv", task_rows)
+            write_tsv("instance_status.tsv", instance_rows)
+            return
+
+        db_file = drypipe_dir.joinpath("status.db")
+        db_file.unlink(missing_ok=True)
+
+        with sqlite3.connect(db_file) as conn:
+            conn.execute("""
+                create table task_status (
+                    instance_name text,
+                    key text,
+                    state text,
+                    step int,
+                    drypipe_log text,
+                    out_log text
+                )
+            """)
+            conn.execute("""
+                create table instance_status (
+                    instance_name text,
+                    state text,
+                    error text
+                )
+            """)
+            conn.executemany("insert into task_status values (?, ?, ?, ?, ?, ?)", task_rows)
+            conn.executemany("insert into instance_status values (?, ?, ?)", instance_rows)
+
+        conn.close()
 
 
 class Monitor:

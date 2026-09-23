@@ -2,6 +2,8 @@ import glob
 import math
 import os.path
 import re
+import sqlite3
+import subprocess
 import time
 from pathlib import Path
 
@@ -614,6 +616,130 @@ class CliFuncFilterTests(BasePipelineTest):
             self._list_keys(d, '--func-filter=func_filter_children_above(threshold=8)'),
             ['t09', 't10', 't11']
         )
+
+
+def dag_that_fails(dsl):
+    raise Exception("dag_that_fails always fails")
+    yield
+
+
+def pipeline_that_fails():
+    return DryPipe.create_pipeline(dag_that_fails)
+
+
+class CliStatusDbTests(BasePipelineTest):
+
+    generator = 'dry_pipe_tests.cli_tests:simple_array_pipeline'
+
+    def test_run_pipeline(self):
+        pass
+
+    def _status_db(self, d, *extra_args, generator=None):
+        test_cli(
+            self,
+            'status-db',
+            f'--pipeline-instance-dir={d.sandbox_dir}',
+            f'--generator={generator or self.generator}',
+            *extra_args
+        )
+
+    def _query(self, d, sql):
+        with sqlite3.connect(Path(d.sandbox_dir, ".drypipe", "status.db")) as conn:
+            rows = conn.execute(sql).fetchall()
+        conn.close()
+        return rows
+
+    def test_status_db_with_filter(self):
+        d = TestSandboxDir(self)
+        test_cli(self, 'prepare', f'--pipeline-instance-dir={d.sandbox_dir}', f'--generator={self.generator}')
+
+        Path(d.sandbox_dir, ".drypipe", "t01", "out.log").write_text("t01 says hi\n")
+
+        self._status_db(d, '--filter=t0*', '--instance-name=z')
+        # a second invocation overwrites the db, it doesn't append
+        self._status_db(d, '--filter=t0*', '--instance-name=z')
+
+        self.assertEqual(self._query(d, "select * from instance_status"), [("z", "ok", None)])
+
+        task_rows = self._query(d, "select * from task_status order by key")
+        self.assertEqual([row[1] for row in task_rows], [f"t0{i}" for i in range(1, 10)])
+        self.assertEqual(task_rows[0], ("z", "t01", "waiting", None, None, "t01 says hi\n"))
+        # t02 never ran, it has no logs
+        self.assertEqual(task_rows[1], ("z", "t02", "waiting", None, None, None))
+
+    def test_status_db_missing_drypipe(self):
+        d = TestSandboxDir(self)
+        Path(d.sandbox_dir).mkdir(parents=True, exist_ok=True)
+
+        self._status_db(d)
+
+        self.assertEqual(
+            self._query(d, "select * from instance_status"),
+            [(os.path.basename(d.sandbox_dir), "missing .drypipe", None)]
+        )
+        self.assertEqual(self._query(d, "select * from task_status"), [])
+
+    def test_status_db_digest_failed(self):
+        d = TestSandboxDir(self)
+        Path(d.sandbox_dir, ".drypipe").mkdir(parents=True, exist_ok=True)
+
+        self._status_db(d, generator='dry_pipe_tests.cli_tests:pipeline_that_fails')
+
+        [(_, state, error)] = self._query(d, "select * from instance_status")
+        self.assertEqual(state, "digest failed")
+        self.assertIn("dag_that_fails always fails", error)
+        self.assertEqual(self._query(d, "select * from task_status"), [])
+
+    def _import_tsv(self, d, table, create_table_sql):
+        db_file = Path(d.sandbox_dir, "aggregate.db")
+        db_file.unlink(missing_ok=True)
+        with sqlite3.connect(db_file) as conn:
+            conn.execute(create_table_sql)
+        conn.close()
+
+        subprocess.run(
+            ["sqlite3", db_file, ".mode tabs", f".import {Path(d.sandbox_dir, '.drypipe', f'{table}.tsv')} {table}"],
+            check=True
+        )
+
+        with sqlite3.connect(db_file) as conn:
+            rows = conn.execute(f"select * from {table}").fetchall()
+        conn.close()
+        return rows
+
+    def test_status_db_tsv_stack_dump_imports_in_sqlite(self):
+        d = TestSandboxDir(self)
+        Path(d.sandbox_dir, ".drypipe").mkdir(parents=True, exist_ok=True)
+
+        self._status_db(d, '--tsv', generator='dry_pipe_tests.cli_tests:pipeline_that_fails')
+
+        # the stack dump in the error column has newlines, it must survive the bulk import as a single row
+        [(_, state, error)] = self._import_tsv(
+            d, "instance_status", "create table instance_status (instance_name text, state text, error text)"
+        )
+
+        self.assertEqual(state, "digest failed")
+        self.assertIn("dag_that_fails always fails", error)
+
+    def test_status_db_tsv_logs_import_in_sqlite(self):
+        d = TestSandboxDir(self)
+        test_cli(self, 'prepare', f'--pipeline-instance-dir={d.sandbox_dir}', f'--generator={self.generator}')
+
+        nasty_log = 'tab\there\nnew line\r\ncrlf "quoted" "starts quoted\\back slash\n'
+        Path(d.sandbox_dir, ".drypipe", "t01", "out.log").write_text(nasty_log, newline="")
+        Path(d.sandbox_dir, ".drypipe", "t01", "drypipe.log").write_bytes(b"before nul\x00after nul")
+
+        self._status_db(d, '--tsv', '--filter=t01')
+
+        [(_, key, state, _, drypipe_log, out_log)] = self._import_tsv(
+            d, "task_status",
+            "create table task_status (instance_name text, key text, state text, step int, drypipe_log text, out_log text)"
+        )
+
+        self.assertEqual((key, state), ("t01", "waiting"))
+        self.assertEqual(out_log, nasty_log)
+        # the sqlite3 shell's .import would truncate at NUL, it is replaced
+        self.assertEqual(drypipe_log, "before nul\ufffdafter nul")
 
 
 # ---------------------------------------------------------------------------

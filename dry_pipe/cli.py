@@ -290,7 +290,10 @@ class Cli:
             self.instance_logger = None
         else:
             pid = getattr(self.parsed_args, 'pipeline_instance_dir', None)
-            if pid:
+            # the instance logger creates .drypipe, status-db must report it as missing
+            if pid and self.parsed_args.command == "status-db" and not Path(pid, ".drypipe").exists():
+                self.instance_logger = None
+            elif pid:
                 self.instance_logger = create_instance_logger(
                     pid, level=logging.DEBUG if self.parsed_args.vv else logging.INFO
                 )
@@ -746,6 +749,70 @@ class Cli:
 
         yield Command('upgrade-drypipe', pipeline_instance_dir,
                       help="upgrade drypipe version for the specified pipeline instance")
+
+        def tsv(parser):
+            parser.add_argument(
+                "--tsv",
+                help='create tsv files that can be inserted in a db, instead of creating sqlite files',
+                action='store_true',
+                default=False
+            )
+
+        def instance_name(parser):
+            parser.add_argument(
+                "--instance-name",
+                help='replaces the name of pipeline_instance_dir in the columns with specified name',
+                type=str,
+                default=None
+            )
+
+        yield Command(
+            'status-db', pipeline_instance_dir, generator, tsv, instance_name, *all_filters(),
+            help="""
+                creates an sqlite3 database with tables : 
+
+                create table task_status (
+                    instance_name text,
+                    key text,
+                    state text,
+                    step int,
+                    drypipe_log text,
+                    out_log text
+                );
+
+                create table instance_status (
+                    instance_name text,
+                    state text,
+                    error text
+                );
+
+                task_status contains a row for each task (accepted by the filter if filters are specified),
+                instance_name is the folder name of --pid OR value given by argument --instance-name
+
+                (key, state, step) is what would be returned by the "status" command.
+
+                The instance_status table has a single row
+
+                if command completed without problems : 
+                    instance_status.state = 'ok'
+
+                if --pid has no .drypipe folder :
+                
+                instance_status.state = 'missing .drypipe'
+
+                else : 
+                
+                instance_status.state = 'digest failed'
+                instance_status.error = the stack dump of the fail
+
+
+                if --tsv is specified, two tsv files (in the .drypipe folder) are created instead of an sqlite3 database:
+                task_status.tsv instance_status.tsv
+                The files are formatted such that if they can be inserted (via sqlite3 tsv bulk insertion) in the tables.
+                
+                The --tsv option allows aggregating multiple pipeline instances in a single sqlite database.
+            """
+        )
 
         #yield Command('restart-failed-array-tasks', task_key, include_pre_launch, wait,
         #              help="restart failed array tasks, of specified array task")
@@ -2073,6 +2140,20 @@ class Cli:
                 yield [state, str(step), str(cnt)]
 
         self._print_table(list(rows()))
+
+
+    def status_db(self):        
+        def iterate_key_state_steps():
+            for key, state, step, _ in self.filter_key_state_step():
+                yield key, state, step
+
+        PipelineInstance.write_status_db(
+            self.parsed_args.pipeline_instance_dir,
+            iterate_key_state_steps,
+            self.parsed_args.instance_name,
+            self.parsed_args.tsv
+        )
+
 
 def run_cli():
     handle_script_lib_main()
