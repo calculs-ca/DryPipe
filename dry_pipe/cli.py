@@ -225,7 +225,7 @@ class Cli:
             if line != "":
                 yield line
 
-    def __init__(self, args, env=None, test_mode=False, output=sys.stdout):
+    def __init__(self, args, env=None, test_mode=False, output=sys.stdout, logger=None):
 
         self.raw_command_line = " ".join(args)
         self.args = _cleanup_args(args)
@@ -240,7 +240,7 @@ class Cli:
         self.array_task_manager = None
 
         self.test_mode = test_mode        
-        self.logger = None
+        self.logger = logger
 
         if env is None:
             self.env = os.environ
