@@ -282,6 +282,7 @@ class PipelineInstance:
             instance_name = os.path.basename(os.path.abspath(pipeline_instance_dir))
         
         task_rows = []
+        instance_state = None
         error = None
 
         lean_line_count = 50
@@ -315,21 +316,27 @@ class PipelineInstance:
             instance_state = "missing .drypipe"
             drypipe_dir.mkdir()
         else:
-            try:
-                task_rows = [
-                    (
-                        instance_name, key, state, step,
-                        read_log_or_none(drypipe_dir.joinpath(key, "drypipe.log")),
-                        read_log_or_none(drypipe_dir.joinpath(key, "out.log"))
-                    )
-                    for key, state, step in iterate_key_state_steps()                    
-                ]
-                instance_state = "ok"
-            except Exception:
-                instance_state = "digest failed"
-                error = traceback.format_exc()
+            # a generator, so that the logs of all tasks are never in memory at once
+            def gen_task_rows():
+                nonlocal instance_state, error
+                try:
+                    for key, state, step in iterate_key_state_steps():
+                        if lean and state == "completed":
+                            drypipe_log, out_log = None, None
+                        else:
+                            drypipe_log = read_log_or_none(drypipe_dir.joinpath(key, "drypipe.log"))
+                            out_log = read_log_or_none(drypipe_dir.joinpath(key, "out.log"))
+                        yield instance_name, key, state, step, drypipe_log, out_log
+                    instance_state = "ok"
+                except Exception:
+                    instance_state = "digest failed"
+                    error = traceback.format_exc()
 
-        instance_rows = [(instance_name, instance_state, error)]
+            task_rows = gen_task_rows()
+
+        # instance_state and error are known only once task_rows has been consumed
+        def instance_rows():
+            return [(instance_name, instance_state, error)]
 
         if as_tsv:
             def write_tsv(file_name, rows):
@@ -340,13 +347,18 @@ class PipelineInstance:
                     writer.writerows(rows)
 
             write_tsv("task_status.tsv", task_rows)
-            write_tsv("instance_status.tsv", instance_rows)
+            # a failed digest has no task rows, the ones written before the failure are dropped
+            if instance_state == "digest failed":
+                write_tsv("task_status.tsv", [])
+            write_tsv("instance_status.tsv", instance_rows())
             return
 
         with PipelineInstance.create_empty_status_db(drypipe_dir.joinpath("status.db")) as conn:
             conn.executemany("insert into task_status values (?, ?, ?, ?, ?, ?)", task_rows)
-            conn.executemany("insert into instance_status values (?, ?, ?)", instance_rows)
-
+            # a failed digest has no task rows, the ones inserted before the failure are dropped
+            if instance_state == "digest failed":
+                conn.execute("delete from task_status")
+            conn.executemany("insert into instance_status values (?, ?, ?)", instance_rows())
 
         conn.close()
 

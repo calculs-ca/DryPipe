@@ -769,7 +769,7 @@ class Cli:
         def lean(parser):
             parser.add_argument(
                 "--lean",
-                help='produces smaller database (or tsv) by storing only non completed tasks, and only the last 50 lines',
+                help='produces smaller database (or tsv) by storing out.log and drypipe.log of only non completed tasks, and only the last 50 lines',
                 action='store_true',
                 default=False
             )

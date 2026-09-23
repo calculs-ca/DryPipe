@@ -627,6 +627,18 @@ def pipeline_that_fails():
     return DryPipe.create_pipeline(dag_that_fails)
 
 
+def dag_that_fails_after_first_task(dsl):
+    yield dsl.task(key="t1").calls("""
+        #!/usr/bin/env bash
+        echo t1
+    """)()
+    raise Exception("dag_that_fails_after_first_task fails after t1")
+
+
+def pipeline_that_fails_after_first_task():
+    return DryPipe.create_pipeline(dag_that_fails_after_first_task)
+
+
 class CliStatusDbTests(BasePipelineTest):
 
     generator = 'dry_pipe_tests.cli_tests:simple_array_pipeline'
@@ -681,14 +693,21 @@ class CliStatusDbTests(BasePipelineTest):
         # fewer than 50 lines, and no newline at the end
         Path(d.sandbox_dir, ".drypipe", "t01", "drypipe.log").write_text("a\nb\nc")
 
+        Path(d.sandbox_dir, ".drypipe", "t02", "out.log").write_text("t02 log")
+
         self._status_db(d, '--lean', '--filter=t0[123]')
 
-        task_rows = self._query(d, "select key, drypipe_log, out_log from task_status order by key")
-        # t02 is completed, --lean leaves it out
-        self.assertEqual([key for key, _, _ in task_rows], ["t01", "t03"])
-        _, drypipe_log, out_log = task_rows[0]
+        task_rows = self._query(d, "select key, state, drypipe_log, out_log from task_status order by key")
+        self.assertEqual([(key, state) for key, state, _, _ in task_rows], [("t01", "waiting"), ("t02", "completed"), ("t03", "waiting")])
+        _, _, drypipe_log, out_log = task_rows[0]
         self.assertEqual(out_log, "".join(out_lines[-50:]))
         self.assertEqual(drypipe_log, "a\nb\nc")
+        # --lean drops the logs of completed tasks
+        self.assertEqual(task_rows[1][2:], (None, None))
+
+        # without --lean, completed tasks keep their logs
+        self._status_db(d, '--filter=t02')
+        self.assertEqual(self._query(d, "select out_log from task_status"), [("t02 log",)])
 
     def test_status_db_missing_drypipe(self):
         d = TestSandboxDir(self)
@@ -729,6 +748,23 @@ class CliStatusDbTests(BasePipelineTest):
             rows = conn.execute(f"select * from {table}").fetchall()
         conn.close()
         return rows
+
+    def test_status_db_digest_failed_after_first_task_has_no_task_rows(self):
+        d = TestSandboxDir(self)
+        Path(d.sandbox_dir, ".drypipe").mkdir(parents=True, exist_ok=True)
+        generator = 'dry_pipe_tests.cli_tests:pipeline_that_fails_after_first_task'
+
+        self._status_db(d, generator=generator)
+
+        [(_, state, error)] = self._query(d, "select * from instance_status")
+        self.assertEqual(state, "digest failed")
+        self.assertIn("fails after t1", error)
+        self.assertEqual(self._query(d, "select * from task_status"), [])
+
+        self._status_db(d, '--tsv', generator=generator)
+
+        self.assertEqual(Path(d.sandbox_dir, ".drypipe", "task_status.tsv").read_text(), "")
+        self.assertIn("digest failed", Path(d.sandbox_dir, ".drypipe", "instance_status.tsv").read_text())
 
     def test_status_db_tsv_stack_dump_imports_in_sqlite(self):
         d = TestSandboxDir(self)
