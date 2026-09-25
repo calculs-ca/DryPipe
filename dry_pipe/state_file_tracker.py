@@ -155,9 +155,14 @@ class StateFileTracker:
     def find_state_file_path_if_exists(control_dir):
         try:
             with os.scandir(control_dir) as i:
+                sf = None
                 for f in i:
                     if f.name.startswith("state."):
-                        return f
+                        if sf is not None:
+                            raise Exception(f"duplicate state file in {control_dir}")
+                        sf = f
+
+                return sf
         except FileNotFoundError:
             pass
 
