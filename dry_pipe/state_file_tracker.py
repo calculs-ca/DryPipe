@@ -347,6 +347,7 @@ class StateFileTracker:
             state_file_in_memory = StateFile(task.key, None, self.pipeline_work_dir, path=state_file_path)
         else:
             state_file_in_memory = StateFile(task.key, task.compute_hash_code(), self.pipeline_work_dir)
+            state_file_in_memory.is_shallow = True
 
         state_file_in_memory.is_slurm_array_child = task.is_slurm_array_child
         if task.is_slurm_parent:

@@ -26,6 +26,7 @@ class StateFile:
         if slurm_array_id is not None:
             self.slurm_array_id = slurm_array_id
         self.is_parent_task = False
+        self.is_shallow = None
 
     def __repr__(self):
         return f"{self.task_key}/{os.path.basename(self.path)}"
