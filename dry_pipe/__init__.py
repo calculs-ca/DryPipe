@@ -131,6 +131,11 @@ class DryPipeDsl:
         return SubPipeline(pipeline, namespace_prefix, self)
 
 
+def _ensure_no_line_break_in_file_name(task_key, clause, arg_name, path):
+    if "\n" in str(path) or "\r" in str(path):
+        raise Exception(f"task({task_key}).{clause}({arg_name}=...): file names can't contain line breaks, got {str(path)!r}")
+
+
 class TaskBuilder:
 
 
@@ -142,9 +147,9 @@ class TaskBuilder:
          state_file_tracker=None, downstream_resets=()
     ):
 
-        for illegal_char in ['"', "'", "{", "}", " "]:
+        for illegal_char in ['"', "'", "{", "}", " ", "\n", "\r", "\t"]:
             if illegal_char in key:
-                raise Exception(f"illegal character {illegal_char} in task key {key}")
+                raise Exception(f"illegal character {illegal_char!r} in task key {key!r}")
 
         self.key = key
         self.dsl = dsl
@@ -203,6 +208,7 @@ class TaskBuilder:
                 elif isinstance(v, TaskOutput):
                     yield from g_o(k, v)
                 elif isinstance(v, Path):
+                    _ensure_no_line_break_in_file_name(self.key, "inputs", k, v)
                     if isinstance(v, TaggedFile) and v.tags:
                         raise Exception(
                             f"feature unsupported: tags on input files, task({self.key}).inputs({k}=...) got tags={v.tags}"
@@ -263,6 +269,7 @@ class TaskBuilder:
                 elif v == float:
                     yield k, TaskOutput(k, 'float', task_key=self.key)
                 elif isinstance(v, Path):
+                    _ensure_no_line_break_in_file_name(self.key, "outputs", k, v)
                     tags = v.tags if isinstance(v, TaggedFile) else None
                     yield k, TaskOutput(k, 'file', task_key=self.key, produced_file_name=v.name, tags=tags)
                 elif isinstance(v, FileSet):

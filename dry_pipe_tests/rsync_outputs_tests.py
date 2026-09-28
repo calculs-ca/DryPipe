@@ -51,8 +51,24 @@ def unusual_names_dag(dsl):
     }).calls(noop)()
 
 
-def newline_name_dag(dsl):
+def newline_in_output_name_dag(dsl):
     yield dsl.task(key="n").outputs(f=dsl.file("new\nline.txt", tags=["keepers"])).calls(noop)()
+
+
+def newline_in_input_name_dag(dsl):
+    yield dsl.task(key="n").inputs(f=dsl.file("/data/new\nline.txt")).calls(noop)()
+
+
+def carriage_return_in_output_name_dag(dsl):
+    yield dsl.task(key="n").outputs(f=dsl.file("new\rline.txt")).calls(noop)()
+
+
+def newline_in_key_dag(dsl):
+    yield dsl.task(key="n\n1").outputs(f=dsl.file("f.txt")).calls(noop)()
+
+
+def tab_in_key_dag(dsl):
+    yield dsl.task(key="n\t1").outputs(f=dsl.file("f.txt")).calls(noop)()
 
 
 def drypipe_lookalike_names_dag(dsl):
@@ -115,10 +131,11 @@ class RsyncOutputsTestCase(unittest.TestCase):
         self.pid = sandbox / "pid"
         self.dest = sandbox / "dest"
 
-    def cli(self, command, *args, pid=None):
+    def cli(self, command, *args, pid=None, global_args=()):
         out = StringIO()
         Cli(
             [
+                *global_args,
                 command,
                 f"--pipeline-instance-dir={pid or self.pid}",
                 f"--generator={MODULE}:{self.generator}",
@@ -132,9 +149,9 @@ class RsyncOutputsTestCase(unittest.TestCase):
     def prepare(self):
         self.cli("prepare")
 
-    def rsync_outputs(self, *args, confirm=False):
+    def rsync_outputs(self, *args, confirm=False, global_args=()):
         no_confirm = [] if confirm else ["--no-confirm"]
-        return self.cli("rsync-outputs", f"--dest={self.dest}/", *no_confirm, *args)
+        return self.cli("rsync-outputs", f"--dest={self.dest}/", *no_confirm, *args, global_args=global_args)
 
     def control_dir(self, key, root=None):
         return (root or self.pid) / ".drypipe" / key
@@ -316,14 +333,26 @@ class RsyncOutputsUnusualFileNamesTests(RsyncOutputsTestCase):
         self.rsync_outputs()
         self.assertEqual(self.dest_files(), {f"output/u/{name}" for name in UNUSUAL_NAMES})
 
-    @unittest.expectedFailure
-    def test_newline_in_name(self):
-        # --files-from is newline separated, fix: --from0 with \0 separators
-        self.generator = "newline_name_dag"
-        self.prepare()
-        self.complete(["n"], names=lambda _: ["new\nline.txt"])
-        self.rsync_outputs()
-        self.assertEqual(self.dest_files(), {"output/n/new\nline.txt"})
+    def test_line_breaks_in_file_names_are_rejected_with_the_task_key(self):
+        for generator, expected_error in [
+            ("newline_in_output_name_dag", r"task\(n\)\.outputs\(f=\.\.\.\): file names can't contain line breaks"),
+            ("newline_in_input_name_dag", r"task\(n\)\.inputs\(f=\.\.\.\): file names can't contain line breaks"),
+            ("carriage_return_in_output_name_dag", r"task\(n\)\.outputs\(f=\.\.\.\): file names can't contain line breaks"),
+        ]:
+            with self.subTest(generator=generator):
+                self.generator = generator
+                with self.assertRaisesRegex(Exception, expected_error):
+                    self.rsync_outputs()
+
+    def test_line_breaks_and_tabs_in_task_keys_are_rejected(self):
+        for generator, expected_error in [
+            ("newline_in_key_dag", r"illegal character '\\n' in task key 'n\\n1'"),
+            ("tab_in_key_dag", r"illegal character '\\t' in task key 'n\\t1'"),
+        ]:
+            with self.subTest(generator=generator):
+                self.generator = generator
+                with self.assertRaisesRegex(Exception, expected_error):
+                    self.rsync_outputs()
 
 
 class RsyncOutputsSummaryTests(RsyncOutputsTestCase):
@@ -416,6 +445,43 @@ class RsyncOutputsExitCodeTests(RsyncOutputsTestCase):
                 self.assertFalse(self.dest.exists())
 
 
+class RsyncOutputsRsyncOptionsTests(RsyncOutputsTestCase):
+
+    def rsync_args(self, *args, global_args=()):
+        args_file = self.sandbox / "rsync-args"
+        real_rsync = shutil.which("rsync")
+        with self.fake_rsync_on_path(
+            f'[ "$1" = "--version" ] && exec {real_rsync} --version\n'
+            f'printf "%s\\n" "$@" > {args_file}\n'
+            f"cat > /dev/null"
+        ):
+            self.rsync_outputs(*args, global_args=global_args)
+        return args_file.read_text().splitlines()
+
+    def test_stats_by_default(self):
+        self.prepare()
+        rsync_args = self.rsync_args()
+        self.assertIn("--stats", rsync_args)
+        self.assertNotIn("--info=progress2", rsync_args)
+        self.assertNotIn("--dry-run", rsync_args)
+
+    def test_info_progress2_replaces_stats(self):
+        self.prepare()
+        rsync_args = self.rsync_args("--info-progress2")
+        self.assertIn("--info=progress2", rsync_args)
+        self.assertNotIn("--stats", rsync_args)
+
+    def test_dry_run_is_passed_to_rsync(self):
+        self.prepare()
+        self.assertIn("--dry-run", self.rsync_args(global_args=["--dry-run"]))
+
+    def test_dry_run_transfers_nothing(self):
+        self.prepare()
+        self.complete(KEYS)
+        self.rsync_outputs("--include-drypipe-files", global_args=["--dry-run"])
+        self.assertFalse(self.dest.exists())
+
+
 class RsyncOutputsStateFileTests(RsyncOutputsTestCase):
 
     def test_state_transitions_between_syncs_leave_a_single_state_file(self):
@@ -498,6 +564,84 @@ class RsyncOutputsStateFileTests(RsyncOutputsTestCase):
         ):
             self.rsync_outputs("--filter=t01", "--include-drypipe-files=minimal")
         self.assertEqual(self.state_files("t01", self.dest), ["state.completed"])
+
+
+class RsyncOutputsIgnoredTasksTests(RsyncOutputsTestCase):
+
+    def ignore(self, *lines, file=None):
+        file = file or self.pid / "drypipe-ignored-tasks.tsv"
+        file.write_text("".join(f"{line}\n" for line in lines))
+        return file
+
+    def dest_files_with_contents(self, key):
+        return {
+            f: (self.dest / f).read_text()
+            for f in self.dest_files()
+            if f.startswith((f"output/{key}/", f".drypipe/{key}/"))
+        }
+
+    def test_newly_ignored_task_is_left_untouched_at_dest(self):
+        for mode in ["minimal", "all"]:
+            with self.subTest(mode=mode):
+                self.setUp()
+                self.prepare()
+                self.complete(KEYS)
+                self.set_state("t02", "failed.1")
+                self.rsync_outputs(f"--include-drypipe-files={mode}")
+                t02_at_dest_before = self.dest_files_with_contents("t02")
+
+                self.ignore("t02")
+                self.set_state("t02", "completed")
+                self.write_outputs("t02", ["t02_report.txt"])
+                (self.pid / "output" / "t02" / "t02_report.txt").write_text("changed after being ignored")
+                (self.pid / "output" / "t02" / "both.tsv").unlink()
+                self.rsync_outputs(f"--include-drypipe-files={mode}")
+
+                self.assertEqual(self.dest_files_with_contents("t02"), t02_at_dest_before)
+                self.assertEqual(self.state_files("t02", self.dest), ["state.failed.1"])
+                self.assert_single_state_file_equal_to_source("t01")
+
+    def test_ignored_tasks_are_excluded(self):
+
+        def implicit_file():
+            self.ignore("t02", "t05\tobsolete")
+            return [], {}
+
+        def option():
+            file = self.ignore("t02", "t05\tobsolete", file=self.sandbox / "ignored.tsv")
+            return [f"--ignored-tasks={file}"], {}
+
+        def env_var():
+            file = self.ignore("t02", "t05\tobsolete", file=self.sandbox / "ignored.tsv")
+            return [], {"DRYPIPE_IGNORED_TASKS": str(file)}
+
+        def option_wins_over_implicit_file():
+            self.ignore("t01")
+            return option()
+
+        for ignore_source in [implicit_file, option, env_var, option_wins_over_implicit_file]:
+            with self.subTest(ignore_source=ignore_source.__name__):
+                self.setUp()
+                self.prepare()
+                self.complete(KEYS)
+                args, env = ignore_source()
+                with mock.patch.dict(os.environ, env):
+                    self.rsync_outputs("--tags=keepers", *args)
+                self.assertEqual(self.dest_files(), output_paths(["t01", "t03", "t04", "t06"], keepers))
+
+    def test_summary_reports_ignored_and_unmatched_keys(self):
+        self.prepare()
+        self.complete(KEYS)
+        self.ignore("t02", "t03 obsolete", "t_04")
+        out = self.rsync_outputs()
+        self.assertIn("tasks: 5\n", out)
+        self.assertIn(f"ignored tasks: 1 (from {self.pid / 'drypipe-ignored-tasks.tsv'})\n", out)
+        self.assertIn("ignored keys not yielded by the generator: 2 (ex: 't03 obsolete', 't_04')\n", out)
+
+    def test_summary_without_ignore_file_has_no_ignore_lines(self):
+        self.prepare()
+        out = self.rsync_outputs()
+        self.assertNotIn("ignored", out)
 
 
 class RsyncOutputsRoundTripTests(RsyncOutputsTestCase):

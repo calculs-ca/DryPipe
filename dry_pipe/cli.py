@@ -1024,7 +1024,15 @@ class Cli:
                 default=False
             )
 
-        yield Command('rsync-outputs', pipeline_instance_dir, generator, tags, dest, include_drypipe_files, no_confirm, *all_filters(),
+        def info_progress2(parser):
+            parser.add_argument(
+                '--info-progress2',
+                help="rsync reports overall progress (rsync --info=progress2) instead of end of transfer statistics (rsync --stats)",
+                action='store_true',
+                default=False
+            )
+
+        yield Command('rsync-outputs', pipeline_instance_dir, generator, tags, dest, include_drypipe_files, no_confirm, info_progress2, *all_filters(),
                       help="rsync output files having at least one of the --tags, of matching tasks, to --dest")
 
         yield Command('archive-outputs', pipeline_instance_dir, generator, tags, include_drypipe_files, *all_filters(),
@@ -1105,13 +1113,19 @@ class Cli:
                 lines = (line.strip() for line in f)
                 return {line.split("\t")[0].strip() for line in lines if line != ""}
 
-        file = ignored_tasks_file()
-        if file is not None:
-            ignored_task_keys = load_ignored_task_keys(file)
+        self.ignored_tasks_file = ignored_tasks_file()
+        if self.ignored_tasks_file is not None:
+            self.ignored_task_keys = load_ignored_task_keys(self.ignored_tasks_file)
+            # for reporting, ex: rsync-outputs summary
+            self.yielded_ignored_task_keys = set()
             task_generator = pipeline.task_generator
 
             def task_generator_without_ignored_tasks(dsl):
-                return (task for task in task_generator(dsl) if task.key not in ignored_task_keys)
+                for task in task_generator(dsl):
+                    if task.key in self.ignored_task_keys:
+                        self.yielded_ignored_task_keys.add(task.key)
+                    else:
+                        yield task
 
             pipeline.task_generator = task_generator_without_ignored_tasks
 
@@ -1845,6 +1859,11 @@ class Cli:
             print(f"total output files: {sum(len(file_outputs) for _, file_outputs in tasks_and_file_outputs)}", file=self.output)
             if include_drypipe_files is not None:
                 print(f"drypipe files ({include_drypipe_files}) of {len(tasks_and_file_outputs)} tasks", file=self.output)
+            if self.ignored_tasks_file is not None:
+                unmatched_keys = sorted(self.ignored_task_keys - self.yielded_ignored_task_keys)
+                examples = f" (ex: {', '.join(repr(k) for k in unmatched_keys[:5])})" if unmatched_keys else ""
+                print(f"ignored tasks: {len(self.yielded_ignored_task_keys)} (from {self.ignored_tasks_file})", file=self.output)
+                print(f"ignored keys not yielded by the generator: {len(unmatched_keys)}{examples}", file=self.output)
             print(f"dest: {self.parsed_args.dest}", file=self.output)
 
         print_summary()
@@ -1867,9 +1886,15 @@ class Cli:
                 yield "--include=/.drypipe/*/state.*"
                 yield "--exclude=/.drypipe/*/*"
 
+        def reporting_and_dry_run_options():
+            yield "--info=progress2" if self.parsed_args.info_progress2 else "--stats"
+            if self.parsed_args.dry_run:
+                yield "--dry-run"
+
         rsync = subprocess.run(
             [
-                "rsync", "-a", "-r", "--delete", "--ignore-missing-args", *minimal_drypipe_files_filters(),
+                "rsync", "-a", "-r", "--delete", "--ignore-missing-args", *reporting_and_dry_run_options(),
+                *minimal_drypipe_files_filters(),
                 "--files-from=-", f"{self.parsed_args.pipeline_instance_dir}/", self.parsed_args.dest
             ],
             input="\n".join(tagged_files_and_control_dirs()),
