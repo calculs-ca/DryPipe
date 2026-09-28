@@ -1023,6 +1023,10 @@ class Cli:
                       help="creates a .tar.gz of of the pipeline instance, to reduce size, --tags can used to exclude output files. Same as archive-outputs --include-drypipe-files=all ")
 
 
+        yield Command('garbage-collect', pipeline_instance_dir, generator, no_confirm,
+                      help="deletes directories K (in ./output/<K> and .drypipe/<K> where K is not in the set of task keys yielded by the generator")
+
+
         def module_function(parser):
             parser.add_argument('module_function', type=str)
 
@@ -1832,6 +1836,39 @@ class Cli:
         # 24: files vanished during transfer, ex: state file renamed by a running task
         if rsync.returncode not in (0, 24):
             raise subprocess.CalledProcessError(rsync.returncode, rsync.args)
+
+    def garbage_collect(self):
+
+        pid = self.parsed_args.pipeline_instance_dir
+
+        task_keys = {task.key for task, _ in self.pipeline_instance_from_args().iterate_key_state_steps()}
+
+        def task_control_dirs():
+            # .drypipe also holds non task dirs (dry_pipe code, messages, etc), a task dir has a state file
+            for d in Path(pid, ".drypipe").iterdir():
+                if d.is_dir() and StateFileTracker.find_state_file_path_if_exists(d) is not None:
+                    yield d
+
+        def task_output_dirs():
+            yield from (d for d in Path(pid, "output").iterdir() if d.is_dir())
+
+        orphan_dirs = [
+            d for d in [*task_control_dirs(), *task_output_dirs()]
+            if d.name not in task_keys
+        ]
+
+        for d in orphan_dirs:
+            print(d, file=self.output)
+        print(f"{len(orphan_dirs)} directories of tasks not yielded by the generator", file=self.output)
+
+        if len(orphan_dirs) == 0:
+            return
+
+        if not self.parsed_args.no_confirm and not self.query_yes_no("delete them ?", default="no"):
+            return
+
+        for d in orphan_dirs:
+            shutil.rmtree(d)
 
 
     def tail_logs(self, file=sys.stdout):
