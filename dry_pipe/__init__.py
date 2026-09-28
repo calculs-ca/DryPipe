@@ -12,7 +12,7 @@ from tempfile import TemporaryDirectory
 
 from dry_pipe.core_lib import PortablePopen, exec_remote, invoke_rsync
 
-from dry_pipe.task import Task, TaskStep, TaskInput, TaskOutput, FileSet
+from dry_pipe.task import Task, TaskStep, TaskInput, TaskOutput, FileSet, TaggedFile
 from dry_pipe.state_file_tracker import StateFileTracker
 
 
@@ -203,6 +203,10 @@ class TaskBuilder:
                 elif isinstance(v, TaskOutput):
                     yield from g_o(k, v)
                 elif isinstance(v, Path):
+                    if isinstance(v, TaggedFile) and v.tags:
+                        raise Exception(
+                            f"feature unsupported: tags on input files, task({self.key}).inputs({k}=...) got tags={v.tags}"
+                        )
                     yield k, TaskInput(k, 'file', file_name=str(v))
                 elif isinstance(v, list):
                     yield k, TaskInput(k, 'task-list', value=v)
@@ -259,7 +263,8 @@ class TaskBuilder:
                 elif v == float:
                     yield k, TaskOutput(k, 'float', task_key=self.key)
                 elif isinstance(v, Path):
-                    yield k, TaskOutput(k, 'file', task_key=self.key, produced_file_name=v.name)
+                    tags = v.tags if isinstance(v, TaggedFile) else None
+                    yield k, TaskOutput(k, 'file', task_key=self.key, produced_file_name=v.name, tags=tags)
                 elif isinstance(v, FileSet):
                     yield k, TaskOutput(k, 'file_set', task_key=self.key, file_set=v)
                 else:

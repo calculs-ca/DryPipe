@@ -1,4 +1,5 @@
 import argparse
+import collections
 import ast
 import ctypes
 import ctypes.util
@@ -16,6 +17,7 @@ import json
 import logging
 import logging.config
 import os
+import re
 import sys
 import textwrap
 import traceback
@@ -225,7 +227,7 @@ class Cli:
             if line != "":
                 yield line
 
-    def __init__(self, args, env=None, test_mode=False, output=sys.stdout, logger=None):
+    def __init__(self, args, env=None, test_mode=False, output=sys.stdout, logger=None, parse_args=True):
 
         self.raw_command_line = " ".join(args)
         self.args = _cleanup_args(args)
@@ -274,11 +276,12 @@ class Cli:
 
         for command in self._enumerate_commands():
             method_name = command.name.replace("-", "_")
-            m = getattr(self, method_name)
-            if m is None:
-                raise Exception(f"method {method_name} should exist, for command {command.name}")
-            else:
+            m = getattr(self, method_name, None)
+            if m is not None:
                 self.command_names_to_method[command.name] = m
+
+        if not parse_args:
+            return
 
         self.parse_args()
         
@@ -364,7 +367,7 @@ class Cli:
         method = self.command_names_to_method.get(self.parsed_args.command)
 
         if method is None:
-            raise Exception(f"method {method} should exist, for command {self.parsed_args.command}")
+            raise Exception(f"command {self.parsed_args.command} is not yet implemented")
 
         method()
 
@@ -964,6 +967,60 @@ class Cli:
 
         yield Command('tail-logs', tail_n, generator, pipeline_instance_dir, *all_filters(),
                       help="applies tail on out.log files of matching tasks")
+
+        def tags(parser):
+            parser.add_argument(
+                '--tags',
+                help="comma separated list of tags, outputs having at least one of them are selected, all outputs if omitted",
+                type=str
+            )
+
+        """        def all_output_dir(parser):
+                    parser.add_argument(
+                        '--all-outputs',
+                        help='include all files in task output dirs, not just the ones declared in task output clauses',
+                        action='store_true',
+                        default=False
+                    )
+        """
+        def dest(parser):
+            parser.add_argument(
+                '--dest',
+                help="rsync destination, ex: my-host:/a/b/my-pipeline/",
+                required=True
+            )
+
+        def include_drypipe_files(parser):
+            parser.add_argument(
+                '--include-drypipe-files',
+                help="adds drypipe working files to the rsync transfer: (all files in .drypipe/<task-key>/*). If given 'minimal' as value, will only include out.log, drypipe.log and the tasks state files",
+                nargs='?',
+                const='all',
+                choices=['all', 'minimal'],
+                required=False
+            )
+        
+
+        def no_confirm(parser):
+            parser.add_argument(
+                '--no-confirm',
+                help="don't prompt for confirmation after printing the summary",
+                action='store_true',
+                default=False
+            )
+
+        yield Command('rsync-outputs', pipeline_instance_dir, generator, tags, dest, include_drypipe_files, no_confirm, *all_filters(),
+                      help="rsync output files having at least one of the --tags, of matching tasks, to --dest")
+
+        yield Command('archive-outputs', pipeline_instance_dir, generator, tags, include_drypipe_files, *all_filters(),
+                      help="creates a .tar.gz of output files having at least one of the --tags, of matching tasks")
+
+        yield Command('purge-outputs', pipeline_instance_dir, generator, tags, *all_filters(),
+                      help="deletes output files having at least one of the --tags, of matching tasks, warning: purging files can break some pipelines")
+
+
+        yield Command('archive', pipeline_instance_dir, generator, tags, include_drypipe_files, *all_filters(),
+                      help="creates a .tar.gz of of the pipeline instance, to reduce size, --tags can used to exclude output files. Same as archive-outputs --include-drypipe-files=all ")
 
 
         def module_function(parser):
@@ -1699,6 +1756,84 @@ class Cli:
                 subprocess.check_call(cmd)
 
 
+    def rsync_outputs(self):
+
+        def ensure_rsync_version_at_least(minimal_version):
+            out = subprocess.run(["rsync", "--version"], capture_output=True, text=True, check=True).stdout
+            m = re.search(r"version (\d+)\.(\d+)\.(\d+)", out)
+            version = tuple(int(n) for n in m.groups()) if m else None
+            if version is None or version < minimal_version:
+                raise Exception(
+                    f"rsync-outputs requires rsync >= {'.'.join(map(str, minimal_version))}, got: {out.splitlines()[0]}"
+                )
+
+        ensure_rsync_version_at_least((3, 2, 7))
+
+        tags = None if self.parsed_args.tags is None else set(self.parsed_args.tags.split(","))
+
+        include_drypipe_files = self.parsed_args.include_drypipe_files
+
+        # materialized: iterated once for the summary, once for the rsync file list
+        tasks_and_file_outputs = [
+            (task, list(task.outputs.file_outputs_with_any_tag(tags)))
+            for task, _ in self.filter_tasks()
+        ]
+
+        def print_summary():
+
+            file_count_per_tag = collections.Counter(
+                tag
+                for _, file_outputs in tasks_and_file_outputs
+                for o in file_outputs
+                for tag in (o.tags or ["(untagged)"])
+            )
+
+            # requested tags are all shown, a 0 count reveals a misspelled tag
+            shown_tags = sorted(file_count_per_tag) if tags is None else sorted(tags)
+
+            print(f"tasks: {len(tasks_and_file_outputs)}", file=self.output)
+            print("output files per tag (a file with many tags is counted for each):", file=self.output)
+            for tag in shown_tags:
+                print(f"  {tag}: {file_count_per_tag[tag]}", file=self.output)
+            print(f"total output files: {sum(len(file_outputs) for _, file_outputs in tasks_and_file_outputs)}", file=self.output)
+            if include_drypipe_files is not None:
+                print(f"drypipe files ({include_drypipe_files}) of {len(tasks_and_file_outputs)} tasks", file=self.output)
+            print(f"dest: {self.parsed_args.dest}", file=self.output)
+
+        print_summary()
+
+        if not self.parsed_args.no_confirm and not self.query_yes_no("continue ?", default="no"):
+            return
+
+        def tagged_files_and_control_dirs():
+            for task, file_outputs in tasks_and_file_outputs:
+                for o in file_outputs:
+                    yield task.outputs.rsync_path(o)
+                if include_drypipe_files is not None:
+                    # listed as a dir, so that --delete removes stale state files at dest
+                    yield f".drypipe/{task.key}"
+
+        def minimal_drypipe_files_filters():
+            if include_drypipe_files == "minimal":
+                yield "--include=/.drypipe/*/out.log"
+                yield "--include=/.drypipe/*/drypipe.log"
+                yield "--include=/.drypipe/*/state.*"
+                yield "--exclude=/.drypipe/*/*"
+
+        rsync = subprocess.run(
+            [
+                "rsync", "-a", "-r", "--delete", "--ignore-missing-args", *minimal_drypipe_files_filters(),
+                "--files-from=-", f"{self.parsed_args.pipeline_instance_dir}/", self.parsed_args.dest
+            ],
+            input="\n".join(tagged_files_and_control_dirs()),
+            text=True
+        )
+
+        # 24: files vanished during transfer, ex: state file renamed by a running task
+        if rsync.returncode not in (0, 24):
+            raise subprocess.CalledProcessError(rsync.returncode, rsync.args)
+
+
     def tail_logs(self, file=sys.stdout):
         n = self.parsed_args.n
         i = 1
@@ -1865,7 +2000,7 @@ class Cli:
         return list(g())
 
 
-    def filter_key_state_step(self, key_universe=None):
+    def filter_tasks(self, key_universe=None):
         pipeline_instance = self.pipeline_instance_from_args()
         pipeline_instance.prepare_instance_dir()
 
@@ -1881,10 +2016,14 @@ class Cli:
                     return False
             return True
 
-        for state_file in pipeline_instance.iterate_key_state_steps(key_universe):
+        for task, state_file in pipeline_instance.iterate_key_state_steps(key_universe):
+            if accept(*state_file.key_state_step()):
+                yield task, state_file
+
+    def filter_key_state_step(self, key_universe=None):
+        for _, state_file in self.filter_tasks(key_universe):
             key, state, step = state_file.key_state_step()
-            if accept(key, state, step):
-                yield key, state, step, state_file
+            yield key, state, step, state_file
 
     def list(self):
         for key, state, step, sf in self.filter_key_state_step():
@@ -2248,7 +2387,7 @@ def cli_in_sub_process(args):
 
 
 def cli_argument_parser():
-    cli = Cli([])
+    cli = Cli([], parse_args=False)
     return cli.parser
 
 if __name__ == '__main__':

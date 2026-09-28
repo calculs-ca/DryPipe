@@ -271,7 +271,7 @@ class PipelineInstance:
             state_file_path = self.state_file_tracker._find_state_file_path_in_task_control_dir(task.key)
             state_file = StateFile(task.key, None, self.state_file_tracker.pipeline_work_dir, path=state_file_path)
 
-            yield state_file
+            yield task, state_file
 
     @staticmethod
     def write_status_db(pipeline_instance_dir, iterate_key_state_steps, instance_name=None, as_tsv=False, lean=False):

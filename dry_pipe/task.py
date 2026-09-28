@@ -383,6 +383,10 @@ class FileSet:
         self.exclude_pattern = exclude_pattern
 
 
+class TaggedFile(type(pathlib.Path())):
+    tags = None
+
+
 class TaskOutput:
 
     @staticmethod
@@ -396,14 +400,15 @@ class TaskOutput:
             j["name"],
             j["type"],
             produced_file_name=produced_file_name,
-            file_set=file_set
+            file_set=file_set,
+            tags=j.get("tags")
         )
 
     def as_string(self):
         p = "" if self.produced_file_name is None else f",{self.produced_file_name}"
         return f"TaskOutput({self.name},{self.type}{p})"
 
-    def __init__(self, name, type, produced_file_name=None, task_key=None, file_set=None):
+    def __init__(self, name, type, produced_file_name=None, task_key=None, file_set=None, tags=None):
         if type not in ['file', 'str', 'int', 'float', 'file_set']:
             raise Exception(f"invalid type {type}")
 
@@ -416,6 +421,7 @@ class TaskOutput:
         self._resolved_value = None
         self.task_key = task_key
         self.file_set = file_set
+        self.tags = tags
         self.task_output_dir = None
 
     def hash_values(self):
@@ -440,6 +446,9 @@ class TaskOutput:
 
         if self.produced_file_name is not None:
             r["produced_file_name"] = self.produced_file_name
+
+        if self.tags is not None:
+            r["tags"] = self.tags
 
         if self.file_set is not None:
             r["file_set"] = {
@@ -656,6 +665,18 @@ class TaskOutputs:
 
         if has_output_var:
             yield f".drypipe/{self.task_key}/output_vars"
+
+    def file_outputs_with_any_tag(self, tags=None):
+
+        def has_any_tag(o):
+            return tags is None or (o.tags is not None and not tags.isdisjoint(o.tags))
+
+        for o in self._task_outputs.values():
+            if o.is_file() and has_any_tag(o):
+                yield o
+
+    def rsync_path(self, file_output):
+        return f"output/{self.task_key}/{file_output.produced_file_name}"
 
     def has_file_sets(self):
         for o in self._task_outputs.values():

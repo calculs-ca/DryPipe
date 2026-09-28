@@ -6,6 +6,7 @@ import typing
 from pathlib import Path
 
 from dry_pipe import TaskBuilder, TaskConf, FileSet, Task
+from dry_pipe.task import TaggedFile
 from dry_pipe.state_file_tracker import StateFileTracker
 from dry_pipe.task_process import TaskProcess
 from dry_pipe.task_lib import download_other_task_outputs
@@ -140,16 +141,15 @@ class StateMachine:
 
         return tb
 
-    def file(self, p):
+    def file(self, p, tags=None):
 
         p0 = Path(p)
 
         pid = Path(self.pipeline_instance_dir())
 
-        if pid in p0.parents:
-            return p0.relative_to(pid)
-
-        return p0
+        f = TaggedFile(p0.relative_to(pid)) if pid in p0.parents else TaggedFile(p0)
+        f.tags = tags
+        return f
 
     def file_set(self, pattern, exclude_pattern=None):
         """

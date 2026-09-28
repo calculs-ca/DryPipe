@@ -53,3 +53,27 @@ $ drypipe run -p my_module:my_pipeline --instance-directory=/x/y/z
 ```
 
 
+## outputs
+
+### tags
+
+
+Tags can be assigned to produced output files, for bulk operations, ex: 
+
+
+```
+.outputs(
+    peptideshaker_report=dsl.file(f"{experiment_name}_Extended_PSM_Annotation_Report.txt", tags=['keepers']),
+    certificate_of_analysis=dsl.file(f'{experiment_name}_Certificate_of_Analysis.txt', tags=['keepers']),    
+    exhaustive_report=dsl.file("report-all.tsv", tags=['heavy', 'for-debug']),
+    filtered_peptideshaker_report=dsl.file("filtered-pepshake.tsv")
+)
+
+```
+
+
+#### rsync-outputs
+
+```
+
+drypipe rsync-outputs --tags=keepers,for-debug --dest=my-host:/a/b/my-pipeline/ --filter-completed --include-drypipe-files
