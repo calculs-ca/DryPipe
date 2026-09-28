@@ -588,6 +588,21 @@ class Cli:
             )
 
         def generator(parser):
+
+
+            parser.add_argument(
+                '--ignored-tasks',
+                help="""A file path referring to a tsv file containing one task key per line (first col is task key, remaining cols ignored). 
+                Drypipe treats ignored tasks as if they were never emitted by the DAG generator. 
+                Note1: command garbage-collect purges ignored tasks if invoked
+                Note2: a file named $PIPELINE_INSTANCE_DIR/drypipe-ignored-tasks.tsv is treated as if referred by --ignored-tasks. If --ignored-tasks is defined and $PIPELINE_INSTANCE_DIR/drypipe-ignored-tasks.tsv also exists, --ignored-tasks wins
+                """,
+                action=EnvDefault,
+                envvar="DRYPIPE_IGNORED_TASKS",
+                env=self.env,
+                required=False
+            )
+            
             return parser.add_argument(
                 '-g', '--generator',
                 help='<module>:<function> task generator function (a function that yields tasks, see "generator function"), can also be set with environment var DRYPIPE_PIPELINE_GENERATOR',
@@ -1071,6 +1086,34 @@ class Cli:
                 f"--pipeline-instance-dir is required, " +
                 "or DRYPIPE_PIPELINE_INSTANCE_DIR environment variable must be set"
             )
+
+        def ignored_tasks_file():
+            explicit_file = self.parsed_args.ignored_tasks
+            if explicit_file is not None:
+                if not os.path.exists(explicit_file):
+                    raise Exception(f"--ignored-tasks file {explicit_file} does not exist")
+                return explicit_file
+            implicit_file = Path(self.parsed_args.pipeline_instance_dir, "drypipe-ignored-tasks.tsv")
+            if implicit_file.is_symlink() and not implicit_file.exists():
+                raise Exception(f"{implicit_file} is a broken symlink")
+            if implicit_file.exists():
+                return implicit_file
+            return None
+
+        def load_ignored_task_keys(file):
+            with open(file) as f:
+                lines = (line.strip() for line in f)
+                return {line.split("\t")[0].strip() for line in lines if line != ""}
+
+        file = ignored_tasks_file()
+        if file is not None:
+            ignored_task_keys = load_ignored_task_keys(file)
+            task_generator = pipeline.task_generator
+
+            def task_generator_without_ignored_tasks(dsl):
+                return (task for task in task_generator(dsl) if task.key not in ignored_task_keys)
+
+            pipeline.task_generator = task_generator_without_ignored_tasks
 
         self.logger.info("will prepare instance %s", self.parsed_args.pipeline_instance_dir)
 

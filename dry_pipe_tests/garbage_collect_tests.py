@@ -41,7 +41,7 @@ class GarbageCollectTests(unittest.TestCase):
         sandbox.mkdir(parents=True)
         self.pid = sandbox / "pid"
 
-    def cli(self, command, generator, *args):
+    def cli(self, command, generator, *args, env=None):
         out = StringIO()
         Cli(
             [
@@ -50,6 +50,7 @@ class GarbageCollectTests(unittest.TestCase):
                 f"--generator={MODULE}:{generator}",
                 *args
             ],
+            env=env,
             test_mode=True,
             output=out
         ).invoke()
@@ -123,3 +124,59 @@ class GarbageCollectTests(unittest.TestCase):
         with mock.patch("builtins.input", return_value="y"):
             self.garbage_collect(confirm=True)
         self.assert_dropped_keys_deleted()
+
+    def ignored_tasks_file(self, f=None):
+        if f is None:
+            f = self.pid.parent / "ignored-tasks.tsv"
+        f.write_text("".join(f"{key}  \tsome reason\n\n" for key in DROPPED_KEYS))
+        return f
+
+    def implicit_ignored_tasks_file(self):
+        return self.ignored_tasks_file(self.pid / "drypipe-ignored-tasks.tsv")
+
+    def test_ignored_tasks_are_not_prepared(self):
+        self.cli("prepare", "dag_before", f"--ignored-tasks={self.ignored_tasks_file()}")
+        self.assertEqual(self.task_dirs(".drypipe") & set(KEPT_KEYS + DROPPED_KEYS), set(KEPT_KEYS))
+
+    def garbage_collect_all_keys_dag(self, *args, env=None):
+        self.cli("garbage-collect", "dag_before", "--no-confirm", *args, env=env)
+
+    def test_garbage_collect_purges_ignored_tasks(self):
+        self.prepare_with_all_keys()
+        self.garbage_collect_all_keys_dag(f"--ignored-tasks={self.ignored_tasks_file()}")
+        self.assert_dropped_keys_deleted()
+
+    def test_ignored_tasks_from_env_var(self):
+        self.prepare_with_all_keys()
+        self.garbage_collect_all_keys_dag(env={"DRYPIPE_IGNORED_TASKS": str(self.ignored_tasks_file())})
+        self.assert_dropped_keys_deleted()
+
+    def test_missing_ignored_tasks_file_fails(self):
+        with self.assertRaisesRegex(Exception, "does not exist"):
+            self.cli("prepare", "dag_before", f"--ignored-tasks={self.pid.parent / 'missing.txt'}")
+
+    def test_implicit_ignored_tasks_file_is_used(self):
+        self.prepare_with_all_keys()
+        self.implicit_ignored_tasks_file()
+        self.garbage_collect_all_keys_dag()
+        self.assert_dropped_keys_deleted()
+
+    def test_explicit_ignored_tasks_overrides_implicit_file(self):
+        self.prepare_with_all_keys()
+        self.implicit_ignored_tasks_file()
+        empty_file = self.pid.parent / "empty.tsv"
+        empty_file.write_text("")
+        self.garbage_collect_all_keys_dag(f"--ignored-tasks={empty_file}")
+        self.assert_nothing_deleted()
+
+    def test_implicit_ignored_tasks_symlink(self):
+        self.prepare_with_all_keys()
+        (self.pid / "drypipe-ignored-tasks.tsv").symlink_to(self.ignored_tasks_file())
+        self.garbage_collect_all_keys_dag()
+        self.assert_dropped_keys_deleted()
+
+    def test_broken_implicit_ignored_tasks_symlink_fails(self):
+        self.prepare_with_all_keys()
+        (self.pid / "drypipe-ignored-tasks.tsv").symlink_to(self.pid.parent / "missing.tsv")
+        with self.assertRaisesRegex(Exception, "broken symlink"):
+            self.garbage_collect_all_keys_dag()
