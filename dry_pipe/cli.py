@@ -1120,12 +1120,23 @@ class Cli:
             self.yielded_ignored_task_keys = set()
             task_generator = pipeline.task_generator
 
+            def without_ignored_array_children(task):
+                if task.is_slurm_parent:
+                    children_tasks = task.inputs.children_tasks
+                    children_tasks.value = [t for t in children_tasks.value if t.key not in self.ignored_task_keys]
+                    if len(children_tasks.value) == 0:
+                        raise Exception(
+                            f"all children tasks of slurm array parent task {task.key} are ignored " +
+                            f"by {self.ignored_tasks_file}, ignore {task.key} as well"
+                        )
+                return task
+
             def task_generator_without_ignored_tasks(dsl):
                 for task in task_generator(dsl):
                     if task.key in self.ignored_task_keys:
                         self.yielded_ignored_task_keys.add(task.key)
                     else:
-                        yield task
+                        yield without_ignored_array_children(task)
 
             pipeline.task_generator = task_generator_without_ignored_tasks
 

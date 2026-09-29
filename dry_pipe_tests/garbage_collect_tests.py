@@ -6,6 +6,7 @@ from unittest import mock
 
 from dry_pipe import DryPipe
 from dry_pipe.cli import Cli
+from dry_pipe_tests.cli_tests import simple_array_pipeline
 
 
 MODULE = "dry_pipe_tests.garbage_collect_tests"
@@ -30,6 +31,10 @@ def dag_of(keys):
 dag_before = dag_of(KEPT_KEYS + DROPPED_KEYS)
 
 dag_after = dag_of(KEPT_KEYS)
+
+
+def dag_with_empty_array(dsl):
+    yield dsl.task(key="ap").slurm_array_parent(children_tasks=[])()
 
 
 class GarbageCollectTests(unittest.TestCase):
@@ -180,3 +185,28 @@ class GarbageCollectTests(unittest.TestCase):
         (self.pid / "drypipe-ignored-tasks.tsv").symlink_to(self.pid.parent / "missing.tsv")
         with self.assertRaisesRegex(Exception, "broken symlink"):
             self.garbage_collect_all_keys_dag()
+
+    def test_ignored_array_children_are_removed_from_task_keys_of_prepared_array(self):
+        self.cli("prepare", "simple_array_pipeline")
+        ignored_tasks_file = self.pid.parent / "ignored-tasks.tsv"
+        ignored_tasks_file.write_text("t01\n")
+        self.cli("prepare", "simple_array_pipeline", f"--ignored-tasks={ignored_tasks_file}")
+        task_keys = (self.pid / ".drypipe" / "ap" / "task-keys.tsv").read_text().split()
+        self.assertEqual(task_keys, [f"t{i:02d}" for i in range(2, 12)])
+
+    def ignore_all_array_children(self, *extra_keys):
+        ignored_tasks_file = self.pid.parent / "ignored-tasks.tsv"
+        ignored_tasks_file.write_text("".join(f"{key}\n" for key in [*(f"t{i:02d}" for i in range(1, 12)), *extra_keys]))
+        return f"--ignored-tasks={ignored_tasks_file}"
+
+    def test_array_without_children_fails(self):
+        with self.assertRaisesRegex(Exception, "has no children tasks"):
+            self.cli("garbage-collect", "dag_with_empty_array", "--no-confirm")
+
+    def test_ignoring_all_array_children_fails(self):
+        with self.assertRaisesRegex(Exception, "all children tasks of slurm array parent task ap are ignored"):
+            self.cli("garbage-collect", "simple_array_pipeline", "--no-confirm", self.ignore_all_array_children())
+
+    def test_ignoring_array_parent_and_all_its_children(self):
+        self.cli("prepare", "simple_array_pipeline", self.ignore_all_array_children("ap"))
+        self.assertFalse((self.pid / ".drypipe" / "ap").exists())
