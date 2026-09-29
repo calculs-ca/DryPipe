@@ -1,6 +1,8 @@
 import glob
 import logging
 import os
+import shlex
+import sys
 import re
 from itertools import groupby
 from pathlib import Path
@@ -516,9 +518,11 @@ class SlurmArrayParentTask:
                 job_id = call_sbatch_func()
                 if job_id is None:
                     raise Exception(f"sbatch returned None:\n {command_args}")
-                this_logger.info("array job id: %s", job_id)
+                submitted_by = shlex.join(sys.argv)
+                this_logger.info("array job id: %s, submitted by: %s", job_id, submitted_by)
                 with open(self.i_th_submitted_array_file(next_array_number, job_id), "w") as f:
-                    f.write(" ".join(command_args))
+                    print(" ".join(command_args), file=f)
+                    print(submitted_by, file=f)
 
             return len(next_task_state_files)
 

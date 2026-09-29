@@ -18,6 +18,7 @@ import logging
 import logging.config
 import os
 import re
+import shlex
 import sys
 import textwrap
 import traceback
@@ -736,6 +737,9 @@ class Cli:
 
         def all_filters():
             return [filter, py_filter, func_filter, filter_completed, filter_not_completed, filter_failed, filter_timed_out, filter_ready]
+
+        # argparse dests of the filter options, their functions are named after them
+        self.filter_dests = [f.__name__ for f in all_filters()]
 
         yield Command('run', pipeline_instance_dir, generator, until, restart_failed, reset_failed, sleep_schedule,
                       help="generate tasks and run the pipeline")
@@ -1718,19 +1722,22 @@ class Cli:
             if len(submitted_arrays) == 0:
                 return
 
-            yield ["array_n", "job_id"] + [c.long_code.lower() for c in counted_codes] + ["total"]
+            yield ["array_n", "job_id", "filters"] + [c.long_code.lower() for c in counted_codes] + ["total", "ram", "cpus", "account"]
 
-            for array_n, job_id, _ in submitted_arrays:
-                yield row_of_array(array_n, job_id)
+            for array_n, job_id, job_file in submitted_arrays:
+                yield row_of_array(array_n, job_id, job_file)
 
-        def row_of_array(array_n, job_id):
+        def row_of_array(array_n, job_id, job_file):
 
             def row(cells):
-                return [f"array.{array_n}", job_id] + cells
+                return [f"array.{array_n}", job_id, self._filters_of_submit(job_file)] + cells
 
-            # -r expands the array into one line per task, and --format="%i %t" keeps each
-            # line short, since a large array has many
-            squeue_cmd = ["squeue", "-r", "--noheader", "--format=%i %t", "--jobs", job_id]
+            # -r expands the array into one line per task, the resources (tres-alloc) and the
+            # account are the same for all tasks of an array
+            squeue_cmd = [
+                "squeue", "-r", "--noheader", "--Format=JobArrayID:|,StateCompact:|,tres-alloc:|,Account:|",
+                "--jobs", job_id
+            ]
 
             with PortablePopen(squeue_cmd) as p:
                 try:
@@ -1749,22 +1756,56 @@ class Cli:
                 # carry on with the other arrays
                 return row([stderr.strip()])
 
+            squeue_rows = [line.strip().split("|") for line in stdout.split("\n") if line.strip() != ""]
+
             count_per_short_code = {c.short_code: 0 for c in counted_codes}
 
-            for line in stdout.split("\n"):
-                line = line.strip()
-                if line == "":
-                    continue
-                _, short_code = line.split()
+            for squeue_row in squeue_rows:
+                short_code = squeue_row[1]
                 if short_code in count_per_short_code:
                     count_per_short_code[short_code] += 1
 
+            def ram_cpus_account():
+                if len(squeue_rows) == 0:
+                    return ["", "", ""]
+                _, _, tres_alloc, account = squeue_rows[0][:4]
+                tres = dict(t.split("=", 1) for t in tres_alloc.split(",") if "=" in t)
+                return [tres.get("mem", ""), tres.get("cpu", ""), account]
+
             return row(
                 [str(count_per_short_code[c.short_code]) for c in counted_codes] +
-                [str(task_count_in_array_file(array_n))]
+                [str(task_count_in_array_file(array_n))] +
+                ram_cpus_account()
             )
 
         self._print_table(list(rows()))
+
+    def _filters_of_submit(self, job_file):
+        """
+        parses the command line that submitted an array, on the 2nd line of its job file
+        """
+
+        lines = Path(job_file).read_text().splitlines()
+
+        # job files written before the command line was recorded have only the sbatch command
+        if len(lines) < 2 or lines[1] == "":
+            return ""
+
+        try:
+            submit_args = self.parser.parse_args(shlex.split(lines[1])[1:])
+        except SystemExit:
+            return "unparsable submit command"
+
+        subparser = self.subparsers.choices[submit_args.command]
+
+        def given_filters():
+            for dest in self.filter_dests:
+                value = getattr(submit_args, dest, None)
+                if value != subparser.get_default(dest):
+                    option = "--" + dest.replace("_", "-")
+                    yield option if value is True else f"{option}={value}"
+
+        return shlex.join(given_filters())
 
     def array_summary(self):
 

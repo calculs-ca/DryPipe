@@ -4,6 +4,8 @@ import json
 import logging
 import math
 import os
+import shlex
+import sys
 import subprocess
 from itertools import groupby
 from pathlib import Path
@@ -785,9 +787,11 @@ class ArrayTaskManager:
 
                 def post_submit_func(job_id):
                     if not self.for_dry_run:
-                        self.logger().info("array job id: %s", job_id)
+                        submitted_by = shlex.join(sys.argv)
+                        self.logger().info("array job id: %s, submitted by: %s", job_id, submitted_by)
                         with open(self.i_th_submitted_array_file(next_array_number, job_id), "w") as f:
-                            f.write(" ".join(command_args))
+                            print(" ".join(command_args), file=f)
+                            print(submitted_by, file=f)
 
                 yield SlurmArrayBatchSubmit(self, pre_submit_func, command_args, post_submit_func, task_keys)
 

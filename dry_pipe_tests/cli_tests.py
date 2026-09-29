@@ -5,6 +5,7 @@ import re
 import sqlite3
 import subprocess
 import time
+import unittest
 from pathlib import Path
 
 from dry_pipe import DryPipe, TaskConf
@@ -1072,3 +1073,27 @@ class CliSbatchOptionsOverrideTests(BasePipelineTest):
         self.assertIn("--time=2:00:00", cmd)
         for o in SBATCH_OVERRIDE_ORIGINAL_OPTIONS:
             self.assertNotIn(o, cmd)
+
+
+class ArraySummarySubmitFiltersTests(unittest.TestCase):
+
+    def filters(self, *job_file_lines):
+        job_file = Path(TestSandboxDir(self).sandbox_dir, "array.0.job.123")
+        job_file.parent.mkdir(parents=True, exist_ok=True)
+        job_file.write_text("".join(f"{line}\n" for line in job_file_lines))
+        return Cli([], parse_args=False)._filters_of_submit(job_file)
+
+    def test_filters_of_submit(self):
+        self.assertEqual(
+            self.filters(
+                "sbatch --array=0-2",
+                "/bin/drypipe array-submit -pid=/p -k=ap --filter=t0* --filter-failed '--py-filter=lambda k, s, st: True' '--sbatch-options=--mem=2G'"
+            ),
+            "'--filter=t0*' '--py-filter=lambda k, s, st: True' --filter-failed"
+        )
+
+    def test_job_file_without_submit_command(self):
+        self.assertEqual(self.filters("sbatch --array=0-2", "", "BATCH_ENDED"), "")
+
+    def test_unparsable_submit_command(self):
+        self.assertEqual(self.filters("sbatch --array=0-2", "/bin/pytest -q"), "unparsable submit command")
