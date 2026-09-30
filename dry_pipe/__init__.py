@@ -175,8 +175,6 @@ class TaskBuilder:
             432 child tasks, and max_simultaneous_jobs=50 will give:
             --array=0-200%50
         """
-        if len(children_tasks) == 0:
-            raise Exception(f"slurm array parent task {self.key} has no children tasks")
 
         return TaskBuilder(** {
             ** vars(self),
