@@ -1385,7 +1385,7 @@ class TaskProcess:
 
                 job_name = f"{self.task_key}:{state_file_bn[6:]}"
                 sbo = step_invocation["sbatch_options"] + [f"--job-name={job_name}"]
-                cmd = list(self.sbatch_cmd_lines(sbo, is_spawn=True))
+                cmd = list(self.sbatch_cmd_lines(lambda _: sbo, is_spawn=True))
                 self.task_logger.info("will spawn next step: %s", " ".join(cmd))
 
                 with PortablePopen(cmd) as p:

@@ -256,7 +256,7 @@ class PipelineWithSlurmArrayForRealSlurmTest(BasePipelineTest):
     def dag_gen(self, dsl):
 
         tc = self.task_conf()
-        tc.use_squeue = True
+        tc.use_squeue = False
 
         for i in range(1, 4):
             yield dsl.task(
@@ -266,7 +266,7 @@ class PipelineWithSlurmArrayForRealSlurmTest(BasePipelineTest):
                     executer_type="slurm",
                     slurm_account="dummy",
                     extra_env=tc.extra_env,
-                    use_squeue=True
+                    use_squeue=False
                 )
             ).inputs(
                 x=i

@@ -61,12 +61,9 @@ class SQueueParser:
     substitute parse for when sacct is not available, the output is almost identical, this parsers should
     produce SAcctRow that are identical to what would be produced by SAcctParser
 
-    squeue --noheader --format="%i|%T|%j|0:0|" -j 9666
-    9666_[5-100]|PENDING|sleep.sh|0:0|
-    9666_4|RUNNING|sleep.sh|0:0|
-    9666_3|RUNNING|sleep.sh|0:0|
-    9666_2|RUNNING|sleep.sh|0:0|
-    9666_1|RUNNING|sleep.sh|0:0|
+    squeue --noheader --format="%i|%T|%j|%V|%S|%e|" -j 9666
+    9666_1|RUNNING|t_0:step-started.0|2026-09-29T18:59:52|2026-09-29T18:59:53|NONE|
+    9666_0|RUNNING|t_0:step-started.0|2026-09-29T18:59:52|2026-09-29T18:59:52|NONE|
     """
 
     def invoke(self, job_id, fake_outputs=None, logger=None):
@@ -78,8 +75,8 @@ class SQueueParser:
                 raise Exception(f'No fake squeue output for job_id {job_id}')
             squeue_output = dedent_lines(squeue_output)
         else:
-                               # JOBID|STATE|NAME|0:0|SUBMIT_TIME|START_TIME|END_TIME|
-            with PortablePopen(f'squeue --noheader --format="%i|%T|%j|0:0|%V|%S|%e|" -j {job_id}', shell=True) as p:
+                               # JOBID|STATE|NAME|SUBMIT_TIME|START_TIME|END_TIME|
+            with PortablePopen(f'squeue --noheader --format="%i|%T|%j|%V|%S|%e|" -j {job_id}', shell=True) as p:
                 p.wait_and_raise_if_non_zero()
                 squeue_output = p.stdout_as_string()
 

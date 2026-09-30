@@ -505,8 +505,12 @@ class TaskOutput:
                 "Only dsl.file_set(...) are iterable"
             )
 
+        scratch_dir = pathlib.Path(self.task_output_dir, "scratch")
+
         for f in pathlib.Path(self.task_output_dir).glob(self.file_set.pattern):
             if f.is_dir():
+                continue
+            if f.is_relative_to(scratch_dir):
                 continue
             if self.file_set.exclude_pattern is not None and f.match(self.file_set.exclude_pattern):
                 continue

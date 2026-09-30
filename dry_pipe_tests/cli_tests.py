@@ -393,7 +393,7 @@ class CliTestScenario2(PipelineWithSlurmArray):
 
         original_options = ["--mem=10"]
 
-        overriden_options = c.sbatch_options_overrider_func(original_options)
+        overriden_options = c.sbatch_options_overrider_func_if_option_exists()(original_options)
 
         self.assertSetEqual(
             set(overriden_options),
