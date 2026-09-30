@@ -1722,20 +1722,24 @@ class Cli:
             if len(submitted_arrays) == 0:
                 return
 
-            yield ["array_n", "job_id", "filters"] + [c.long_code.lower() for c in counted_codes] + ["total", "ram", "cpus", "account"]
+            yield ["array_n", "job_id", *squeue_columns, "filters"]
 
             for array_n, job_id, job_file in submitted_arrays:
                 yield row_of_array(array_n, job_id, job_file)
 
+        squeue_columns = [c.long_code.lower() for c in counted_codes] + ["total", "ram", "cpus", "walltime", "account"]
+
         def row_of_array(array_n, job_id, job_file):
 
             def row(cells):
-                return [f"array.{array_n}", job_id, self._filters_of_submit(job_file)] + cells
+                # error rows have a single cell, pad them so that filters stay in the last column
+                padding = [""] * (len(squeue_columns) - len(cells))
+                return [f"array.{array_n}", job_id, *cells, *padding, self._filters_of_submit(job_file)]
 
-            # -r expands the array into one line per task, the resources (tres-alloc) and the
-            # account are the same for all tasks of an array
+            # -r expands the array into one line per task, the resources (tres-alloc), the wall
+            # time and the account are the same for all tasks of an array
             squeue_cmd = [
-                "squeue", "-r", "--noheader", "--Format=JobArrayID:|,StateCompact:|,tres-alloc:|,Account:|",
+                "squeue", "-r", "--noheader", "--Format=JobArrayID:|,StateCompact:|,tres-alloc:|,TimeLimit:|,Account:|",
                 "--jobs", job_id
             ]
 
@@ -1765,17 +1769,17 @@ class Cli:
                 if short_code in count_per_short_code:
                     count_per_short_code[short_code] += 1
 
-            def ram_cpus_account():
+            def ram_cpus_walltime_account():
                 if len(squeue_rows) == 0:
-                    return ["", "", ""]
-                _, _, tres_alloc, account = squeue_rows[0][:4]
+                    return ["", "", "", ""]
+                _, _, tres_alloc, walltime, account = squeue_rows[0][:5]
                 tres = dict(t.split("=", 1) for t in tres_alloc.split(",") if "=" in t)
-                return [tres.get("mem", ""), tres.get("cpu", ""), account]
+                return [tres.get("mem", ""), tres.get("cpu", ""), walltime, account]
 
             return row(
                 [str(count_per_short_code[c.short_code]) for c in counted_codes] +
                 [str(task_count_in_array_file(array_n))] +
-                ram_cpus_account()
+                ram_cpus_walltime_account()
             )
 
         self._print_table(list(rows()))
