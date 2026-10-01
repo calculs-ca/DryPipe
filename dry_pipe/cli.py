@@ -2204,6 +2204,12 @@ class Cli:
         
         if self.parsed_args.filter_failed:
             return True
+
+        if self.parsed_args.filter_timed_out:
+            return True
+
+        if self.parsed_args.filter_ready:
+            return True
         
         return False
 

@@ -1075,6 +1075,24 @@ class CliSbatchOptionsOverrideTests(BasePipelineTest):
             self.assertNotIn(o, cmd)
 
 
+class HasFiltersTests(unittest.TestCase):
+
+    def has_filters(self, *filter_args):
+        pid = TestSandboxDir(self).sandbox_dir
+        return Cli(['list-keys', f'--pipeline-instance-dir={pid}', '--generator=not:used', *filter_args]).has_filters()
+
+    def test_no_filter(self):
+        self.assertFalse(self.has_filters())
+
+    def test_every_filter_counts(self):
+        for filter_arg in [
+            '--filter=t*', '--py-filter={step} > 0', '--func-filter=m:f()', '--filter-completed',
+            '--filter-not-completed', '--filter-failed', '--filter-timed-out', '--filter-ready'
+        ]:
+            with self.subTest(filter_arg):
+                self.assertTrue(self.has_filters(filter_arg))
+
+
 class ArraySummarySubmitFiltersTests(unittest.TestCase):
 
     def filters(self, *job_file_lines):
