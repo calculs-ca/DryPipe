@@ -737,7 +737,7 @@ class Cli:
         class Command:
             def __init__(self, name, *args, **kwargs):
                 self.name = name
-                sub_parser = _s.add_parser(name, help=kwargs.get("help"))
+                sub_parser = _s.add_parser(name, help=kwargs.get("help"), description=kwargs.get("help"))
                 for a in args:
                     try:
                         a(sub_parser)
@@ -1031,7 +1031,8 @@ class Cli:
                 '--all-tasks',
                 action='store_true',
                 default=False,
-                help="analyze all matching tasks, instead of only those that ended without completing (--filter-unhealthy)"
+                help="by default, only tasks that ended without completing are analyzed, as if --filter-unhealthy "
+                     "was given (failed, timed-out, killed, crashed). --all-tasks analyzes all tasks that match the filters"
             )
 
         yield Command('analyze-logs', tail_n, generator, pipeline_instance_dir, analyze_logs_dir, log_classifier, full, all_tasks, *all_filters(),
