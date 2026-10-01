@@ -1,4 +1,6 @@
 import glob
+import inspect
+import itertools
 import math
 import os.path
 import re
@@ -1097,3 +1099,153 @@ class ArraySummarySubmitFiltersTests(unittest.TestCase):
 
     def test_unparsable_submit_command(self):
         self.assertEqual(self.filters("sbatch --array=0-2", "/bin/pytest -q"), "unparsable submit command")
+
+
+def log_classifier_merging_lookup_errors(default):
+    """resolved by bare name from the --generator module (this module) in CliAnalyzeLogsTests"""
+    default.masks.insert(0, (r"^(KeyError|IndexError):.*", "lookup error"))
+    return default
+
+
+class CliAnalyzeLogsTests(BasePipelineTest):
+
+    generator = 'dry_pipe_tests.cli_tests:simple_array_pipeline'
+
+    def test_run_pipeline(self):
+        pass
+
+    def _analyze_logs(self, *extra_args, out_log_of_t03="50% done\n"):
+        d = TestSandboxDir(self, other_func=inspect.stack()[1].function)
+        d.delete_sandbox()
+        pid = f'--pipeline-instance-dir={d.sandbox_dir}'
+        test_cli(self, 'prepare', pid, f'--generator={self.generator}')
+
+        def set_state(state, key_filter):
+            test_cli(self, 'set-state', pid, f'--generator={self.generator}', f'--state={state}', f'--filter={key_filter}')
+
+        set_state('completed', 't0[1-2]')
+        set_state('timed-out.1', 't03')
+        set_state('failed.2', 't0[4-8]')
+
+        def write_out_log(key, text):
+            Path(d.sandbox_dir, ".drypipe", key, "out.log").write_text(f"{key} says hi\n{text}")
+
+        for key in ['t01', 't02']:
+            write_out_log(key, "done\n")
+        write_out_log('t03', out_log_of_t03)
+
+        write_out_log('t04', "ValueError: bad mass 12.5 in /data/t04/a.mgf\n")
+        write_out_log('t05', "ValueError: bad mass 7.1 in /data/t05/b.mgf\n")
+        write_out_log('t06', "ValueError: bad mass 3.0 in /data/t06/c.mgf\n")
+        write_out_log('t07', "KeyError: 'BRCA1'\n")
+        write_out_log('t08', "IndexError: list index out of range | row 3\n```\n")
+
+        analysis_dir = Path(d.sandbox_dir, "analysis")
+        test_cli(self, 'analyze-logs', pid, f'--generator={self.generator}', '--filter=t0[1-8]',
+                 f'--dir={analysis_dir}', *extra_args)
+
+        return analysis_dir
+
+    @staticmethod
+    def signatures_table(md_file):
+        lines = md_file.read_text().splitlines()
+        return list(itertools.takewhile(lambda l: l != "## Tails", lines))
+
+    def test_one_markdown_file_per_state_step_of_unhealthy_tasks(self):
+        analysis_dir = self._analyze_logs()
+
+        self.assertEqual(sorted(f.name for f in analysis_dir.iterdir()), ['failed.2-5.md', 'timed-out.1-1.md'])
+
+        def keys_in(file_name):
+            return re.findall(r"(t\d+) says hi", Path(analysis_dir, file_name).read_text())
+
+        self.assertEqual(keys_in('timed-out.1-1.md'), ['t03'])
+        self.assertEqual(keys_in('failed.2-5.md'), ['t04', 't05', 't06', 't07', 't08'])
+
+    def test_all_tasks(self):
+        analysis_dir = self._analyze_logs('--all-tasks')
+
+        self.assertEqual(
+            sorted(f.name for f in analysis_dir.iterdir()),
+            ['completed-2.md', 'failed.2-5.md', 'timed-out.1-1.md']
+        )
+
+    def test_filters_narrow_the_unhealthy_tasks(self):
+        analysis_dir = self._analyze_logs('--filter-failed')
+
+        self.assertEqual(sorted(f.name for f in analysis_dir.iterdir()), ['failed.2-5.md'])
+
+    def test_filter_unhealthy(self):
+        analysis_dir = self._analyze_logs()
+        pid = f'--pipeline-instance-dir={analysis_dir.parent}'
+
+        self.assertEqual(
+            sorted(Cli.invoke_and_iterate_lines(
+                'list-keys', pid, f'--generator={self.generator}', '--filter=t0[1-8]', '--filter-unhealthy',
+                test_mode=True
+            )),
+            ['t03', 't04', 't05', 't06', 't07', 't08']
+        )
+
+    def test_signatures_table(self):
+        analysis_dir = self._analyze_logs()
+
+        self.assertEqual(self.signatures_table(Path(analysis_dir, 'failed.2-5.md')), [
+            "## Error signatures",
+            "",
+            "5 tasks, 3 signatures",
+            "",
+            "| tasks | signature |",
+            "|---:|---|",
+            "| 3 | `ValueError: bad mass <n> in <path>` |",
+            "| 1 | `KeyError: <str>` |",
+            "| 1 | `IndexError: list index out of range \\| row <n>` |",
+            "",
+        ])
+
+    def test_signatures_table_with_keys(self):
+        analysis_dir = self._analyze_logs('--full')
+
+        self.assertEqual(self.signatures_table(Path(analysis_dir, 'failed.2-5.md'))[4:-1], [
+            "| tasks | signature | keys |",
+            "|---:|---|---|",
+            "| 3 | `ValueError: bad mass <n> in <path>` | t04 t05 t06 |",
+            "| 1 | `KeyError: <str>` | t07 |",
+            "| 1 | `IndexError: list index out of range \\| row <n>` | t08 |",
+        ])
+
+    def test_tails_are_fenced_code_blocks(self):
+        analysis_dir = self._analyze_logs()
+
+        md = Path(analysis_dir, 'failed.2-5.md').read_text()
+
+        self.assertIn(
+            "### 1. t04\n\n"
+            "tail -50 .drypipe/t04/out.log\n\n"
+            "```text\n"
+            "t04 says hi\n"
+            "ValueError: bad mass 12.5 in /data/t04/a.mgf\n"
+            "```\n",
+            md
+        )
+
+        # t08's log contains a ``` line, its fence must be longer
+        self.assertIn("````text\nt08 says hi\nIndexError: list index out of range | row 3\n```\n````\n", md)
+
+    def test_signatures_ignore_errors_before_the_classified_lines(self):
+        progress = "".join(f"{i}% done\n" for i in range(1000))
+        analysis_dir = self._analyze_logs(out_log_of_t03=f"connection failed, retrying\n{progress}")
+
+        self.assertEqual(self.signatures_table(Path(analysis_dir, 'timed-out.1-1.md'))[6:-1], [
+            "| 1 | `<no error line> last: done` |",
+        ])
+
+    def test_custom_log_classifier(self):
+        analysis_dir = self._analyze_logs('--log-classifier=log_classifier_merging_lookup_errors')
+
+        self.assertEqual(self.signatures_table(Path(analysis_dir, 'failed.2-5.md'))[4:-1], [
+            "| tasks | signature |",
+            "|---:|---|",
+            "| 3 | `ValueError: bad mass <n> in <path>` |",
+            "| 2 | `lookup error` |",
+        ])
