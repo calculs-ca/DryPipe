@@ -1,5 +1,6 @@
 import glob
 import inspect
+import io
 import itertools
 import math
 import os.path
@@ -8,10 +9,11 @@ import sqlite3
 import subprocess
 import time
 import unittest
+import unittest.mock
 from pathlib import Path
 
 from dry_pipe import DryPipe, TaskConf
-from dry_pipe.cli import Cli
+from dry_pipe.cli import Cli, _load_filter_from_keys, _signature_numbers
 from dry_pipe.core_lib import UpstreamTasksNotCompleted
 from dry_pipe.pipeline import Pipeline
 from dry_pipe.task_process import TaskProcess
@@ -137,7 +139,7 @@ class CliArrayTests1(PipelineWithSlurmArrayForRealSlurmTest):
 
         test_cli(
             self,
-            'array-submit',
+            'array-submit', '--yes',
             f'-pid={pipeline_instance.state_file_tracker.pipeline_instance_dir}',
             f'--generator={pipeline_with_slurm_array_1_modfunc}',
             '-k=array-parent'
@@ -158,7 +160,7 @@ class CliArrayTests1(PipelineWithSlurmArrayForRealSlurmTest):
 
         test_cli(
             self,
-            'array-submit',
+            'array-submit', '--yes',
             '--pipeline-instance-dir', pipeline_instance.state_file_tracker.pipeline_instance_dir,
             '--task-key', 'array-parent',
             '--limit', '1'
@@ -170,7 +172,7 @@ class CliArrayTests1(PipelineWithSlurmArrayForRealSlurmTest):
         )
 
         Cli([
-            'array-submit',
+            'array-submit', '--yes',
             '--task-key', 'array-parent'
         ], env={
             "DRYPIPE_PIPELINE_INSTANCE_DIR": pipeline_instance.state_file_tracker.pipeline_instance_dir
@@ -189,7 +191,7 @@ class CliArrayTests1(PipelineWithSlurmArrayForRealSlurmTest):
         for _ in [1, 1, 1]:
             test_cli(
                 self,
-                'array-submit',
+                'array-submit', '--yes',
                 '--pipeline-instance-dir', pipeline_instance.state_file_tracker.pipeline_instance_dir,
                 '--task-key', 'array-parent',
                 '--limit=1'
@@ -216,7 +218,7 @@ class CliTestsPipelineWithSlurmArrayForRestarts(PipelineWithSlurmArrayForRestart
         pid = pipeline_instance.state_file_tracker.pipeline_instance_dir
         test_cli(
             self,
-            'array-submit',
+            'array-submit', '--yes',
             f'--pipeline-instance-dir={pid}',
             '--task-key=array_parent'
         )
@@ -332,7 +334,7 @@ class CliTestsPipelineWithSlurmArray(PipelineWithSlurmArray):
 
         test_cli(
             self,
-            'array-submit',
+            'array-submit', '--yes',
             f'--pipeline-instance-dir={pipeline_instance.state_file_tracker.pipeline_instance_dir}',
             '--task-key=p2',
             '--limit=1'
@@ -340,7 +342,7 @@ class CliTestsPipelineWithSlurmArray(PipelineWithSlurmArray):
 
         test_cli(
             self,
-            'array-submit',
+            'array-submit', '--yes',
             f'--pipeline-instance-dir={pipeline_instance.state_file_tracker.pipeline_instance_dir}',
             '--task-key=p2',
             '--limit=1'
@@ -373,7 +375,7 @@ class CliTestScenario2(PipelineWithSlurmArray):
         
         test_cli(
             self,
-            'array-submit',
+            'array-submit', '--yes',
             '-k=array_parent',
             '--pipeline-instance-dir', d.sandbox_dir,
             '--generator', 'dry_pipe_tests.cli_tests:pipeline_with_slurm_array_2',
@@ -382,7 +384,7 @@ class CliTestScenario2(PipelineWithSlurmArray):
 
         c = create_cli(
             self,
-            'array-submit',
+            'array-submit', '--yes',
             '-k=array_parent',
             '--pipeline-instance-dir', d.sandbox_dir,
             '--generator', 'dry_pipe_tests.cli_tests:pipeline_with_slurm_array_2',
@@ -442,7 +444,7 @@ class CliTestArraySubmitTasksPerJob(BasePipelineTest):
 
         test_cli(
             self,
-            'array-submit',
+            'array-submit', '--yes',
             f'-pid={d.sandbox_dir}',
             f'--generator={self.generator}',
             '-k=ap',
@@ -505,6 +507,196 @@ class CliTestArraySubmitTasksPerJob(BasePipelineTest):
                 f"slurm array slot {array_task_id} got {len(children)} packed tasks, "
                 f"more than tasks-per-job={self.tasks_per_job}: {children}"
             )
+
+
+class CliArraySubmitFilterFromTests(BasePipelineTest):
+
+    generator = 'dry_pipe_tests.cli_tests:simple_array_pipeline'
+
+    def test_run_pipeline(self):
+        pass
+
+    def test_array_submit_only_the_keys_of_filter_from(self):
+        d = TestSandboxDir(self)
+        test_cli(self, 'prepare', f'--pipeline-instance-dir={d.sandbox_dir}', f'--generator={self.generator}')
+
+        keys_file = Path(d.sandbox_dir, "keys.txt")
+        keys_file.write_text("t02\nt05\n")
+
+        test_cli(
+            self, 'array-submit', '--yes', f'-pid={d.sandbox_dir}', f'--generator={self.generator}', '-k=ap',
+            f'--filter-from={keys_file}', '--wait'
+        )
+
+        tasks_by_keys = Pipeline.load_from_module_func(self.generator).create_pipeline_instance(
+            d.sandbox_dir, instance_log_level=self.instance_log_level()
+        ).query_all_tasks_by_key()
+
+        completed_children = sorted(
+            key for key, task in tasks_by_keys.items() if key != "ap" and task.is_completed()
+        )
+        self.assertEqual(completed_children, ['t02', 't05'])
+
+
+class CliArraySubmitConfirmationTests(BasePipelineTest):
+
+    generator = 'dry_pipe_tests.cli_tests:simple_array_pipeline'
+
+    def test_run_pipeline(self):
+        pass
+
+    def _array_submit_answering(self, answer):
+        """array-submit of t02 and t05, answering the confirmation, returns (prompt, completed children, array files)"""
+        d = TestSandboxDir(self, other_func=inspect.stack()[1].function)
+        d.delete_sandbox()
+        test_cli(self, 'prepare', f'--pipeline-instance-dir={d.sandbox_dir}', f'--generator={self.generator}')
+
+        keys_file = Path(d.sandbox_dir, "keys.txt")
+        keys_file.write_text("t02\nt05\n")
+
+        stderr = io.StringIO()
+        with unittest.mock.patch('sys.stdin', io.StringIO(answer)), unittest.mock.patch('sys.stderr', stderr):
+            test_cli(
+                self, 'array-submit', f'-pid={d.sandbox_dir}', f'--generator={self.generator}', '-k=ap',
+                f'--filter-from={keys_file}', '--wait'
+            )
+
+        tasks_by_keys = Pipeline.load_from_module_func(self.generator).create_pipeline_instance(
+            d.sandbox_dir, instance_log_level=self.instance_log_level()
+        ).query_all_tasks_by_key()
+        completed_children = sorted(key for key, task in tasks_by_keys.items() if key != "ap" and task.is_completed())
+        array_files = sorted(Path(d.sandbox_dir, ".drypipe", "ap").glob("array.*.tsv"))
+
+        return stderr.getvalue(), completed_children, array_files
+
+    def test_submits_when_confirmed(self):
+        prompt, completed_children, array_files = self._array_submit_answering("y\n")
+
+        self.assertIn("Will submit slurm array with 2 tasks", prompt)
+        self.assertEqual(completed_children, ['t02', 't05'])
+        self.assertEqual([f.name for f in array_files], ['array.0.tsv'])
+        # N in the prompt is the key count of the array file
+        self.assertEqual(array_files[0].read_text().split(), ['t02', 't05'])
+
+    def test_nothing_submitted_when_not_confirmed(self):
+        for answer in ["n\n", "\n", ""]:
+            with self.subTest(repr(answer)):
+                prompt, completed_children, array_files = self._array_submit_answering(answer)
+
+                self.assertIn("Will submit slurm array with 2 tasks", prompt)
+                self.assertIn("nothing submitted", prompt)
+                self.assertEqual(completed_children, [])
+                self.assertEqual(array_files, [])
+
+
+class FilterFromTests(unittest.TestCase):
+
+    analysis_file = """## Error signatures
+
+3 tasks, 2 signatures
+
+| # | tasks | signature |
+|---:|---:|---|
+| 1 | 2 | `ValueError: bad \\| value <n>` |
+| 2 | 1 | `KeyError: <str>` |
+
+## Tails
+
+### 1. t1 (signature 1)
+
+tail -50 .drypipe/t1/out.log
+
+````text
+### 9. t99 (signature 1)
+### not a heading, in a fenced tail
+```
+ValueError: bad | value 1
+````
+
+### 2. t2 (signature 2)
+
+no out.log
+
+### 3. t3 (signature 1)
+
+tail -50 .drypipe/t3/out.log
+
+```text
+ValueError: bad | value 2
+```
+"""
+
+    def write(self, name, text):
+        f = Path(TestSandboxDir(self, other_func=name).sandbox_dir, name)
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(text)
+        return f
+
+    def test_key_file(self):
+        f = self.write("keys.tsv", "t1\tignored column\n\n  t2  \nt3\n")
+        self.assertEqual(_load_filter_from_keys(str(f)), {"t1", "t2", "t3"})
+
+    def test_whole_analysis_file(self):
+        f = self.write("failed.0-3.md", self.analysis_file)
+        # t99 is in a fenced tail, it's not a task of the file
+        self.assertEqual(_load_filter_from_keys(str(f)), {"t1", "t2", "t3"})
+
+    def test_signatures_of_analysis_file(self):
+        f = self.write("failed.0-3.md", self.analysis_file)
+        self.assertEqual(_load_filter_from_keys(f"{f}:1"), {"t1", "t3"})
+        self.assertEqual(_load_filter_from_keys(f"{f}:2"), {"t2"})
+        self.assertEqual(_load_filter_from_keys(f"{f}:2, 1"), {"t1", "t2", "t3"})
+
+    def test_invalid_signature_numbers(self):
+        f = self.write("failed.0-3.md", self.analysis_file)
+        for numbers in ["3", "0", "1,x", ""]:
+            with self.subTest(numbers):
+                with self.assertRaises(Exception):
+                    _load_filter_from_keys(f"{f}:{numbers}")
+
+    def test_signature_numbers(self):
+        self.assertEqual(_signature_numbers("1, 3,3\n", 3), {1, 3})
+        with self.assertRaisesRegex(Exception, "valid numbers are 1 to 2"):
+            _signature_numbers("1,3", 2)
+
+    def test_key_with_spaces(self):
+        f = self.write("keys.tsv", "t1\nt 2\tignored column\n")
+        with self.assertRaisesRegex(Exception, r"keys.tsv:2: task keys can't contain spaces, got 't 2'"):
+            _load_filter_from_keys(str(f))
+
+    def test_analysis_file_with_keys_column(self):
+        f = self.write("failed.0-3.md", self.analysis_file.replace(
+            "| # | tasks | signature |\n|---:|---:|---|\n"
+            "| 1 | 2 | `ValueError: bad \\| value <n>` |\n| 2 | 1 | `KeyError: <str>` |",
+            "| # | tasks | signature | keys |\n|---:|---:|---|---|\n"
+            "| 1 | 2 | `ValueError: bad \\| value <n>` | t1 t3 |\n| 2 | 1 | `KeyError: <str>` | t2 |"
+        ))
+        self.assertEqual(_load_filter_from_keys(f"{f}:2"), {"t2"})
+
+    def test_malformed_analysis_files(self):
+        table = "| # | tasks | signature |\n|---:|---:|---|\n"
+
+        for name, (old, new), error in [
+            ("no table", (table, ""), "no error signatures table"),
+            ("bad separator", ("|---:|---:|---|", "|---|---|---|"), r":6: .*expected \|---:\|---:\|---\|"),
+            ("rows not numbered in order", ("| 2 | 1 |", "| 3 | 1 |"), r":8: .*expected \| 2 \| <task count>"),
+            ("task count not a number", ("| 1 | 2 |", "| 1 | two |"), r":7: .*expected \| 1 \| <task count>"),
+            ("signature not code", ("`KeyError: <str>`", "KeyError: <str>"), r":8: "),
+            ("heading of the old format", ("### 2. t2 (signature 2)", "### 2. t2"), r":23: .*### <i>. <task-key>"),
+            ("key with a space", ("### 2. t2 (signature 2)", "### 2. t 2 (signature 2)"), r":23: "),
+        ]:
+            with self.subTest(name):
+                self.assertIn(old, self.analysis_file)
+                f = self.write("failed.0-3.md", self.analysis_file.replace(old, new))
+                for spec in [str(f), f"{f}:1"]:
+                    with self.assertRaisesRegex(Exception, error):
+                        _load_filter_from_keys(spec)
+
+    def test_missing_file(self):
+        for spec in ["no-such-keys.txt", "no-such-analysis.md", "no-such-analysis.md:1"]:
+            with self.subTest(spec):
+                with self.assertRaises(FileNotFoundError):
+                    _load_filter_from_keys(spec)
 
 
 class CliFuncFilterTests(BasePipelineTest):
@@ -1089,7 +1281,8 @@ class HasFiltersTests(unittest.TestCase):
     def test_every_filter_counts(self):
         for filter_arg in [
             '--filter=t*', '--py-filter={step} > 0', '--func-filter=m:f()', '--filter-completed',
-            '--filter-not-completed', '--filter-failed', '--filter-timed-out', '--filter-ready'
+            '--filter-not-completed', '--filter-failed', '--filter-timed-out', '--filter-ready',
+            '--filter-unhealthy', '--filter-from=keys.txt'
         ]:
             with self.subTest(filter_arg):
                 self.assertTrue(self.has_filters(filter_arg))
@@ -1155,7 +1348,7 @@ class CliAnalyzeLogsTests(BasePipelineTest):
         write_out_log('t04', "ValueError: bad mass 12.5 in /data/t04/a.mgf\n")
         write_out_log('t05', "ValueError: bad mass 7.1 in /data/t05/b.mgf\n")
         write_out_log('t06', "ValueError: bad mass 3.0 in /data/t06/c.mgf\n")
-        write_out_log('t07', "KeyError: 'BRCA1'\n")
+        write_out_log('t07', "### 9. t99 (signature 1)\nKeyError: 'BRCA1'\n")
         write_out_log('t08', "IndexError: list index out of range | row 3\n```\n")
 
         analysis_dir = Path(d.sandbox_dir, "analysis")
@@ -1213,11 +1406,11 @@ class CliAnalyzeLogsTests(BasePipelineTest):
             "",
             "5 tasks, 3 signatures",
             "",
-            "| tasks | signature |",
-            "|---:|---|",
-            "| 3 | `ValueError: bad mass <n> in <path>` |",
-            "| 1 | `KeyError: <str>` |",
-            "| 1 | `IndexError: list index out of range \\| row <n>` |",
+            "| # | tasks | signature |",
+            "|---:|---:|---|",
+            "| 1 | 3 | `ValueError: bad mass <n> in <path>` |",
+            "| 2 | 1 | `KeyError: <str>` |",
+            "| 3 | 1 | `IndexError: list index out of range \\| row <n>` |",
             "",
         ])
 
@@ -1225,11 +1418,11 @@ class CliAnalyzeLogsTests(BasePipelineTest):
         analysis_dir = self._analyze_logs('--full')
 
         self.assertEqual(self.signatures_table(Path(analysis_dir, 'failed.2-5.md'))[4:-1], [
-            "| tasks | signature | keys |",
-            "|---:|---|---|",
-            "| 3 | `ValueError: bad mass <n> in <path>` | t04 t05 t06 |",
-            "| 1 | `KeyError: <str>` | t07 |",
-            "| 1 | `IndexError: list index out of range \\| row <n>` | t08 |",
+            "| # | tasks | signature | keys |",
+            "|---:|---:|---|---|",
+            "| 1 | 3 | `ValueError: bad mass <n> in <path>` | t04 t05 t06 |",
+            "| 2 | 1 | `KeyError: <str>` | t07 |",
+            "| 3 | 1 | `IndexError: list index out of range \\| row <n>` | t08 |",
         ])
 
     def test_tails_are_fenced_code_blocks(self):
@@ -1238,7 +1431,7 @@ class CliAnalyzeLogsTests(BasePipelineTest):
         md = Path(analysis_dir, 'failed.2-5.md').read_text()
 
         self.assertIn(
-            "### 1. t04\n\n"
+            "### 1. t04 (signature 1)\n\n"
             "tail -50 .drypipe/t04/out.log\n\n"
             "```text\n"
             "t04 says hi\n"
@@ -1255,15 +1448,92 @@ class CliAnalyzeLogsTests(BasePipelineTest):
         analysis_dir = self._analyze_logs(out_log_of_t03=f"connection failed, retrying\n{progress}")
 
         self.assertEqual(self.signatures_table(Path(analysis_dir, 'timed-out.1-1.md'))[6:-1], [
-            "| 1 | `<no error line> last: done` |",
+            "| 1 | 1 | `<no error line> last: done` |",
         ])
 
     def test_custom_log_classifier(self):
         analysis_dir = self._analyze_logs('--log-classifier=log_classifier_merging_lookup_errors')
 
         self.assertEqual(self.signatures_table(Path(analysis_dir, 'failed.2-5.md'))[4:-1], [
-            "| tasks | signature |",
-            "|---:|---|",
-            "| 3 | `ValueError: bad mass <n> in <path>` |",
-            "| 2 | `lookup error` |",
+            "| # | tasks | signature |",
+            "|---:|---:|---|",
+            "| 1 | 3 | `ValueError: bad mass <n> in <path>` |",
+            "| 2 | 2 | `lookup error` |",
         ])
+
+
+    def _extract_keys(self, analysis_dir, answer, *extra_args):
+        with unittest.mock.patch('sys.stdin', io.StringIO(answer)):
+            return Cli.invoke_and_get_str(
+                'extract-keys', str(Path(analysis_dir, 'failed.2-5.md')), *extra_args, test_mode=True
+            ).splitlines()
+
+    def test_extract_keys_of_selected_signatures(self):
+        analysis_dir = self._analyze_logs()
+
+        # 1: ValueError (t04 t05 t06), 2: KeyError (t07, its log has a line that looks like a tail heading),
+        # 3: IndexError (t08, its signature has a | and its log a ```)
+        self.assertEqual(self._extract_keys(analysis_dir, "1, 3\n"), ['t04', 't05', 't06', 't08'])
+        self.assertEqual(self._extract_keys(analysis_dir, "2\n"), ['t07'])
+
+    def test_extract_keys_to_dest_then_filter_from(self):
+        analysis_dir = self._analyze_logs()
+        keys_file = Path(analysis_dir.parent, "keys.txt")
+
+        self.assertEqual(self._extract_keys(analysis_dir, "1\n", f'--dest={keys_file}'), [])
+        self.assertEqual(keys_file.read_text(), "t04\nt05\nt06\n")
+
+        self.assertEqual(
+            sorted(Cli.invoke_and_iterate_lines(
+                'list-keys', f'--pipeline-instance-dir={analysis_dir.parent}', f'--generator={self.generator}',
+                f'--filter-from={keys_file}', test_mode=True
+            )),
+            ['t04', 't05', 't06']
+        )
+
+    def test_extract_keys_rejects_invalid_answers(self):
+        analysis_dir = self._analyze_logs()
+
+        for answer in ["4\n", "0\n", "a,b\n", "\n"]:
+            with self.subTest(answer):
+                with self.assertRaises(Exception):
+                    self._extract_keys(analysis_dir, answer)
+
+    def _list_keys_filtered_from(self, analysis_dir, filter_from):
+        return sorted(Cli.invoke_and_iterate_lines(
+            'list-keys', f'--pipeline-instance-dir={analysis_dir.parent}', f'--generator={self.generator}',
+            f'--filter-from={filter_from}', test_mode=True
+        ))
+
+    def test_filter_from_analysis_file(self):
+        analysis_dir = self._analyze_logs()
+        md = Path(analysis_dir, 'failed.2-5.md')
+
+        self.assertEqual(self._list_keys_filtered_from(analysis_dir, md), ['t04', 't05', 't06', 't07', 't08'])
+        self.assertEqual(self._list_keys_filtered_from(analysis_dir, f"{md}:1,3"), ['t04', 't05', 't06', 't08'])
+        self.assertEqual(self._list_keys_filtered_from(analysis_dir, f"{md}:2"), ['t07'])
+
+        with self.assertRaisesRegex(Exception, "valid numbers are 1 to 3"):
+            self._list_keys_filtered_from(analysis_dir, f"{md}:4")
+
+
+    def test_filter_from_intersects_with_other_filters(self):
+        analysis_dir = self._analyze_logs()
+        md = Path(analysis_dir, 'failed.2-5.md')
+
+        self.assertEqual(
+            sorted(Cli.invoke_and_iterate_lines(
+                'list-keys', f'--pipeline-instance-dir={analysis_dir.parent}', f'--generator={self.generator}',
+                f'--filter-from={md}', '--filter=t0[2-5]', test_mode=True
+            )),
+            # the file has t04..t08, the glob t02..t05
+            ['t04', 't05']
+        )
+
+    def test_filter_from_ignores_keys_not_in_the_pipeline(self):
+        analysis_dir = self._analyze_logs()
+        keys_file = Path(analysis_dir.parent, "keys.txt")
+        keys_file.write_text("t04\nnot-a-task\n")
+
+        self.assertEqual(self._list_keys_filtered_from(analysis_dir, keys_file), ['t04'])
+

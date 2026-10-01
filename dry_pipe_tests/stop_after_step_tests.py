@@ -155,7 +155,7 @@ class StopAfterStepWithArraySubmitTest(StopAfterStepBaseTest):
 
         # run steps 0 and 1 of every child, then stop
         _run_cli(
-            self, 'array-submit',
+            self, 'array-submit', '--yes',
             f'-pid={d.sandbox_dir}', f'--generator={_generator}',
             '-k=ap', '--stop-after-step=1', '--wait'
         )
@@ -169,7 +169,7 @@ class StopAfterStepWithArraySubmitTest(StopAfterStepBaseTest):
         # children left at ready.2 by --stop-after-step must be resubmitted without
         # needing --include-all-incompleted-tasks
         _run_cli(
-            self, 'array-submit',
+            self, 'array-submit', '--yes',
             f'-pid={d.sandbox_dir}', f'--generator={_generator}',
             '-k=ap', '--wait'
         )
@@ -209,7 +209,7 @@ class StopAfterStepWithArraySubmitTest(StopAfterStepBaseTest):
 
         # run steps 0 and 1 of every child, then stop at ready.2
         _run_cli(
-            self, 'array-submit',
+            self, 'array-submit', '--yes',
             f'-pid={d.sandbox_dir}', f'--generator={_generator}',
             '-k=ap', '--stop-after-step=1', '--wait'
         )
@@ -229,7 +229,7 @@ class StopAfterStepWithArraySubmitTest(StopAfterStepBaseTest):
         # children are at ready.2, past step 0, so a submit stopping after step 0 must
         # not resubmit them, and must not run any further step
         _run_cli(
-            self, 'array-submit',
+            self, 'array-submit', '--yes',
             f'-pid={d.sandbox_dir}', f'--generator={_generator}',
             '-k=ap', '--stop-after-step=0', '--wait'
         )

@@ -6,6 +6,7 @@ import ctypes.util
 import fnmatch
 import grp
 import inspect
+import itertools
 from itertools import groupby
 import shutil
 import signal
@@ -167,6 +168,101 @@ def _cleanup_args(args):
         return args[idx + 2:]
     else:
         return args
+
+
+def _load_task_keys(file):
+    """one task key per line, first column of a tsv, other columns ignored, keys can't contain spaces"""
+
+    def key(line_number, line):
+        k = line.split("\t")[0].strip()
+        if re.search(r"\s", k):
+            raise Exception(f"{file}:{line_number}: task keys can't contain spaces, got '{k}'")
+        return k
+
+    with open(file) as f:
+        return {key(line_number, line) for line_number, line in enumerate(f, start=1) if line.strip() != ""}
+
+
+def _signatures_of_analysis_file(path, lines):
+    """
+    (task count, signature cell) of each row of the error signatures table of an analyze-logs file,
+    in signature number order, raises when the table is malformed
+    """
+    separator_of_header = {
+        "| # | tasks | signature |": "|---:|---:|---|",
+        "| # | tasks | signature | keys |": "|---:|---:|---|---|",
+    }
+
+    header_index = next((i for i, line in enumerate(lines) if line in separator_of_header), None)
+    if header_index is None:
+        raise Exception(f"{path}: not an analyze-logs file, it has no error signatures table")
+
+    separator = separator_of_header[lines[header_index]]
+    if lines[header_index + 1:header_index + 2] != [separator]:
+        raise Exception(f"{path}:{header_index + 2}: not an analyze-logs file, expected {separator}")
+
+    rows = itertools.takewhile(lambda l: l.startswith("|"), lines[header_index + 2:])
+    for number, row in enumerate(rows, start=1):
+        cells = re.fullmatch(rf"\| {number} \| (\d+) \| (`.*`) \|(?: [^|]* \|)?", row)
+        if cells is None:
+            raise Exception(
+                f"{path}:{header_index + 2 + number}: not an analyze-logs file, "
+                f"expected | {number} | <task count> | `<signature>` |"
+            )
+        yield int(cells.group(1)), cells.group(2)
+
+
+def _keys_and_signature_numbers_of_analysis_file(path, lines):
+    """
+    from the "### i. <key> (signature <n>)" headings of an analyze-logs file, skipping the fenced tails,
+    raises when a heading is malformed
+    """
+    fence = None
+    for line_number, line in enumerate(lines, start=1):
+        if fence is not None:
+            if line == fence:
+                fence = None
+        elif line.startswith("```"):
+            fence = re.match(r"`+", line).group()
+        elif line.startswith("### "):
+            heading = re.fullmatch(r"### \d+\. (\S+) \(signature (\d+)\)", line)
+            if heading is None:
+                raise Exception(
+                    f"{path}:{line_number}: not an analyze-logs file, expected ### <i>. <task-key> (signature <n>)"
+                )
+            yield heading.group(1), int(heading.group(2))
+
+
+def _signature_numbers(text, signature_count):
+    """parses "1,3" into {1, 3}, the numbers must be in 1..signature_count"""
+    try:
+        numbers = {int(n) for n in text.split(",")}
+    except ValueError:
+        raise Exception(f"expected comma separated signature numbers, got '{text.strip()}'")
+    invalid = sorted(n for n in numbers if not 1 <= n <= signature_count)
+    if invalid:
+        raise Exception(f"no signature numbered {invalid}, valid numbers are 1 to {signature_count}")
+    return numbers
+
+
+def _load_filter_from_keys(spec):
+    """
+    an analyze-logs file: "failed.2-5.md" for all its tasks, "failed.2-5.md:1,3" for the tasks of signatures 1 and 3,
+    else a file of keys (see _load_task_keys)
+    """
+    analysis_file = re.fullmatch(r"(.+\.md)(?::(.*))?", spec)
+    if analysis_file is None:
+        return _load_task_keys(spec)
+
+    path, numbers_text = analysis_file.groups()
+    lines = Path(path).read_text().splitlines()
+    signatures = list(_signatures_of_analysis_file(path, lines))
+    keys_and_numbers = _keys_and_signature_numbers_of_analysis_file(path, lines)
+    if numbers_text is None:
+        return {key for key, _ in keys_and_numbers}
+
+    numbers = _signature_numbers(numbers_text, len(signatures))
+    return {key for key, number in keys_and_numbers if number in numbers}
 
 
 def _parse_func_filter_spec(spec):
@@ -472,7 +568,7 @@ class Cli:
                 filters that are set (logical AND); it is EXCLUDED as soon as it fails any one of them.
                 A group that is not set matches everything (it never excludes on its own).
 
-                  1. key       : --filter / --key-filter   (glob on the task key)
+                  1. key       : --filter / --key-filter   (glob on the task key), --filter-from (file of keys)
                   2. state/step: --py-filter, --filter-completed, --filter-not-completed, --filter-failed
                   3. function  : --func-filter              (a python function returning a boolean)
 
@@ -487,6 +583,15 @@ class Cli:
                 commands such as list-keys or summary before more consequential ones such as array-submit.
                 ''',
                 default='*'
+            )
+
+        def filter_from(parser):
+            parser.add_argument(
+                '--filter-from',
+                help="file of task keys, one per line (first column of a tsv), ex: written by extract-keys. "
+                     "Or a markdown file written by analyze-logs: --filter-from=failed.2-5.md selects all its tasks, "
+                     "--filter-from=failed.2-5.md:1,3 the tasks of its signatures 1 and 3",
+                default=None
             )
 
         def py_filter(parser):
@@ -745,7 +850,7 @@ class Cli:
                         raise Exception(f"arg {a.__name__}  on command {name} failed with exception {e}")
 
         def all_filters():
-            return [filter, py_filter, func_filter, filter_completed, filter_not_completed, filter_failed, filter_unhealthy, filter_timed_out, filter_ready]
+            return [filter, filter_from, py_filter, func_filter, filter_completed, filter_not_completed, filter_failed, filter_unhealthy, filter_timed_out, filter_ready]
 
         # argparse dests of the filter options, their functions are named after them
         self.filter_dests = [f.__name__ for f in all_filters()]
@@ -940,10 +1045,18 @@ class Cli:
             )
 
 
+        def yes(parser):
+            parser.add_argument(
+                '--yes', '-y',
+                action='store_true',
+                default=False,
+                help="submit without asking for confirmation, for scripts"
+            )
+
         yield Command('array-submit',
                       task_key, limit, regen, generator_optional, tail, wait, include_all_incompleted_tasks,
-                      sbatch_options, reset, tasks_per_job, slurm_max_jobs, stop_after_step, *all_filters(),
-                      help="submit array")
+                      sbatch_options, reset, tasks_per_job, slurm_max_jobs, stop_after_step, yes, *all_filters(),
+                      help="submit array, after a confirmation (see --yes)")
 
         yield Command('array-upload', task_key, help="upload array task to remote location")
         yield Command('array-download', task_key, help="download all array tasks results (rsync or Globus fetch all __task_output_dir of child tasks)")
@@ -1043,6 +1156,22 @@ class Cli:
                            "signature, followed by the tail of each task's out.log. The signature of a task is its last "
                            "error line in out.log, with variable parts (paths, numbers, quoted strings, etc) masked, "
                            "see dry_pipe/log_classifier.py and --log-classifier")
+
+        def analysis_file(parser):
+            parser.add_argument('analysis_file', help="a markdown file written by analyze-logs")
+
+        def dest(parser):
+            parser.add_argument(
+                '--dest',
+                type=str,
+                default=None,
+                help="file where the keys are written, one per line, instead of stdout"
+            )
+
+        yield Command('extract-keys', analysis_file, dest,
+                      help="lists the error signatures of a file written by analyze-logs, asks which ones to select "
+                           "(ex: 1,3), and outputs the keys of the tasks having a selected signature. The keys can be "
+                           "used with --filter-from, ex: array-submit --filter-from=keys.txt")
 
         def tags(parser):
             parser.add_argument(
@@ -1169,14 +1298,9 @@ class Cli:
                 return implicit_file
             return None
 
-        def load_ignored_task_keys(file):
-            with open(file) as f:
-                lines = (line.strip() for line in f)
-                return {line.split("\t")[0].strip() for line in lines if line != ""}
-
         self.ignored_tasks_file = ignored_tasks_file()
         if self.ignored_tasks_file is not None:
-            self.ignored_task_keys = load_ignored_task_keys(self.ignored_tasks_file)
+            self.ignored_task_keys = _load_task_keys(self.ignored_tasks_file)
             # for reporting, ex: rsync-outputs summary
             self.yielded_ignored_task_keys = set()
             task_generator = pipeline.task_generator
@@ -1498,20 +1622,19 @@ class Cli:
 
         if not self.has_filters():
             self.array_task_manager.invoke_sacct()
-
             is_restart = len(self.array_task_manager.arrays_submitted_sacct_info) > 0
-
-            if is_restart:
-                # task_process.rewind_to_step(0)
-                self.task_process.task_logger.info(f"submit_local_array is a restart")
-                if not self.task_process.for_dry_run:
-                    for restart_file in Path(self.task_process.pipeline_work_dir).glob("*/restarts.tsv"):
-                        with open(restart_file, "a") as f:
-                            f.write("RESET\n")
-                else:
-                    self.task_process.task_logger.info(f"no file changed, because it's a dry_run")
         else:
             is_restart = False
+
+        def reset_restart_counts():
+            # task_process.rewind_to_step(0)
+            self.task_process.task_logger.info(f"submit_local_array is a restart")
+            if not self.task_process.for_dry_run:
+                for restart_file in Path(self.task_process.pipeline_work_dir).glob("*/restarts.tsv"):
+                    with open(restart_file, "a") as f:
+                        f.write("RESET\n")
+            else:
+                self.task_process.task_logger.info(f"no file changed, because it's a dry_run")
 
         launch_count = 0
 
@@ -1528,13 +1651,29 @@ class Cli:
         set_of_task_keys = set_of_task_keys_if_has_filter()
 
 
-        for submit in self.array_task_manager.next_submits(
+        submits = self.array_task_manager.next_submits(
             restart_failed=is_restart,
             include_all_incompleted=self.parsed_args.include_all_incompleted_tasks,
             set_of_task_keys=set_of_task_keys,
             sbatch_option_overrider=self.sbatch_options_overrider_func_if_option_exists()
-        ):
+        )
 
+        def is_confirmed():
+            """each submit writes its task keys in an array.<n>.tsv file, and submits it as one slurm array"""
+            for submit in submits:
+                print(f"Will submit slurm array with {len(submit.task_keys)} tasks", file=sys.stderr)
+            print("submit ? [y/N] ", end="", file=sys.stderr, flush=True)
+            return sys.stdin.readline().strip().lower() in ("y", "yes")
+
+        needs_confirmation = len(submits) > 0 and not self.parsed_args.yes and not self.parsed_args.dry_run
+        if needs_confirmation and not is_confirmed():
+            print("nothing submitted", file=sys.stderr)
+            return
+
+        if is_restart:
+            reset_restart_counts()
+
+        for submit in submits:
             submit.invoke()
             launch_count += len(submit.task_keys)
         
@@ -2091,9 +2230,10 @@ class Cli:
         tasks = sorted(filter(is_selected, self.filter_key_state_step()), key=state_step)
         for (state, step), group in groupby(tasks, key=state_step):
             keys = [key for key, _, _, _ in group]
+            signature_groups = self._signature_groups(keys, classifier)
             with open(dest_dir / file_name(state, step, len(keys)), "w") as f:
-                self._write_error_signatures_table(keys, classifier, f)
-                self._write_markdown_tails(keys, f)
+                self._write_error_signatures_table(signature_groups, f)
+                self._write_markdown_tails(keys, signature_groups, f)
 
     @staticmethod
     def _is_unhealthy(state_name):
@@ -2122,7 +2262,8 @@ class Cli:
         with open(out_log, errors="replace") as f:
             return "".join(collections.deque(f, maxlen=n))
 
-    def _write_error_signatures_table(self, keys, classifier, file):
+    def _signature_groups(self, keys, classifier):
+        """(signature, keys) pairs, largest group first, their rank is the signature number"""
 
         def signature(key):
             # the end of out.log: long enough to hold a stack trace with its message, short enough to not reach
@@ -2136,6 +2277,9 @@ class Cli:
         keys_by_signature = collections.defaultdict(list)
         for key in keys:
             keys_by_signature[signature(key)].append(key)
+        return sorted(keys_by_signature.items(), key=lambda i: -len(i[1]))
+
+    def _write_error_signatures_table(self, signature_groups, file):
 
         def markdown_code(text):
             text = text.replace("|", "\\|")
@@ -2143,32 +2287,62 @@ class Cli:
 
         def table_rows():
             if self.parsed_args.full:
-                yield "| tasks | signature | keys |"
-                yield "|---:|---|---|"
+                yield "| # | tasks | signature | keys |"
+                yield "|---:|---:|---|---|"
             else:
-                yield "| tasks | signature |"
-                yield "|---:|---|"
+                yield "| # | tasks | signature |"
+                yield "|---:|---:|---|"
 
-            for sig, sig_keys in sorted(keys_by_signature.items(), key=lambda i: -len(i[1])):
+            for number, (sig, sig_keys) in enumerate(signature_groups, start=1):
                 keys_cell = f" {' '.join(sig_keys)} |" if self.parsed_args.full else ""
-                yield f"| {len(sig_keys)} | {markdown_code(sig)} |{keys_cell}"
+                yield f"| {number} | {len(sig_keys)} | {markdown_code(sig)} |{keys_cell}"
 
+        n_tasks = sum(len(sig_keys) for _, sig_keys in signature_groups)
         print("## Error signatures\n", file=file)
-        print(f"{len(keys)} tasks, {len(keys_by_signature)} signatures\n", file=file)
+        print(f"{n_tasks} tasks, {len(signature_groups)} signatures\n", file=file)
         for row in table_rows():
             print(row, file=file)
         print("", file=file)
 
-    def _write_markdown_tails(self, keys, file):
+    def extract_keys(self):
+
+        path = self.parsed_args.analysis_file
+        lines = Path(path).read_text().splitlines()
+
+        def ask_selected_numbers(table):
+            for number, (count, signature_cell) in enumerate(table, start=1):
+                print(f"{number:4}  {count:6}  {signature_cell}", file=sys.stderr)
+            print("signatures to extract (ex: 1,3): ", end="", file=sys.stderr, flush=True)
+            return _signature_numbers(sys.stdin.readline(), len(table))
+
+        selected = ask_selected_numbers(list(_signatures_of_analysis_file(path, lines)))
+        # a list: a malformed file must fail before a partial list of keys is written
+        keys = [key for key, number in _keys_and_signature_numbers_of_analysis_file(path, lines) if number in selected]
+
+        if self.parsed_args.dest is None:
+            for key in keys:
+                print(key, file=self.output)
+        else:
+            with open(self.parsed_args.dest, "w") as f:
+                for key in keys:
+                    print(key, file=f)
+
+    def _write_markdown_tails(self, keys, signature_groups, file):
 
         def code_fence(text):
             """longer than any backtick run in text, so that the text can't close the code block"""
             longest_run = max((len(run) for run in re.findall(r"`+", text)), default=0)
             return "`" * max(3, longest_run + 1)
 
+        signature_number_of_key = {
+            key: number
+            for number, (_, sig_keys) in enumerate(signature_groups, start=1)
+            for key in sig_keys
+        }
+
         print("## Tails\n", file=file)
         for i, key in enumerate(keys, start=1):
-            print(f"### {i}. {key}\n", file=file)
+            print(f"### {i}. {key} (signature {signature_number_of_key[key]})\n", file=file)
             out_log = self._out_log(key)
             if not out_log.exists():
                 print("no out.log\n", file=file)
@@ -2312,8 +2486,15 @@ class Cli:
 
             return f
 
+        def create_key_file_filter():
+            if self.parsed_args.filter_from is None:
+                return tautology
+            keys = _load_filter_from_keys(self.parsed_args.filter_from)
+            return lambda key, state_name, step: key in keys
+
         def g():
             yield create_glob_filter()
+            yield create_key_file_filter()
             yield create_py_filter()
             yield create_func_filter()
 
@@ -2368,6 +2549,8 @@ class Cli:
         if self.parsed_args.py_filter is not None or self.parsed_args.filter != "*":
             return True
         if self.parsed_args.func_filter is not None:
+            return True
+        if self.parsed_args.filter_from is not None:
             return True
         if self.parsed_args.filter_completed:
             return True
