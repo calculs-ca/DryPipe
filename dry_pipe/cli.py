@@ -29,6 +29,7 @@ from pathlib import Path
 
 from dry_pipe import PortablePopen, DryPipe
 from dry_pipe.core_lib import func_from_mod_func, is_inside_slurm_job, create_instance_logger
+from dry_pipe.log_classifier import LogClassifier
 from dry_pipe.pipeline_instance import Monitor, PipelineInstance
 from dry_pipe.task_process import TaskPackExchausted, TaskProcess, TaskFailedException
 from dry_pipe.slurm_array_task import SlurmArrayParentTask
@@ -564,6 +565,14 @@ class Cli:
                 action='store_true',
                 default=False
             )
+
+        def filter_unhealthy(parser):
+            parser.add_argument(
+                '--filter-unhealthy',
+                help='filters tasks that ended without completing: failed, timed-out, killed or crashed',
+                action='store_true',
+                default=False
+            )
             
 
         def grep_expr(parser):
@@ -736,7 +745,7 @@ class Cli:
                         raise Exception(f"arg {a.__name__}  on command {name} failed with exception {e}")
 
         def all_filters():
-            return [filter, py_filter, func_filter, filter_completed, filter_not_completed, filter_failed, filter_timed_out, filter_ready]
+            return [filter, py_filter, func_filter, filter_completed, filter_not_completed, filter_failed, filter_unhealthy, filter_timed_out, filter_ready]
 
         # argparse dests of the filter options, their functions are named after them
         self.filter_dests = [f.__name__ for f in all_filters()]
@@ -986,6 +995,53 @@ class Cli:
 
         yield Command('tail-logs', tail_n, generator, pipeline_instance_dir, *all_filters(),
                       help="applies tail on out.log files of matching tasks")
+
+        def analyze_logs_dir(parser):
+            parser.add_argument(
+                '--dir',
+                type=str,
+                default=os.getcwd(),
+                help="destination directory of the markdown files, created if missing, defaults to $PWD"
+            )
+
+        def log_classifier(parser):
+            parser.add_argument(
+                '--log-classifier',
+                type=str,
+                default=None,
+                help='''
+                customizes the error signatures, by default the universal classifier is used.
+                The value is a function in "module:function" format, or a bare function name looked up in the
+                --generator module. The function receives the default LogClassifier and returns a classifier:
+                the default with its regex lists augmented, or a replacement, ex:
+                "def my_classifier(c): c.error_words.append(r'stopped unexpectedly'); return c"
+                '''
+            )
+
+        def full(parser):
+            parser.add_argument(
+                '--full',
+                action='store_true',
+                default=False,
+                help="add a keys column to the error signatures table, listing all task keys of each signature"
+            )
+
+        def all_tasks(parser):
+            parser.add_argument(
+                '--all-tasks',
+                action='store_true',
+                default=False,
+                help="analyze all matching tasks, instead of only those that ended without completing (--filter-unhealthy)"
+            )
+
+        yield Command('analyze-logs', tail_n, generator, pipeline_instance_dir, analyze_logs_dir, log_classifier, full, all_tasks, *all_filters(),
+                      help="writes one markdown file per (state, step) of matching tasks, named <state>.<step>-<N>.md "
+                           "where N is the number of tasks in the file (ex: failed.3-12.md), <state>-<N>.md "
+                           "when the task has no step. Only tasks that ended without completing are analyzed, as if "
+                           "--filter-unhealthy was given, other filters narrow the selection further, see --all-tasks. Each file starts with a table that groups its tasks by error "
+                           "signature, followed by the tail of each task's out.log. The signature of a task is its last "
+                           "error line in out.log, with variable parts (paths, numbers, quoted strings, etc) masked, "
+                           "see dry_pipe/log_classifier.py and --log-classifier")
 
         def tags(parser):
             parser.add_argument(
@@ -1520,10 +1576,10 @@ class Cli:
 
             if self.parsed_args.tail_logs:
                 print(f"tailing all logs")
-                with tempfile.TemporaryFile(mode='w+t') as temp_file:
+                with tempfile.NamedTemporaryFile(mode='w+t') as temp_file:
                     self.tail_logs(file=temp_file)
                     temp_file.flush()
-                    tar.add(tar_file.absolute(), arcname="all-log-tails.txt")
+                    tar.add(temp_file.name, arcname="all-log-tails.txt")
 
             for src, arc_name in existing_sources:
                 tar.add(src, arcname=arc_name)
@@ -2011,6 +2067,116 @@ class Cli:
                 print("", file=file)                
 
 
+    def analyze_logs(self):
+
+        def state_step(key_state_step_sf):
+            _, state, step, _ = key_state_step_sf
+            return state, -1 if step is None else step
+
+        def file_name(state, step, count):
+            if step == -1:
+                return f"{state}-{count}.md"
+            return f"{state}.{step}-{count}.md"
+
+        dest_dir = Path(self.parsed_args.dir)
+        dest_dir.mkdir(parents=True, exist_ok=True)
+
+        classifier = self._log_classifier()
+
+        def is_selected(key_state_step_sf):
+            _, state, _, _ = key_state_step_sf
+            return self.parsed_args.all_tasks or self._is_unhealthy(state)
+
+        tasks = sorted(filter(is_selected, self.filter_key_state_step()), key=state_step)
+        for (state, step), group in groupby(tasks, key=state_step):
+            keys = [key for key, _, _, _ in group]
+            with open(dest_dir / file_name(state, step, len(keys)), "w") as f:
+                self._write_error_signatures_table(keys, classifier, f)
+                self._write_markdown_tails(keys, f)
+
+    @staticmethod
+    def _is_unhealthy(state_name):
+        """ended without completing"""
+        return state_name.startswith(("failed", "timed-out", "killed", "crashed"))
+
+    def _log_classifier(self):
+        spec = self.parsed_args.log_classifier
+        if spec is None:
+            return LogClassifier().compile()
+
+        customize = func_from_mod_func(self._resolve_against_generator_module(spec, "--log-classifier"))
+        classifier = customize(LogClassifier())
+        if not hasattr(classifier, "signature"):
+            raise Exception(
+                f"--log-classifier '{spec}' must return a classifier with a signature(out_log, key) method, "
+                f"got a {type(classifier).__name__}"
+            )
+        return classifier.compile() if hasattr(classifier, "compile") else classifier
+
+    def _out_log(self, key):
+        return Path(self.parsed_args.pipeline_instance_dir, ".drypipe", key, "out.log")
+
+    @staticmethod
+    def _last_lines(out_log, n):
+        with open(out_log, errors="replace") as f:
+            return "".join(collections.deque(f, maxlen=n))
+
+    def _write_error_signatures_table(self, keys, classifier, file):
+
+        def signature(key):
+            # the end of out.log: long enough to hold a stack trace with its message, short enough to not reach
+            # back to old, harmless errors when a task dies without an error line (ex: timeouts)
+            classified_lines = 1000
+            out_log = self._out_log(key)
+            if not out_log.exists():
+                return "<no out.log>"
+            return classifier.signature(self._last_lines(out_log, classified_lines), key)
+
+        keys_by_signature = collections.defaultdict(list)
+        for key in keys:
+            keys_by_signature[signature(key)].append(key)
+
+        def markdown_code(text):
+            text = text.replace("|", "\\|")
+            return f"`` {text} ``" if "`" in text else f"`{text}`"
+
+        def table_rows():
+            if self.parsed_args.full:
+                yield "| tasks | signature | keys |"
+                yield "|---:|---|---|"
+            else:
+                yield "| tasks | signature |"
+                yield "|---:|---|"
+
+            for sig, sig_keys in sorted(keys_by_signature.items(), key=lambda i: -len(i[1])):
+                keys_cell = f" {' '.join(sig_keys)} |" if self.parsed_args.full else ""
+                yield f"| {len(sig_keys)} | {markdown_code(sig)} |{keys_cell}"
+
+        print("## Error signatures\n", file=file)
+        print(f"{len(keys)} tasks, {len(keys_by_signature)} signatures\n", file=file)
+        for row in table_rows():
+            print(row, file=file)
+        print("", file=file)
+
+    def _write_markdown_tails(self, keys, file):
+
+        def code_fence(text):
+            """longer than any backtick run in text, so that the text can't close the code block"""
+            longest_run = max((len(run) for run in re.findall(r"`+", text)), default=0)
+            return "`" * max(3, longest_run + 1)
+
+        print("## Tails\n", file=file)
+        for i, key in enumerate(keys, start=1):
+            print(f"### {i}. {key}\n", file=file)
+            out_log = self._out_log(key)
+            if not out_log.exists():
+                print("no out.log\n", file=file)
+                continue
+            text = self._last_lines(out_log, self.parsed_args.n)
+            fence = code_fence(text)
+            print(f"tail -{self.parsed_args.n} .drypipe/{key}/out.log\n", file=file)
+            print(f"{fence}text\n{text.rstrip()}\n{fence}\n", file=file)
+
     def complain_if_no_generator(self, msg):
         g = self.parsed_args.generator
         if g is None:
@@ -2101,6 +2267,9 @@ class Cli:
             if self.parsed_args.filter_failed:
                 return lambda key, state_name, step: state_name.startswith("failed")
 
+            if self.parsed_args.filter_unhealthy:
+                return lambda key, state_name, step: self._is_unhealthy(state_name)
+
             if self.parsed_args.py_filter is None:
                 return tautology
 
@@ -2122,18 +2291,7 @@ class Cli:
             spec = self.parsed_args.func_filter
             reference, call_args, call_kwargs = _parse_func_filter_spec(spec)
 
-            # special case: a bare function name (no module, i.e. no ":") is looked up in the --generator module
-            if ":" not in reference:
-                generator = self.parsed_args.generator
-                if generator is None:
-                    raise Exception(
-                        f"--func-filter '{spec}' has no module, and can't be resolved against "
-                        f"the --generator module because --generator is not set"
-                    )
-                generator_module = generator.split(":")[0]
-                reference = f"{generator_module}:{reference}"
-
-            factory = func_from_mod_func(reference)
+            factory = func_from_mod_func(self._resolve_against_generator_module(reference, "--func-filter"))
 
             # the referenced function is a factory: it receives the --func-filter args and returns the filter
             try:
@@ -2181,6 +2339,20 @@ class Cli:
             if accept(*state_file.key_state_step()):
                 yield task, state_file
 
+    def _resolve_against_generator_module(self, reference, option_name):
+        """a bare function name (no module, i.e. no ":") is looked up in the --generator module"""
+        if ":" in reference:
+            return reference
+
+        generator = self.parsed_args.generator
+        if generator is None:
+            raise Exception(
+                f"{option_name} '{reference}' has no module, and can't be resolved against "
+                f"the --generator module because --generator is not set"
+            )
+        generator_module = generator.split(":")[0]
+        return f"{generator_module}:{reference}"
+
     def filter_key_state_step(self, key_universe=None):
         for _, state_file in self.filter_tasks(key_universe):
             key, state, step = state_file.key_state_step()
@@ -2209,6 +2381,9 @@ class Cli:
             return True
 
         if self.parsed_args.filter_ready:
+            return True
+
+        if self.parsed_args.filter_unhealthy:
             return True
         
         return False
