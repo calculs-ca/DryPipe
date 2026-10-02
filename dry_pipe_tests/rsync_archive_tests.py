@@ -195,6 +195,11 @@ class RsyncArchiveTestCase(unittest.TestCase):
         script.chmod(0o755)
         return mock.patch.dict(os.environ, {"PATH": f"{bin_dir}:{os.environ['PATH']}"})
 
+    def ignore(self, *lines, file=None):
+        file = file or self.pid / "drypipe-ignored-tasks.tsv"
+        file.write_text("".join(f"{line}\n" for line in lines))
+        return file
+
     def assert_single_state_file_equal_to_source(self, key):
         self.assertEqual(self.state_files(key, self.dest), self.state_files(key, self.pid))
         self.assertEqual(len(self.state_files(key, self.dest)), 1)
@@ -601,11 +606,6 @@ class RsyncStateFileTests(RsyncArchiveTestCase):
 
 class RsyncIgnoredTasksTests(RsyncArchiveTestCase):
 
-    def ignore(self, *lines, file=None):
-        file = file or self.pid / "drypipe-ignored-tasks.tsv"
-        file.write_text("".join(f"{line}\n" for line in lines))
-        return file
-
     def dest_files_with_contents(self, key):
         return {
             f: (self.dest / f).read_text()
@@ -793,6 +793,166 @@ class ArchiveTests(RsyncArchiveTestCase):
                 self.complete(KEYS)
                 scenario()
                 self.assertEqual(self.staging_dirs(), [])
+
+    def test_exclude_tags_archives_files_having_none_of_them(self):
+        self.prepare()
+        self.complete(KEYS)
+        out = self.archive("--exclude-tags=heavy,for-dbug", "--filter=t01")
+        self.extract()
+        self.assertEqual(self.dest_files(), {"output/t01/t01_report.txt", "output/t01/plain.tsv"})
+        self.assertIn("excluded tags: for-dbug, heavy\n", out)
+        self.assertIn("total output files: 2\n", out)
+
+    def test_exclude_tags_cannot_be_combined_with_tags_or_exhaustive(self):
+        self.prepare()
+        for args, expected_error in [
+            (["--tags=keepers"], "--tags cannot be combined with --exclude-tags"),
+            (["--exhaustive"], "--exhaustive cannot be combined"),
+        ]:
+            with self.subTest(args=args):
+                with self.assertRaisesRegex(Exception, expected_error):
+                    self.archive("--exclude-tags=heavy", *args)
+        self.assertFalse(self.archive_file.exists())
+
+
+class PurgeOutputsTests(RsyncArchiveTestCase):
+
+    def purge(self, *args, confirm=False, global_args=()):
+        no_confirm = [] if confirm else ["--no-confirm"]
+        return self.cli("purge-outputs", *no_confirm, *args, global_args=global_args)
+
+    def output_files(self):
+        return {f for f in self.dest_files(self.pid) if f.startswith("output/")}
+
+    def test_tags_select_the_purged_files(self):
+        self.prepare()
+        self.complete(KEYS)
+        out = self.purge("--tags=heavy")
+        self.assertEqual(self.output_files(), output_paths(KEYS, all_outputs) - output_paths(KEYS, heavy))
+        self.assertIn("deleted 12 output files\n", out)
+
+    def test_exclude_tags_spare_the_files_having_any_of_them(self):
+        self.prepare()
+        self.complete(KEYS)
+        self.purge("--exclude-tags=keepers")
+        self.assertEqual(self.output_files(), output_paths(KEYS, keepers))
+
+    def test_only_files_of_matching_tasks_are_purged(self):
+        self.prepare()
+        self.complete(KEYS)
+        self.purge("--filter=t01")
+        self.assertEqual(self.output_files(), output_paths(KEYS[1:], all_outputs))
+
+    def test_undeclared_outputs_and_drypipe_files_are_spared(self):
+        self.prepare()
+        self.complete(["t01"])
+        self.write_outputs("t01", ["undeclared.txt"])
+        drypipe_files_before = self.dest_files(self.pid / ".drypipe")
+        self.purge()
+        self.assertEqual(self.output_files(), {"output/t01/undeclared.txt"})
+        self.assertEqual(self.dest_files(self.pid / ".drypipe"), drypipe_files_before)
+
+    def test_missing_files_are_skipped(self):
+        self.prepare()
+        self.complete(["t01"], names=keepers)
+        out = self.purge()
+        self.assertEqual(self.output_files(), set())
+        self.assertIn("deleted 2 output files\n", out)
+
+    def test_dry_run_lists_and_deletes_nothing(self):
+        self.prepare()
+        self.complete(["t01"])
+        out = self.purge("--tags=for-debug", global_args=["--dry-run"])
+        self.assertIn(f"DRY RUN rm {self.pid / 'output/t01/report-all.tsv'}\n", out)
+        self.assertEqual(self.output_files(), output_paths(["t01"], all_outputs))
+
+    def test_answer_no_deletes_nothing(self):
+        self.prepare()
+        self.complete(KEYS)
+        with mock.patch("builtins.input", return_value=""):
+            out = self.purge(confirm=True)
+        self.assertIn("total output files: 24\n", out)
+        self.assertEqual(self.output_files(), output_paths(KEYS, all_outputs))
+
+    def test_warns_only_when_no_tag_spec_selects_all_outputs(self):
+        self.prepare()
+        for args, warned in [([], True), (["--tags=heavy"], False), (["--exclude-tags=keepers"], False)]:
+            with self.subTest(args=args):
+                out = self.purge(*args, global_args=["--dry-run"])
+                self.assertEqual("ALL output files of matching tasks will be deleted" in out, warned)
+
+    def test_tags_cannot_be_combined_with_exclude_tags(self):
+        self.prepare()
+        self.complete(KEYS)
+        with self.assertRaisesRegex(Exception, "--tags cannot be combined with --exclude-tags"):
+            self.purge("--tags=heavy", "--exclude-tags=keepers")
+        self.assertEqual(self.output_files(), output_paths(KEYS, all_outputs))
+
+
+class ArchiveThenPurgeRoundTripTests(RsyncArchiveTestCase):
+
+    def output_files_with_contents(self):
+        return {
+            f: (self.pid / f).read_bytes()
+            for f in self.dest_files(self.pid)
+            if f.startswith("output/")
+        }
+
+    def archived_files(self, archive_file):
+        tar = subprocess.run(["tar", "-tf", archive_file], capture_output=True, text=True, check=True)
+        return {Path(name).as_posix() for name in tar.stdout.splitlines()}
+
+    def archive_purge_and_untar(self, *selection_args, archive_args=()):
+        """returns the purged files, after asserting that untarring the archive over the purged instance restores it"""
+        archive_file = self.sandbox / "archive.tar.gz"
+        before = self.output_files_with_contents()
+
+        self.cli("archive", f"--name={archive_file}", "--no-confirm", *archive_args, *selection_args)
+        self.cli("purge-outputs", "--no-confirm", *selection_args)
+        purged = before.keys() - self.output_files_with_contents().keys()
+
+        subprocess.run(["tar", "-xf", archive_file, "-C", self.pid], check=True)
+        self.assertEqual(self.output_files_with_contents(), before)
+        return purged, self.archived_files(archive_file)
+
+    def test_selections_restore_the_instance(self):
+        for selection_args, archive_args, expected_purged in [
+            ([], [], output_paths(KEYS, all_outputs)),
+            (["--tags=heavy"], [], output_paths(KEYS, heavy)),
+            (["--tags=keepers,for-debug"], [], output_paths(KEYS, keepers, for_debug)),
+            (["--exclude-tags=keepers"], [], output_paths(KEYS, all_outputs) - output_paths(KEYS, keepers)),
+            (["--exclude-tags=heavy,for-debug"], [], output_paths(KEYS, lambda key: [f"{key}_report.txt", "plain.tsv"])),
+            (["--tags=heavy", "--filter=t01"], [], output_paths(["t01"], heavy)),
+            (["--tags=keepers"], ["--include-drypipe-files=minimal"], output_paths(KEYS, keepers)),
+            ([], ["--exhaustive"], output_paths(KEYS, all_outputs)),
+        ]:
+            with self.subTest(selection_args=selection_args, archive_args=archive_args):
+                self.setUp()
+                self.prepare()
+                self.complete(KEYS)
+                purged, _ = self.archive_purge_and_untar(*selection_args, archive_args=archive_args)
+                self.assertEqual(purged, expected_purged)
+
+    def test_missing_outputs(self):
+        self.prepare()
+        self.complete(KEYS, names=keepers)
+        purged, _ = self.archive_purge_and_untar()
+        self.assertEqual(purged, output_paths(KEYS, keepers))
+
+    def test_unusual_file_names(self):
+        self.generator = "unusual_names_dag"
+        self.prepare()
+        self.complete(["u"], names=lambda _: UNUSUAL_NAMES)
+        purged, _ = self.archive_purge_and_untar("--tags=keepers")
+        self.assertEqual(purged, {f"output/u/{name}" for name in UNUSUAL_NAMES})
+
+    def test_ignored_tasks_are_neither_archived_nor_purged(self):
+        self.prepare()
+        self.complete(KEYS)
+        self.ignore("t02")
+        purged, archived = self.archive_purge_and_untar()
+        self.assertEqual(purged, output_paths(KEYS, all_outputs) - output_paths(["t02"], all_outputs))
+        self.assertFalse(any(f.startswith("output/t02") for f in archived))
 
 
 @unittest.skipUnless(

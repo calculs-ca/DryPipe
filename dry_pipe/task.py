@@ -670,13 +670,20 @@ class TaskOutputs:
         if has_output_var:
             yield f".drypipe/{self.task_key}/output_vars"
 
-    def file_outputs_with_any_tag(self, tags=None):
+    def file_outputs_selected_by_tags(self, tags=None, excluded_tags=None):
 
-        def has_any_tag(o):
-            return tags is None or (o.tags is not None and not tags.isdisjoint(o.tags))
+        def has_any_tag(o, tag_set):
+            return o.tags is not None and not tag_set.isdisjoint(o.tags)
+
+        def is_selected(o):
+            if tags is not None:
+                return has_any_tag(o, tags)
+            if excluded_tags is not None:
+                return not has_any_tag(o, excluded_tags)
+            return True
 
         for o in self._task_outputs.values():
-            if o.is_file() and has_any_tag(o):
+            if o.is_file() and is_selected(o):
                 yield o
 
     def rsync_path(self, file_output):

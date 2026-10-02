@@ -1158,6 +1158,14 @@ class Cli:
                 type=str
             )
 
+        def exclude_tags(parser):
+            parser.add_argument(
+                '--exclude-tags',
+                help="comma separated list of tags, outputs having none of them are selected (untagged outputs included), "
+                     "cannot be combined with --tags",
+                type=str
+            )
+
         """        def all_output_dir(parser):
                     parser.add_argument(
                         '--all-outputs',
@@ -1206,7 +1214,7 @@ class Cli:
                 action='store_true',
                 default=False,
                 help="select everything of matching tasks: all files in output/<task-key>/ (declared outputs or not) "
-                     "and in .drypipe/<task-key>/, cannot be combined with --tags or --include-drypipe-files"
+                     "and in .drypipe/<task-key>/, cannot be combined with --tags, --exclude-tags or --include-drypipe-files"
             )
 
         yield Command('rsync', pipeline_instance_dir, generator, tags, dest, include_drypipe_files, exhaustive, no_confirm, info_progress2, *all_filters(),
@@ -1230,12 +1238,12 @@ class Cli:
                      "ex: 'tar --zstd -cf {archive} .', 'zip -qr {archive} .' (default: '%(default)s')"
             )
 
-        yield Command('archive', pipeline_instance_dir, generator, tags, include_drypipe_files, exhaustive,
+        yield Command('archive', pipeline_instance_dir, generator, tags, exclude_tags, include_drypipe_files, exhaustive,
                       archive_name, archive_command, no_confirm, *all_filters(),
-                      help="archive output files having at least one of the --tags, of matching tasks, with --archive-command")
+                      help="archive output files having at least one of the --tags (or none of the --exclude-tags), of matching tasks, with --archive-command")
 
-        yield Command('purge-outputs', pipeline_instance_dir, generator, tags, *all_filters(),
-                      help="deletes output files having at least one of the --tags, of matching tasks, warning: purging files can break some pipelines")
+        yield Command('purge-outputs', pipeline_instance_dir, generator, tags, exclude_tags, no_confirm, *all_filters(),
+                      help="deletes output files having at least one of the --tags (or none of the --exclude-tags), of matching tasks, warning: purging files can break some pipelines")
 
 
         yield Command('garbage-collect', pipeline_instance_dir, generator, no_confirm,
@@ -2060,50 +2068,25 @@ class Cli:
 
         ensure_rsync_version_at_least((3, 2, 7))
 
-        tags = None if self.parsed_args.tags is None else set(self.parsed_args.tags.split(","))
-
         include_drypipe_files = self.parsed_args.include_drypipe_files
 
         exhaustive = self.parsed_args.exhaustive
 
-        if exhaustive and (tags is not None or include_drypipe_files is not None):
-            raise Exception("--exhaustive cannot be combined with --tags or --include-drypipe-files")
+        if exhaustive and (
+            self.parsed_args.tags is not None or getattr(self.parsed_args, "exclude_tags", None) is not None or
+            include_drypipe_files is not None
+        ):
+            raise Exception("--exhaustive cannot be combined with --tags, --exclude-tags or --include-drypipe-files")
 
-        # materialized: iterated once for the summary, once for the rsync file list
-        tasks_and_file_outputs = [
-            (task, list(task.outputs.file_outputs_with_any_tag(tags)))
-            for task, _ in self.filter_tasks()
-        ]
+        tasks_and_file_outputs = self._tasks_and_selected_file_outputs()
 
-        def print_summary():
-
-            file_count_per_tag = collections.Counter(
-                tag
-                for _, file_outputs in tasks_and_file_outputs
-                for o in file_outputs
-                for tag in (o.tags or ["(untagged)"])
-            )
-
-            # requested tags are all shown, a 0 count reveals a misspelled tag
-            shown_tags = sorted(file_count_per_tag) if tags is None else sorted(tags)
-
-            print(f"tasks: {len(tasks_and_file_outputs)}", file=self.output)
-            print("output files per tag (a file with many tags is counted for each):", file=self.output)
-            for tag in shown_tags:
-                print(f"  {tag}: {file_count_per_tag[tag]}", file=self.output)
-            print(f"total output files: {sum(len(file_outputs) for _, file_outputs in tasks_and_file_outputs)}", file=self.output)
-            if include_drypipe_files is not None:
-                print(f"drypipe files ({include_drypipe_files}) of {len(tasks_and_file_outputs)} tasks", file=self.output)
-            if exhaustive:
-                print(f"exhaustive: all files of {len(tasks_and_file_outputs)} tasks", file=self.output)
-            if self.ignored_tasks_file is not None:
-                unmatched_keys = sorted(self.ignored_task_keys - self.yielded_ignored_task_keys)
-                examples = f" (ex: {', '.join(repr(k) for k in unmatched_keys[:5])})" if unmatched_keys else ""
-                print(f"ignored tasks: {len(self.yielded_ignored_task_keys)} (from {self.ignored_tasks_file})", file=self.output)
-                print(f"ignored keys not yielded by the generator: {len(unmatched_keys)}{examples}", file=self.output)
-            print(dest_description, file=self.output)
-
-        print_summary()
+        self._print_selected_file_outputs_summary(tasks_and_file_outputs)
+        if include_drypipe_files is not None:
+            print(f"drypipe files ({include_drypipe_files}) of {len(tasks_and_file_outputs)} tasks", file=self.output)
+        if exhaustive:
+            print(f"exhaustive: all files of {len(tasks_and_file_outputs)} tasks", file=self.output)
+        self._print_ignored_tasks_summary()
+        print(dest_description, file=self.output)
 
         if not self.parsed_args.no_confirm and not self.query_yes_no("continue ?", default="no"):
             return False
@@ -2148,6 +2131,91 @@ class Cli:
             raise subprocess.CalledProcessError(rsync.returncode, rsync.args)
 
         return True
+
+    def purge_outputs(self):
+
+        tasks_and_file_outputs = self._tasks_and_selected_file_outputs()
+
+        self._print_selected_file_outputs_summary(tasks_and_file_outputs)
+        self._print_ignored_tasks_summary()
+
+        if self._selected_tags() == (None, None):
+            print(
+                "warning: neither --tags nor --exclude-tags given, ALL output files of matching tasks will be deleted",
+                file=self.output
+            )
+
+        if not self.parsed_args.no_confirm and not self.query_yes_no("delete them ?", default="no"):
+            return
+
+        def existing_output_files():
+            for task, file_outputs in tasks_and_file_outputs:
+                for o in file_outputs:
+                    f = Path(self.parsed_args.pipeline_instance_dir, task.outputs.rsync_path(o))
+                    if f.exists():
+                        yield f
+
+        if self.parsed_args.dry_run:
+            for f in existing_output_files():
+                print(f"DRY RUN rm {f}", file=self.output)
+            return
+
+        deleted_count = 0
+        for f in existing_output_files():
+            f.unlink()
+            deleted_count += 1
+
+        print(f"deleted {deleted_count} output files", file=self.output)
+
+    def _selected_tags(self):
+
+        def tag_set(arg):
+            return None if arg is None else set(arg.split(","))
+
+        tags = tag_set(self.parsed_args.tags)
+        excluded_tags = tag_set(getattr(self.parsed_args, "exclude_tags", None))
+
+        if tags is not None and excluded_tags is not None:
+            raise Exception("--tags cannot be combined with --exclude-tags")
+
+        return tags, excluded_tags
+
+    def _tasks_and_selected_file_outputs(self):
+        tags, excluded_tags = self._selected_tags()
+        # materialized: iterated once for the summary, once for the action on the files
+        return [
+            (task, list(task.outputs.file_outputs_selected_by_tags(tags, excluded_tags)))
+            for task, _ in self.filter_tasks()
+        ]
+
+    def _print_selected_file_outputs_summary(self, tasks_and_file_outputs):
+
+        tags, excluded_tags = self._selected_tags()
+
+        file_count_per_tag = collections.Counter(
+            tag
+            for _, file_outputs in tasks_and_file_outputs
+            for o in file_outputs
+            for tag in (o.tags or ["(untagged)"])
+        )
+
+        # requested tags are all shown, a 0 count reveals a misspelled tag
+        shown_tags = sorted(file_count_per_tag) if tags is None else sorted(tags)
+
+        print(f"tasks: {len(tasks_and_file_outputs)}", file=self.output)
+        if excluded_tags is not None:
+            print(f"excluded tags: {', '.join(sorted(excluded_tags))}", file=self.output)
+        print("output files per tag (a file with many tags is counted for each):", file=self.output)
+        for tag in shown_tags:
+            print(f"  {tag}: {file_count_per_tag[tag]}", file=self.output)
+        print(f"total output files: {sum(len(file_outputs) for _, file_outputs in tasks_and_file_outputs)}", file=self.output)
+
+    def _print_ignored_tasks_summary(self):
+        if self.ignored_tasks_file is not None:
+            unmatched_keys = sorted(self.ignored_task_keys - self.yielded_ignored_task_keys)
+            examples = f" (ex: {', '.join(repr(k) for k in unmatched_keys[:5])})" if unmatched_keys else ""
+            print(f"ignored tasks: {len(self.yielded_ignored_task_keys)} (from {self.ignored_tasks_file})", file=self.output)
+            print(f"ignored keys not yielded by the generator: {len(unmatched_keys)}{examples}", file=self.output)
 
     def garbage_collect(self):
 
