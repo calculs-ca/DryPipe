@@ -11,7 +11,6 @@ from itertools import groupby
 import shutil
 import signal
 import subprocess
-import tarfile
 import tempfile
 import time
 import json
@@ -1077,22 +1076,6 @@ class Cli:
 
         yield Command( 'grep-logs', pipeline_instance_dir, grep_expr, generator, *all_filters(), help="applies fgrep on out.log files of matching tasks")
 
-        def tar_file(parser):
-            parser.add_argument(
-                '--name',
-                type=str,
-                help='basename of tar.gz file, if it does not end with .tar.gz, this ending will be appended to the name, if not absolute, will be relative to $PWD',
-                required=True
-            )
-
-        def tar_file_tail_log(parser):
-            parser.add_argument(
-                '--tail-logs',
-                action='store_true',
-                default=False,
-                help='include a tail of all out.log'
-            )
-
         def tail_n(parser):
             parser.add_argument(
                 '--n', '-n',
@@ -1100,11 +1083,6 @@ class Cli:
                 type=int,
                 default=50,
             )
-
-        yield Command(
-            'tar-gz', task_key_optional, tar_file, generator, tar_file_tail_log, tail_n, *all_filters(),
-            help="creates a .tar.gz with .drypipe/<task_key>/* and output/<task_key>/*"
-        )
 
         yield Command('tail-logs', tail_n, generator, pipeline_instance_dir, *all_filters(),
                       help="applies tail on out.log files of matching tasks")
@@ -1198,7 +1176,7 @@ class Cli:
         def include_drypipe_files(parser):
             parser.add_argument(
                 '--include-drypipe-files',
-                help="adds drypipe working files to the rsync transfer: (all files in .drypipe/<task-key>/*). If given 'minimal' as value, will only include out.log, drypipe.log and the tasks state files",
+                help="adds drypipe working files to the selected files: (all files in .drypipe/<task-key>/*). If given 'minimal' as value, will only include out.log, drypipe.log and the tasks state files",
                 nargs='?',
                 const='all',
                 choices=['all', 'minimal'],
@@ -1222,18 +1200,42 @@ class Cli:
                 default=False
             )
 
-        yield Command('rsync-outputs', pipeline_instance_dir, generator, tags, dest, include_drypipe_files, no_confirm, info_progress2, *all_filters(),
+        def exhaustive(parser):
+            parser.add_argument(
+                '--exhaustive',
+                action='store_true',
+                default=False,
+                help="select everything of matching tasks: all files in output/<task-key>/ (declared outputs or not) "
+                     "and in .drypipe/<task-key>/, cannot be combined with --tags or --include-drypipe-files"
+            )
+
+        yield Command('rsync', pipeline_instance_dir, generator, tags, dest, include_drypipe_files, exhaustive, no_confirm, info_progress2, *all_filters(),
                       help="rsync output files having at least one of the --tags, of matching tasks, to --dest")
 
-        yield Command('archive-outputs', pipeline_instance_dir, generator, tags, include_drypipe_files, *all_filters(),
-                      help="creates a .tar.gz of output files having at least one of the --tags, of matching tasks")
+        def archive_name(parser):
+            parser.add_argument(
+                '--name',
+                type=str,
+                help="archive file name, used as given (no extension is appended), relative to $PWD if not absolute",
+                required=True
+            )
+
+        def archive_command(parser):
+            parser.add_argument(
+                '--archive-command',
+                type=str,
+                default="tar -czf {archive} .",
+                help="command that creates the archive, run inside the staging directory, "
+                     "{archive} is replaced by the absolute path of --name, "
+                     "ex: 'tar --zstd -cf {archive} .', 'zip -qr {archive} .' (default: '%(default)s')"
+            )
+
+        yield Command('archive', pipeline_instance_dir, generator, tags, include_drypipe_files, exhaustive,
+                      archive_name, archive_command, no_confirm, *all_filters(),
+                      help="archive output files having at least one of the --tags, of matching tasks, with --archive-command")
 
         yield Command('purge-outputs', pipeline_instance_dir, generator, tags, *all_filters(),
                       help="deletes output files having at least one of the --tags, of matching tasks, warning: purging files can break some pipelines")
-
-
-        yield Command('archive', pipeline_instance_dir, generator, tags, include_drypipe_files, *all_filters(),
-                      help="creates a .tar.gz of of the pipeline instance, to reduce size, --tags can used to exclude output files. Same as archive-outputs --include-drypipe-files=all ")
 
 
         yield Command('garbage-collect', pipeline_instance_dir, generator, no_confirm,
@@ -1301,7 +1303,7 @@ class Cli:
         self.ignored_tasks_file = ignored_tasks_file()
         if self.ignored_tasks_file is not None:
             self.ignored_task_keys = _load_task_keys(self.ignored_tasks_file)
-            # for reporting, ex: rsync-outputs summary
+            # for reporting, ex: rsync summary
             self.yielded_ignored_task_keys = set()
             task_generator = pipeline.task_generator
 
@@ -1678,55 +1680,6 @@ class Cli:
             launch_count += len(submit.task_keys)
         
 
-    def tar_gz(self):
-        tar_file = Path(self.parsed_args.name)
-
-        if tar_file.suffix != '.tar.gz':
-            tar_file = tar_file.with_suffix(tar_file.suffix + '.tar.gz')
-
-        if not tar_file.is_absolute():
-            tar_file = Path.cwd() / tar_file
-
-        tar_file.parent.mkdir(parents=True, exist_ok=True)
-
-        pid = self.parsed_args.pipeline_instance_dir
-
-        def g():
-            def g0(k):
-                yield Path(pid, f".drypipe/{k}"), f".drypipe/{k}"
-                yield Path(pid, f"output/{k}"), f"output/{k}"
-
-
-            if self.parsed_args.task_key is not None:
-                yield from g0(self.parsed_args.task_key)
-            else:
-                for task_key, state, step, sf in self.filter_key_state_step():
-                    yield from g0(task_key)
-
-        sources = list(g())
-
-        existing_sources = [(src, name) for src, name in sources if src.exists()]
-
-        if len(existing_sources) == 0:
-            raise FileNotFoundError(
-                f"No source directories found. Tried: {', '.join(str(s) for s in sources)}"
-            )
-
-        with tarfile.open(tar_file, "w:gz") as tar:
-
-            if self.parsed_args.tail_logs:
-                print(f"tailing all logs")
-                with tempfile.NamedTemporaryFile(mode='w+t') as temp_file:
-                    self.tail_logs(file=temp_file)
-                    temp_file.flush()
-                    tar.add(temp_file.name, arcname="all-log-tails.txt")
-
-            for src, arc_name in existing_sources:
-                tar.add(src, arcname=arc_name)
-                print(f"Added {arc_name}")
-
-        print(f"Successfully created {tar_file}")
-
     def array_submit_from_remote(self):
         control_dir = self._control_dir()
         task_process = TaskProcess(control_dir, use_remote_drypipe_log=True)
@@ -2069,7 +2022,32 @@ class Cli:
                 subprocess.check_call(cmd)
 
 
-    def rsync_outputs(self):
+    def rsync(self):
+        self._rsync_selected_files(self.parsed_args.dest, f"dest: {self.parsed_args.dest}")
+
+    def archive(self):
+        archive_file = Path(self.parsed_args.name).absolute()
+        pid = Path(self.parsed_args.pipeline_instance_dir).absolute()
+
+        with tempfile.TemporaryDirectory(dir=pid / ".drypipe", prefix="archive-staging-") as staging_dir:
+
+            # hard links instead of copies, the staging dir being on the same file system as the pipeline instance
+            link_dest = f"--link-dest={pid}/"
+
+            if not self._rsync_selected_files(f"{staging_dir}/", f"archive: {archive_file}", [link_dest]):
+                return
+
+            command = self.parsed_args.archive_command.replace("{archive}", shlex.quote(str(archive_file)))
+
+            if self.parsed_args.dry_run:
+                print(f"DRY RUN {command}", file=self.output)
+                return
+
+            subprocess.run(command, shell=True, cwd=staging_dir, check=True)
+
+        print(f"created {archive_file}", file=self.output)
+
+    def _rsync_selected_files(self, dest, dest_description, extra_rsync_args=()):
 
         def ensure_rsync_version_at_least(minimal_version):
             out = subprocess.run(["rsync", "--version"], capture_output=True, text=True, check=True).stdout
@@ -2077,7 +2055,7 @@ class Cli:
             version = tuple(int(n) for n in m.groups()) if m else None
             if version is None or version < minimal_version:
                 raise Exception(
-                    f"rsync-outputs requires rsync >= {'.'.join(map(str, minimal_version))}, got: {out.splitlines()[0]}"
+                    f"rsync requires rsync >= {'.'.join(map(str, minimal_version))}, got: {out.splitlines()[0]}"
                 )
 
         ensure_rsync_version_at_least((3, 2, 7))
@@ -2085,6 +2063,11 @@ class Cli:
         tags = None if self.parsed_args.tags is None else set(self.parsed_args.tags.split(","))
 
         include_drypipe_files = self.parsed_args.include_drypipe_files
+
+        exhaustive = self.parsed_args.exhaustive
+
+        if exhaustive and (tags is not None or include_drypipe_files is not None):
+            raise Exception("--exhaustive cannot be combined with --tags or --include-drypipe-files")
 
         # materialized: iterated once for the summary, once for the rsync file list
         tasks_and_file_outputs = [
@@ -2111,17 +2094,24 @@ class Cli:
             print(f"total output files: {sum(len(file_outputs) for _, file_outputs in tasks_and_file_outputs)}", file=self.output)
             if include_drypipe_files is not None:
                 print(f"drypipe files ({include_drypipe_files}) of {len(tasks_and_file_outputs)} tasks", file=self.output)
+            if exhaustive:
+                print(f"exhaustive: all files of {len(tasks_and_file_outputs)} tasks", file=self.output)
             if self.ignored_tasks_file is not None:
                 unmatched_keys = sorted(self.ignored_task_keys - self.yielded_ignored_task_keys)
                 examples = f" (ex: {', '.join(repr(k) for k in unmatched_keys[:5])})" if unmatched_keys else ""
                 print(f"ignored tasks: {len(self.yielded_ignored_task_keys)} (from {self.ignored_tasks_file})", file=self.output)
                 print(f"ignored keys not yielded by the generator: {len(unmatched_keys)}{examples}", file=self.output)
-            print(f"dest: {self.parsed_args.dest}", file=self.output)
+            print(dest_description, file=self.output)
 
         print_summary()
 
         if not self.parsed_args.no_confirm and not self.query_yes_no("continue ?", default="no"):
-            return
+            return False
+
+        def output_and_control_dirs():
+            for task, _ in tasks_and_file_outputs:
+                yield f"output/{task.key}"
+                yield f".drypipe/{task.key}"
 
         def tagged_files_and_control_dirs():
             for task, file_outputs in tasks_and_file_outputs:
@@ -2139,23 +2129,25 @@ class Cli:
                 yield "--exclude=/.drypipe/*/*"
 
         def reporting_and_dry_run_options():
-            yield "--info=progress2" if self.parsed_args.info_progress2 else "--stats"
+            yield "--info=progress2" if getattr(self.parsed_args, "info_progress2", False) else "--stats"
             if self.parsed_args.dry_run:
                 yield "--dry-run"
 
         rsync = subprocess.run(
             [
                 "rsync", "-a", "-r", "--delete", "--ignore-missing-args", *reporting_and_dry_run_options(),
-                *minimal_drypipe_files_filters(),
-                "--files-from=-", f"{self.parsed_args.pipeline_instance_dir}/", self.parsed_args.dest
+                *minimal_drypipe_files_filters(), *extra_rsync_args,
+                "--files-from=-", f"{self.parsed_args.pipeline_instance_dir}/", dest
             ],
-            input="\n".join(tagged_files_and_control_dirs()),
+            input="\n".join(output_and_control_dirs() if exhaustive else tagged_files_and_control_dirs()),
             text=True
         )
 
         # 24: files vanished during transfer, ex: state file renamed by a running task
         if rsync.returncode not in (0, 24):
             raise subprocess.CalledProcessError(rsync.returncode, rsync.args)
+
+        return True
 
     def garbage_collect(self):
 
