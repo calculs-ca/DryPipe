@@ -151,7 +151,7 @@ class RsyncArchiveTestCase(unittest.TestCase):
 
     def rsync(self, *args, confirm=False, global_args=()):
         no_confirm = [] if confirm else ["--no-confirm"]
-        return self.cli("rsync", f"--dest={self.dest}/", *no_confirm, *args, global_args=global_args)
+        return self.cli("rsync-push", f"--dest={self.dest}/", *no_confirm, *args, global_args=global_args)
 
     def control_dir(self, key, root=None):
         return (root or self.pid) / ".drypipe" / key
@@ -694,6 +694,23 @@ class RsyncRoundTripTests(RsyncArchiveTestCase):
         self.assertEqual(self.list_tasks(self.dest), self.list_tasks(self.pid))
 
 
+class RsyncPullTests(RsyncArchiveTestCase):
+
+    def test_pulls_tagged_files_pushed_from_another_instance(self):
+        self.prepare()
+        self.complete(KEYS)
+        self.rsync()
+
+        puller_pid = self.sandbox / "puller"
+        self.cli("prepare", pid=puller_pid)
+        self.cli("rsync-pull", f"--source={self.dest}/", "--tags=keepers", "--no-confirm", pid=puller_pid)
+
+        self.assertEqual(
+            {f for f in self.dest_files(puller_pid) if f.startswith("output/")},
+            output_paths(KEYS, keepers)
+        )
+
+
 class ArchiveTests(RsyncArchiveTestCase):
 
     def archive(self, *args, name=None, confirm=False, global_args=()):
@@ -977,7 +994,7 @@ class RsyncRemoteDestTests(RsyncArchiveTestCase):
         for state in ["failed.2", "ready", "completed"]:
             self.set_state("t01", state)
             self.cli(
-                "rsync", f"--dest={remote_dest}/", "--no-confirm",
+                "rsync-push", f"--dest={remote_dest}/", "--no-confirm",
                 "--filter=t01", "--include-drypipe-files=minimal"
             )
             self.assertEqual(self.remote_state_files(user_at_host, remote_dir, "t01"), [f"state.{state}"])
