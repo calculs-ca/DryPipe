@@ -32,6 +32,8 @@ dag_before = dag_of(KEPT_KEYS + DROPPED_KEYS)
 
 dag_after = dag_of(KEPT_KEYS)
 
+dag_of_t1_t3 = dag_of(["t1", "t3"])
+
 
 def dag_with_empty_array(dsl):
     yield dsl.task(key="ap").slurm_array_parent(children_tasks=[])()
@@ -210,3 +212,46 @@ class GarbageCollectTests(unittest.TestCase):
     def test_ignoring_array_parent_and_all_its_children(self):
         self.cli("prepare", "simple_array_pipeline", self.ignore_all_array_children("ap"))
         self.assertFalse((self.pid / ".drypipe" / "ap").exists())
+
+    def purge_ignored_tasks(self, generator, *args):
+        return self.cli("purge-ignored-tasks", generator, "--no-confirm", *args)
+
+    def test_purge_ignored_tasks_deletes_dirs_of_ignored_tasks(self):
+        self.prepare_with_all_keys()
+        out = self.purge_ignored_tasks("dag_before", f"--ignored-tasks={self.ignored_tasks_file()}")
+        self.assert_dropped_keys_deleted()
+        self.assertIn("4 directories of ignored tasks", out)
+
+    def test_purge_ignored_tasks_keeps_ignored_tasks_not_yielded_by_the_generator(self):
+        self.prepare_with_all_keys()
+        self.purge_ignored_tasks("dag_after", f"--ignored-tasks={self.ignored_tasks_file()}")
+        self.assert_nothing_deleted()
+
+    def test_purge_ignored_tasks_keeps_tasks_not_yielded_by_the_generator(self):
+        self.prepare_with_all_keys()
+        ignored_tasks_file = self.pid.parent / "ignored-tasks.tsv"
+        ignored_tasks_file.write_text("t3\n")
+        self.purge_ignored_tasks("dag_of_t1_t3", f"--ignored-tasks={ignored_tasks_file}")
+        self.assertEqual(self.task_dirs("output"), {"t1", "t2", "t4"})
+
+    def test_purge_ignored_tasks_without_ignored_tasks_file_fails(self):
+        self.prepare_with_all_keys()
+        with self.assertRaisesRegex(Exception, "no ignored tasks"):
+            self.purge_ignored_tasks("dag_before")
+        self.assert_nothing_deleted()
+
+    def test_purge_ignored_tasks_without_output_dirs(self):
+        self.cli("prepare", "dag_before")
+        out = self.purge_ignored_tasks("dag_before", f"--ignored-tasks={self.ignored_tasks_file()}")
+        self.assertFalse(self.task_dirs(".drypipe") & set(DROPPED_KEYS))
+        self.assertTrue(set(KEPT_KEYS) <= self.task_dirs(".drypipe"))
+        self.assertIn("2 directories of ignored tasks", out)
+
+    def test_purge_ignored_array_children(self):
+        self.cli("prepare", "simple_array_pipeline")
+        ignored_tasks_file = self.pid.parent / "ignored-tasks.tsv"
+        ignored_tasks_file.write_text("t01\nt02\n")
+        self.purge_ignored_tasks("simple_array_pipeline", f"--ignored-tasks={ignored_tasks_file}")
+        task_dirs = self.task_dirs(".drypipe")
+        self.assertFalse(task_dirs & {"t01", "t02"})
+        self.assertTrue({"ap", *(f"t{i:02d}" for i in range(3, 12))} <= task_dirs)

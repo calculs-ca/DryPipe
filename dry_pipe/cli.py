@@ -708,7 +708,7 @@ class Cli:
                 '--ignored-tasks',
                 help="""A file path referring to a tsv file containing one task key per line (first col is task key, remaining cols ignored). 
                 Drypipe treats ignored tasks as if they were never emitted by the DAG generator. 
-                Note1: command garbage-collect purges ignored tasks if invoked
+                Note1: commands garbage-collect and purge-ignored-tasks purge ignored tasks if invoked
                 Note2: a file named $PIPELINE_INSTANCE_DIR/drypipe-ignored-tasks.tsv is treated as if referred by --ignored-tasks. If --ignored-tasks is defined and $PIPELINE_INSTANCE_DIR/drypipe-ignored-tasks.tsv also exists, --ignored-tasks wins
                 """,
                 action=EnvDefault,
@@ -1248,6 +1248,9 @@ class Cli:
 
         yield Command('garbage-collect', pipeline_instance_dir, generator, no_confirm,
                       help="deletes directories K (in ./output/<K> and .drypipe/<K> where K is not in the set of task keys yielded by the generator")
+
+        yield Command('purge-ignored-tasks', pipeline_instance_dir, generator, no_confirm,
+                      help="deletes directories K (in ./output/<K> and .drypipe/<K> where K is an ignored task key yielded by the generator")
 
 
         def module_function(parser):
@@ -2237,17 +2240,47 @@ class Cli:
             if d.name not in task_keys
         ]
 
-        for d in orphan_dirs:
-            print(d, file=self.output)
-        print(f"{len(orphan_dirs)} directories of tasks not yielded by the generator", file=self.output)
+        self._delete_dirs_after_confirmation(orphan_dirs, "tasks not yielded by the generator")
 
-        if len(orphan_dirs) == 0:
+    def purge_ignored_tasks(self):
+
+        pid = self.parsed_args.pipeline_instance_dir
+
+        pipeline_instance = self.pipeline_instance_from_args()
+
+        if self.ignored_tasks_file is None:
+            raise Exception(
+                f"no ignored tasks: --ignored-tasks is not given and {pid}/drypipe-ignored-tasks.tsv does not exist"
+            )
+
+        # the generator yields all tasks, ignored ones are collected in self.yielded_ignored_task_keys
+        for _ in pipeline_instance.iterate_key_state_steps():
+            pass
+
+        self._print_ignored_tasks_summary()
+
+        ignored_task_dirs = [
+            d
+            for key in sorted(self.yielded_ignored_task_keys)
+            for d in [Path(pid, ".drypipe", key), Path(pid, "output", key)]
+            if d.is_dir()
+        ]
+
+        self._delete_dirs_after_confirmation(ignored_task_dirs, "ignored tasks")
+
+    def _delete_dirs_after_confirmation(self, dirs, description):
+
+        for d in dirs:
+            print(d, file=self.output)
+        print(f"{len(dirs)} directories of {description}", file=self.output)
+
+        if len(dirs) == 0:
             return
 
         if not self.parsed_args.no_confirm and not self.query_yes_no("delete them ?", default="no"):
             return
 
-        for d in orphan_dirs:
+        for d in dirs:
             shutil.rmtree(d)
 
 
