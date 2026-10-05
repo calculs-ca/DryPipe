@@ -17,9 +17,9 @@ class FrozenDAGGenerator:
     sub directory of .drypipe/ having a state file
     """
 
-    def __init__(self, pipeline_instance_dir, ignored_task_keys=frozenset()):
+    def __init__(self, pipeline_instance_dir, is_ignored=lambda key: False):
         self.pipeline_work_dir = Path(pipeline_instance_dir, ".drypipe")
-        self.ignored_task_keys = ignored_task_keys
+        self.is_ignored = is_ignored
 
         if next(self._tasks_on_disk(), None) is None:
             raise Exception(
@@ -42,7 +42,7 @@ class FrozenDAGGenerator:
     def iterate_key_state_steps(self, key_universe=None):
 
         def is_selected(key):
-            return key not in self.ignored_task_keys and (key_universe is None or key in key_universe)
+            return not self.is_ignored(key) and (key_universe is None or key in key_universe)
 
         for key, state_file_path in self._tasks_on_disk():
             if is_selected(key):

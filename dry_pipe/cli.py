@@ -183,6 +183,38 @@ def _load_task_keys(file):
         return {key(line_number, line) for line_number, line in enumerate(f, start=1) if line.strip() != ""}
 
 
+class TaskSet:
+    """the task keys allowed by the rules of a --task-set file"""
+
+    def __init__(self, rules_file):
+        rules_dir = Path(rules_file).resolve().parent
+
+        def parse_rule(line_number, line):
+            rule = re.fullmatch(r"([+-])\s+(\S+)", line)
+            if rule is None:
+                raise Exception(
+                    f"{rules_file}:{line_number}: expected '+ <glob>', '- <glob>', '+ @<file>' or '- @<file>', got '{line}'"
+                )
+            sign, pattern = rule.groups()
+            if not pattern.startswith("@"):
+                return sign == "+", lambda key: fnmatch.fnmatch(key, pattern), frozenset()
+            keys_file = rules_dir / pattern[1:]
+            if not keys_file.exists():
+                raise Exception(f"{rules_file}:{line_number}: {keys_file} does not exist")
+            keys = frozenset(_load_task_keys(keys_file))
+            return sign == "+", keys.__contains__, keys
+
+        with open(rules_file) as f:
+            lines = [(line_number, line.split("#")[0].strip()) for line_number, line in enumerate(f, start=1)]
+
+        self.rules = [parse_rule(line_number, line) for line_number, line in lines if line != ""]
+        self.keys_of_files = frozenset(k for _, _, keys in self.rules for k in keys)
+
+    def __contains__(self, key):
+        """the last matching rule wins, keys matched by no rule are in the task set"""
+        return next((is_added for is_added, matches, _ in reversed(self.rules) if matches(key)), True)
+
+
 def _signatures_of_analysis_file(path, lines):
     """
     (task count, signature cell) of each row of the error signatures table of an analyze-logs file,
@@ -706,14 +738,23 @@ class Cli:
 
 
             parser.add_argument(
-                '--ignored-tasks',
-                help="""A file path referring to a tsv file containing one task key per line (first col is task key, remaining cols ignored). 
-                Drypipe treats ignored tasks as if they were never emitted by the DAG generator. 
-                Note1: commands garbage-collect and purge-ignored-tasks purge ignored tasks if invoked
-                Note2: a file named $PIPELINE_INSTANCE_DIR/drypipe-ignored-tasks.tsv is treated as if referred by --ignored-tasks. If --ignored-tasks is defined and $PIPELINE_INSTANCE_DIR/drypipe-ignored-tasks.tsv also exists, --ignored-tasks wins
+                '--task-set',
+                help="""A rules file defining the task set: the tasks yielded by the generator that make up the pipeline instance.
+                Drypipe treats tasks not in the task set (ignored tasks) as if they were never emitted by the DAG generator.
+                Rules are applied in order, starting from all the tasks yielded by the generator, one rule per line:
+                    - <glob>    removes the tasks with a key matching the glob
+                    + <glob>    adds them back
+                    - @<file>   removes the tasks with a key in a tsv file (first col is task key, remaining cols ignored),
+                                a relative path is relative to the directory of the rules file
+                    + @<file>   adds them back
+                '#' starts a comment. Ex: all tasks except those in forget.tsv, unless they are in tests.tsv:
+                    - @forget.tsv
+                    + @tests.tsv
+                Note1: commands garbage-collect and purge-tasks-not-in-task-set purge ignored tasks if invoked
+                Note2: a file named $PIPELINE_INSTANCE_DIR/drypipe-task-set.rules is treated as if referred by --task-set. If --task-set is defined and $PIPELINE_INSTANCE_DIR/drypipe-task-set.rules also exists, --task-set wins
                 """,
                 action=EnvDefault,
-                envvar="DRYPIPE_IGNORED_TASKS",
+                envvar="DRYPIPE_TASK_SET",
                 env=self.env,
                 required=False
             )
@@ -1281,8 +1322,8 @@ class Cli:
         yield Command('garbage-collect', pipeline_instance_dir, generator, no_confirm,
                       help="deletes directories K (in ./output/<K> and .drypipe/<K> where K is not in the set of task keys yielded by the generator")
 
-        yield Command('purge-ignored-tasks', pipeline_instance_dir, generator, no_confirm,
-                      help="deletes directories K (in ./output/<K> and .drypipe/<K> where K is an ignored task key yielded by the generator")
+        yield Command('purge-tasks-not-in-task-set', pipeline_instance_dir, generator, no_confirm,
+                      help="deletes directories K (in ./output/<K> and .drypipe/<K> where K is a task key yielded by the generator and not in the task set, see --task-set")
 
 
         def module_function(parser):
@@ -1291,26 +1332,32 @@ class Cli:
         yield Command('call', module_function, task_key)
 
 
-    def _ignored_tasks_file(self):
-        explicit_file = self.parsed_args.ignored_tasks
+    def _task_set_file(self):
+        explicit_file = self.parsed_args.task_set
         if explicit_file is not None:
             if not os.path.exists(explicit_file):
-                raise Exception(f"--ignored-tasks file {explicit_file} does not exist")
+                raise Exception(f"--task-set file {explicit_file} does not exist")
             return explicit_file
-        implicit_file = Path(self.parsed_args.pipeline_instance_dir, "drypipe-ignored-tasks.tsv")
+        implicit_file = Path(self.parsed_args.pipeline_instance_dir, "drypipe-task-set.rules")
         if implicit_file.is_symlink() and not implicit_file.exists():
             raise Exception(f"{implicit_file} is a broken symlink")
         if implicit_file.exists():
             return implicit_file
         return None
 
+    def _load_task_set(self):
+        self.task_set_file = self._task_set_file()
+        self.task_set = None if self.task_set_file is None else TaskSet(self.task_set_file)
+
+    def _is_ignored(self, key):
+        return self.task_set is not None and key not in self.task_set
+
     def _uses_fs_generator(self):
         return getattr(self.parsed_args, "fs_generator", False)
 
     def frozen_dag_generator_from_args(self):
-        self.ignored_tasks_file = self._ignored_tasks_file()
-        ignored_task_keys = frozenset() if self.ignored_tasks_file is None else _load_task_keys(self.ignored_tasks_file)
-        return FrozenDAGGenerator(self.parsed_args.pipeline_instance_dir, ignored_task_keys)
+        self._load_task_set()
+        return FrozenDAGGenerator(self.parsed_args.pipeline_instance_dir, self._is_ignored)
 
     def pipeline_instance_from_args(self):
 
@@ -1353,27 +1400,28 @@ class Cli:
                 "or DRYPIPE_PIPELINE_INSTANCE_DIR environment variable must be set"
             )
 
-        self.ignored_tasks_file = self._ignored_tasks_file()
-        if self.ignored_tasks_file is not None:
-            self.ignored_task_keys = _load_task_keys(self.ignored_tasks_file)
+        self._load_task_set()
+        if self.task_set is not None:
             # for reporting, ex: rsync summary
+            self.yielded_task_keys = set()
             self.yielded_ignored_task_keys = set()
             task_generator = pipeline.task_generator
 
             def without_ignored_array_children(task):
                 if task.is_slurm_parent:
                     children_tasks = task.inputs.children_tasks
-                    children_tasks.value = [t for t in children_tasks.value if t.key not in self.ignored_task_keys]
+                    children_tasks.value = [t for t in children_tasks.value if not self._is_ignored(t.key)]
                     if len(children_tasks.value) == 0:
                         raise Exception(
                             f"all children tasks of slurm array parent task {task.key} are ignored " +
-                            f"by {self.ignored_tasks_file}, ignore {task.key} as well"
+                            f"by {self.task_set_file}, ignore {task.key} as well"
                         )
                 return task
 
             def task_generator_without_ignored_tasks(dsl):
                 for task in task_generator(dsl):
-                    if task.key in self.ignored_task_keys:
+                    self.yielded_task_keys.add(task.key)
+                    if self._is_ignored(task.key):
                         self.yielded_ignored_task_keys.add(task.key)
                     else:
                         yield without_ignored_array_children(task)
@@ -2285,11 +2333,11 @@ class Cli:
         print(f"total output files: {sum(len(file_outputs) for _, file_outputs in tasks_and_file_outputs)}", file=self.output)
 
     def _print_ignored_tasks_summary(self):
-        if self.ignored_tasks_file is not None:
-            unmatched_keys = sorted(self.ignored_task_keys - self.yielded_ignored_task_keys)
+        if self.task_set is not None:
+            unmatched_keys = sorted(self.task_set.keys_of_files - self.yielded_task_keys)
             examples = f" (ex: {', '.join(repr(k) for k in unmatched_keys[:5])})" if unmatched_keys else ""
-            print(f"ignored tasks: {len(self.yielded_ignored_task_keys)} (from {self.ignored_tasks_file})", file=self.output)
-            print(f"ignored keys not yielded by the generator: {len(unmatched_keys)}{examples}", file=self.output)
+            print(f"ignored tasks: {len(self.yielded_ignored_task_keys)} (from {self.task_set_file})", file=self.output)
+            print(f"keys of task set files not yielded by the generator: {len(unmatched_keys)}{examples}", file=self.output)
 
     def garbage_collect(self):
 
@@ -2313,15 +2361,15 @@ class Cli:
 
         self._delete_dirs_after_confirmation(orphan_dirs, "tasks not yielded by the generator")
 
-    def purge_ignored_tasks(self):
+    def purge_tasks_not_in_task_set(self):
 
         pid = self.parsed_args.pipeline_instance_dir
 
         pipeline_instance = self.pipeline_instance_from_args()
 
-        if self.ignored_tasks_file is None:
+        if self.task_set is None:
             raise Exception(
-                f"no ignored tasks: --ignored-tasks is not given and {pid}/drypipe-ignored-tasks.tsv does not exist"
+                f"no ignored tasks: --task-set is not given and {pid}/drypipe-task-set.rules does not exist"
             )
 
         # the generator yields all tasks, ignored ones are collected in self.yielded_ignored_task_keys

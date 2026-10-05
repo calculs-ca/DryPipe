@@ -196,8 +196,9 @@ class RsyncArchiveTestCase(unittest.TestCase):
         return mock.patch.dict(os.environ, {"PATH": f"{bin_dir}:{os.environ['PATH']}"})
 
     def ignore(self, *lines, file=None):
-        file = file or self.pid / "drypipe-ignored-tasks.tsv"
-        file.write_text("".join(f"{line}\n" for line in lines))
+        file = file or self.pid / "drypipe-task-set.rules"
+        (file.parent / "ignored.tsv").write_text("".join(f"{line}\n" for line in lines))
+        file.write_text("- @ignored.tsv\n")
         return file
 
     def assert_single_state_file_equal_to_source(self, key):
@@ -641,12 +642,12 @@ class RsyncIgnoredTasksTests(RsyncArchiveTestCase):
             return [], {}
 
         def option():
-            file = self.ignore("t02", "t05\tobsolete", file=self.sandbox / "ignored.tsv")
-            return [f"--ignored-tasks={file}"], {}
+            file = self.ignore("t02", "t05\tobsolete", file=self.sandbox / "task-set.rules")
+            return [f"--task-set={file}"], {}
 
         def env_var():
-            file = self.ignore("t02", "t05\tobsolete", file=self.sandbox / "ignored.tsv")
-            return [], {"DRYPIPE_IGNORED_TASKS": str(file)}
+            file = self.ignore("t02", "t05\tobsolete", file=self.sandbox / "task-set.rules")
+            return [], {"DRYPIPE_TASK_SET": str(file)}
 
         def option_wins_over_implicit_file():
             self.ignore("t01")
@@ -668,8 +669,8 @@ class RsyncIgnoredTasksTests(RsyncArchiveTestCase):
         self.ignore("t02", "t03_obsolete", "t_04")
         out = self.rsync()
         self.assertIn("tasks: 5\n", out)
-        self.assertIn(f"ignored tasks: 1 (from {self.pid / 'drypipe-ignored-tasks.tsv'})\n", out)
-        self.assertIn("ignored keys not yielded by the generator: 2 (ex: 't03_obsolete', 't_04')\n", out)
+        self.assertIn(f"ignored tasks: 1 (from {self.pid / 'drypipe-task-set.rules'})\n", out)
+        self.assertIn("keys of task set files not yielded by the generator: 2 (ex: 't03_obsolete', 't_04')\n", out)
 
     def test_summary_without_ignore_file_has_no_ignore_lines(self):
         self.prepare()

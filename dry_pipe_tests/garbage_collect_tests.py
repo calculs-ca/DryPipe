@@ -132,17 +132,42 @@ class GarbageCollectTests(unittest.TestCase):
             self.garbage_collect(confirm=True)
         self.assert_dropped_keys_deleted()
 
-    def ignored_tasks_file(self, f=None):
+    def task_set_file(self, f=None):
         if f is None:
-            f = self.pid.parent / "ignored-tasks.tsv"
-        f.write_text("".join(f"{key}  \tsome reason\n\n" for key in DROPPED_KEYS))
+            f = self.pid.parent / "task-set.rules"
+        (f.parent / "dropped.tsv").write_text("".join(f"{key}  \tsome reason\n\n" for key in DROPPED_KEYS))
+        f.write_text("# drop obsolete tasks\n\n- @dropped.tsv\n")
         return f
 
-    def implicit_ignored_tasks_file(self):
-        return self.ignored_tasks_file(self.pid / "drypipe-ignored-tasks.tsv")
+    def implicit_task_set_file(self):
+        return self.task_set_file(self.pid / "drypipe-task-set.rules")
+
+    def rules_file(self, *rules):
+        f = self.pid.parent / "task-set.rules"
+        f.write_text("".join(f"{rule}\n" for rule in rules))
+        return f"--task-set={f}"
+
+    def test_later_rules_win(self):
+        self.prepare_with_all_keys()
+        (self.pid.parent / "kept.tsv").write_text("".join(f"{key}\n" for key in KEPT_KEYS))
+        self.garbage_collect_all_keys_dag(self.rules_file("- t*", "+ @kept.tsv"))
+        self.assert_dropped_keys_deleted()
+
+    def test_glob_rules(self):
+        self.prepare_with_all_keys()
+        self.garbage_collect_all_keys_dag(self.rules_file("- t*", "+ t1", "+ t2"))
+        self.assert_dropped_keys_deleted()
+
+    def test_invalid_rule_fails(self):
+        with self.assertRaisesRegex(Exception, "task-set.rules:2: expected"):
+            self.cli("prepare", "dag_before", self.rules_file("- t1", "t2"))
+
+    def test_missing_keys_file_of_rule_fails(self):
+        with self.assertRaisesRegex(Exception, "task-set.rules:1: .*missing.tsv does not exist"):
+            self.cli("prepare", "dag_before", self.rules_file("- @missing.tsv"))
 
     def test_ignored_tasks_are_not_prepared(self):
-        self.cli("prepare", "dag_before", f"--ignored-tasks={self.ignored_tasks_file()}")
+        self.cli("prepare", "dag_before", f"--task-set={self.task_set_file()}")
         self.assertEqual(self.task_dirs(".drypipe") & set(KEPT_KEYS + DROPPED_KEYS), set(KEPT_KEYS))
 
     def garbage_collect_all_keys_dag(self, *args, env=None):
@@ -150,56 +175,52 @@ class GarbageCollectTests(unittest.TestCase):
 
     def test_garbage_collect_purges_ignored_tasks(self):
         self.prepare_with_all_keys()
-        self.garbage_collect_all_keys_dag(f"--ignored-tasks={self.ignored_tasks_file()}")
+        self.garbage_collect_all_keys_dag(f"--task-set={self.task_set_file()}")
         self.assert_dropped_keys_deleted()
 
-    def test_ignored_tasks_from_env_var(self):
+    def test_task_set_from_env_var(self):
         self.prepare_with_all_keys()
-        self.garbage_collect_all_keys_dag(env={"DRYPIPE_IGNORED_TASKS": str(self.ignored_tasks_file())})
+        self.garbage_collect_all_keys_dag(env={"DRYPIPE_TASK_SET": str(self.task_set_file())})
         self.assert_dropped_keys_deleted()
 
-    def test_missing_ignored_tasks_file_fails(self):
+    def test_missing_task_set_file_fails(self):
         with self.assertRaisesRegex(Exception, "does not exist"):
-            self.cli("prepare", "dag_before", f"--ignored-tasks={self.pid.parent / 'missing.txt'}")
+            self.cli("prepare", "dag_before", f"--task-set={self.pid.parent / 'missing.rules'}")
 
-    def test_implicit_ignored_tasks_file_is_used(self):
+    def test_implicit_task_set_file_is_used(self):
         self.prepare_with_all_keys()
-        self.implicit_ignored_tasks_file()
+        self.implicit_task_set_file()
         self.garbage_collect_all_keys_dag()
         self.assert_dropped_keys_deleted()
 
-    def test_explicit_ignored_tasks_overrides_implicit_file(self):
+    def test_explicit_task_set_overrides_implicit_file(self):
         self.prepare_with_all_keys()
-        self.implicit_ignored_tasks_file()
-        empty_file = self.pid.parent / "empty.tsv"
+        self.implicit_task_set_file()
+        empty_file = self.pid.parent / "empty.rules"
         empty_file.write_text("")
-        self.garbage_collect_all_keys_dag(f"--ignored-tasks={empty_file}")
+        self.garbage_collect_all_keys_dag(f"--task-set={empty_file}")
         self.assert_nothing_deleted()
 
-    def test_implicit_ignored_tasks_symlink(self):
+    def test_implicit_task_set_symlink(self):
         self.prepare_with_all_keys()
-        (self.pid / "drypipe-ignored-tasks.tsv").symlink_to(self.ignored_tasks_file())
+        (self.pid / "drypipe-task-set.rules").symlink_to(self.task_set_file())
         self.garbage_collect_all_keys_dag()
         self.assert_dropped_keys_deleted()
 
-    def test_broken_implicit_ignored_tasks_symlink_fails(self):
+    def test_broken_implicit_task_set_symlink_fails(self):
         self.prepare_with_all_keys()
-        (self.pid / "drypipe-ignored-tasks.tsv").symlink_to(self.pid.parent / "missing.tsv")
+        (self.pid / "drypipe-task-set.rules").symlink_to(self.pid.parent / "missing.rules")
         with self.assertRaisesRegex(Exception, "broken symlink"):
             self.garbage_collect_all_keys_dag()
 
     def test_ignored_array_children_are_removed_from_task_keys_of_prepared_array(self):
         self.cli("prepare", "simple_array_pipeline")
-        ignored_tasks_file = self.pid.parent / "ignored-tasks.tsv"
-        ignored_tasks_file.write_text("t01\n")
-        self.cli("prepare", "simple_array_pipeline", f"--ignored-tasks={ignored_tasks_file}")
+        self.cli("prepare", "simple_array_pipeline", self.rules_file("- t01"))
         task_keys = (self.pid / ".drypipe" / "ap" / "task-keys.tsv").read_text().split()
         self.assertEqual(task_keys, [f"t{i:02d}" for i in range(2, 12)])
 
     def ignore_all_array_children(self, *extra_keys):
-        ignored_tasks_file = self.pid.parent / "ignored-tasks.tsv"
-        ignored_tasks_file.write_text("".join(f"{key}\n" for key in [*(f"t{i:02d}" for i in range(1, 12)), *extra_keys]))
-        return f"--ignored-tasks={ignored_tasks_file}"
+        return self.rules_file("- t*", *(f"- {key}" for key in extra_keys))
 
     def test_array_without_children_fails(self):
         with self.assertRaisesRegex(Exception, "has no children tasks"):
@@ -213,45 +234,41 @@ class GarbageCollectTests(unittest.TestCase):
         self.cli("prepare", "simple_array_pipeline", self.ignore_all_array_children("ap"))
         self.assertFalse((self.pid / ".drypipe" / "ap").exists())
 
-    def purge_ignored_tasks(self, generator, *args):
-        return self.cli("purge-ignored-tasks", generator, "--no-confirm", *args)
+    def purge_tasks_not_in_task_set(self, generator, *args):
+        return self.cli("purge-tasks-not-in-task-set", generator, "--no-confirm", *args)
 
-    def test_purge_ignored_tasks_deletes_dirs_of_ignored_tasks(self):
+    def test_purge_tasks_not_in_task_set_deletes_dirs_of_ignored_tasks(self):
         self.prepare_with_all_keys()
-        out = self.purge_ignored_tasks("dag_before", f"--ignored-tasks={self.ignored_tasks_file()}")
+        out = self.purge_tasks_not_in_task_set("dag_before", f"--task-set={self.task_set_file()}")
         self.assert_dropped_keys_deleted()
         self.assertIn("4 directories of ignored tasks", out)
 
-    def test_purge_ignored_tasks_keeps_ignored_tasks_not_yielded_by_the_generator(self):
+    def test_purge_tasks_not_in_task_set_keeps_ignored_tasks_not_yielded_by_the_generator(self):
         self.prepare_with_all_keys()
-        self.purge_ignored_tasks("dag_after", f"--ignored-tasks={self.ignored_tasks_file()}")
+        self.purge_tasks_not_in_task_set("dag_after", f"--task-set={self.task_set_file()}")
         self.assert_nothing_deleted()
 
-    def test_purge_ignored_tasks_keeps_tasks_not_yielded_by_the_generator(self):
+    def test_purge_tasks_not_in_task_set_keeps_tasks_not_yielded_by_the_generator(self):
         self.prepare_with_all_keys()
-        ignored_tasks_file = self.pid.parent / "ignored-tasks.tsv"
-        ignored_tasks_file.write_text("t3\n")
-        self.purge_ignored_tasks("dag_of_t1_t3", f"--ignored-tasks={ignored_tasks_file}")
+        self.purge_tasks_not_in_task_set("dag_of_t1_t3", self.rules_file("- t3"))
         self.assertEqual(self.task_dirs("output"), {"t1", "t2", "t4"})
 
-    def test_purge_ignored_tasks_without_ignored_tasks_file_fails(self):
+    def test_purge_tasks_not_in_task_set_without_task_set_file_fails(self):
         self.prepare_with_all_keys()
         with self.assertRaisesRegex(Exception, "no ignored tasks"):
-            self.purge_ignored_tasks("dag_before")
+            self.purge_tasks_not_in_task_set("dag_before")
         self.assert_nothing_deleted()
 
-    def test_purge_ignored_tasks_without_output_dirs(self):
+    def test_purge_tasks_not_in_task_set_without_output_dirs(self):
         self.cli("prepare", "dag_before")
-        out = self.purge_ignored_tasks("dag_before", f"--ignored-tasks={self.ignored_tasks_file()}")
+        out = self.purge_tasks_not_in_task_set("dag_before", f"--task-set={self.task_set_file()}")
         self.assertFalse(self.task_dirs(".drypipe") & set(DROPPED_KEYS))
         self.assertTrue(set(KEPT_KEYS) <= self.task_dirs(".drypipe"))
         self.assertIn("2 directories of ignored tasks", out)
 
     def test_purge_ignored_array_children(self):
         self.cli("prepare", "simple_array_pipeline")
-        ignored_tasks_file = self.pid.parent / "ignored-tasks.tsv"
-        ignored_tasks_file.write_text("t01\nt02\n")
-        self.purge_ignored_tasks("simple_array_pipeline", f"--ignored-tasks={ignored_tasks_file}")
+        self.purge_tasks_not_in_task_set("simple_array_pipeline", self.rules_file("- t01", "- t02"))
         task_dirs = self.task_dirs(".drypipe")
         self.assertFalse(task_dirs & {"t01", "t02"})
         self.assertTrue({"ap", *(f"t{i:02d}" for i in range(3, 12))} <= task_dirs)

@@ -1474,7 +1474,7 @@ class CliAnalyzeLogsTests(BasePipelineTest):
 
     def test_fs_generator_skips_ignored_tasks(self):
         pid = self._analyze_logs(dag_args=['--fs-generator']).parent
-        Path(pid, "drypipe-ignored-tasks.tsv").write_text("t04\nt05\n")
+        Path(pid, "drypipe-task-set.rules").write_text("- t04\n- t05\n")
         analysis_dir = Path(pid, "analysis-without-ignored")
 
         test_cli(self, 'analyze-logs', f'--pipeline-instance-dir={pid}', '--fs-generator', f'--dir={analysis_dir}')
