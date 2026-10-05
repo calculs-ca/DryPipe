@@ -1325,7 +1325,7 @@ class CliAnalyzeLogsTests(BasePipelineTest):
     def test_run_pipeline(self):
         pass
 
-    def _analyze_logs(self, *extra_args, out_log_of_t03="50% done\n"):
+    def _analyze_logs(self, *extra_args, out_log_of_t03="50% done\n", dag_args=None):
         d = TestSandboxDir(self, other_func=inspect.stack()[1].function)
         d.delete_sandbox()
         pid = f'--pipeline-instance-dir={d.sandbox_dir}'
@@ -1352,8 +1352,9 @@ class CliAnalyzeLogsTests(BasePipelineTest):
         write_out_log('t08', "IndexError: list index out of range | row 3\n```\n")
 
         analysis_dir = Path(d.sandbox_dir, "analysis")
-        test_cli(self, 'analyze-logs', pid, f'--generator={self.generator}', '--filter=t0[1-8]',
-                 f'--dir={analysis_dir}', *extra_args)
+        if dag_args is None:
+            dag_args = [f'--generator={self.generator}']
+        test_cli(self, 'analyze-logs', pid, *dag_args, '--filter=t0[1-8]', f'--dir={analysis_dir}', *extra_args)
 
         return analysis_dir
 
@@ -1460,6 +1461,52 @@ class CliAnalyzeLogsTests(BasePipelineTest):
             "| 1 | 3 | `ValueError: bad mass <n> in <path>` |",
             "| 2 | 2 | `lookup error` |",
         ])
+
+    @staticmethod
+    def analysis_files(analysis_dir):
+        return {f.name: f.read_text() for f in analysis_dir.iterdir()}
+
+    def test_fs_generator_gives_the_same_analysis_as_the_generator(self):
+        from_generator = self.analysis_files(self._analyze_logs('--all-tasks'))
+        from_fs = self.analysis_files(self._analyze_logs('--all-tasks', dag_args=['--fs-generator']))
+
+        self.assertEqual(from_fs, from_generator)
+
+    def test_fs_generator_skips_ignored_tasks(self):
+        pid = self._analyze_logs(dag_args=['--fs-generator']).parent
+        Path(pid, "drypipe-ignored-tasks.tsv").write_text("t04\nt05\n")
+        analysis_dir = Path(pid, "analysis-without-ignored")
+
+        test_cli(self, 'analyze-logs', f'--pipeline-instance-dir={pid}', '--fs-generator', f'--dir={analysis_dir}')
+
+        self.assertEqual(sorted(f.name for f in analysis_dir.iterdir()), ['failed.2-3.md', 'timed-out.1-1.md'])
+
+    def test_fs_generator_with_module_function_log_classifier(self):
+        analysis_dir = self._analyze_logs(
+            '--log-classifier=dry_pipe_tests.cli_tests:log_classifier_merging_lookup_errors',
+            dag_args=['--fs-generator']
+        )
+
+        self.assertIn("| 2 | 2 | `lookup error` |", self.signatures_table(Path(analysis_dir, 'failed.2-5.md')))
+
+    def test_fs_generator_rejects_bare_log_classifier_name(self):
+        with self.assertRaisesRegex(Exception, "must be given as module:function"):
+            self._analyze_logs(
+                '--log-classifier=log_classifier_merging_lookup_errors',
+                dag_args=['--fs-generator', f'--generator={self.generator}']
+            )
+
+    def test_fs_generator_without_tasks(self):
+        d = TestSandboxDir(self)
+        d.delete_sandbox()
+
+        with self.assertRaisesRegex(Exception, "has no task in .drypipe/"):
+            test_cli(self, 'analyze-logs', f'--pipeline-instance-dir={d.sandbox_dir}', '--fs-generator',
+                     f'--dir={Path(d.sandbox_dir, "analysis")}')
+
+    def test_generator_or_fs_generator_is_required(self):
+        with self.assertRaisesRegex(Exception, "--generator or --fs-generator is required"):
+            self._analyze_logs(dag_args=[])
 
 
     def _extract_keys(self, analysis_dir, answer, *extra_args):

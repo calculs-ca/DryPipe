@@ -29,6 +29,7 @@ from pathlib import Path
 
 from dry_pipe import PortablePopen, DryPipe
 from dry_pipe.core_lib import func_from_mod_func, is_inside_slurm_job, create_instance_logger
+from dry_pipe.frozen_dag_generator import FrozenDAGGenerator
 from dry_pipe.log_classifier import LogClassifier
 from dry_pipe.pipeline_instance import Monitor, PipelineInstance
 from dry_pipe.task_process import TaskPackExchausted, TaskProcess, TaskFailedException
@@ -730,6 +731,16 @@ class Cli:
             arg = generator(parser)
             arg.required = False
 
+        def fs_generator(parser):
+            parser.add_argument(
+                '--fs-generator', '--fs-gen',
+                action='store_true',
+                default=False,
+                help="read the tasks from the pipeline instance's .drypipe/ dir instead of running --generator: "
+                     "no DAG code runs, only tasks already created (by run or prepare) are seen. "
+                     "Functions given to options like --func-filter must be in module:function format"
+            )
+
         def at_step(parser):
             parser.add_argument(
                 '--at-step',
@@ -1126,7 +1137,7 @@ class Cli:
                      "was given (failed, timed-out, killed, crashed). --all-tasks analyzes all tasks that match the filters"
             )
 
-        yield Command('analyze-logs', tail_n, generator, pipeline_instance_dir, analyze_logs_dir, log_classifier, full, all_tasks, *all_filters(),
+        yield Command('analyze-logs', tail_n, generator_optional, fs_generator, pipeline_instance_dir, analyze_logs_dir, log_classifier, full, all_tasks, *all_filters(),
                       help="writes one markdown file per (state, step) of matching tasks, named <state>.<step>-<N>.md "
                            "where N is the number of tasks in the file (ex: failed.3-12.md), <state>-<N>.md "
                            "when the task has no step. Only tasks that ended without completing are analyzed, as if "
@@ -1278,10 +1289,33 @@ class Cli:
         yield Command('call', module_function, task_key)
 
 
+    def _ignored_tasks_file(self):
+        explicit_file = self.parsed_args.ignored_tasks
+        if explicit_file is not None:
+            if not os.path.exists(explicit_file):
+                raise Exception(f"--ignored-tasks file {explicit_file} does not exist")
+            return explicit_file
+        implicit_file = Path(self.parsed_args.pipeline_instance_dir, "drypipe-ignored-tasks.tsv")
+        if implicit_file.is_symlink() and not implicit_file.exists():
+            raise Exception(f"{implicit_file} is a broken symlink")
+        if implicit_file.exists():
+            return implicit_file
+        return None
+
+    def _uses_fs_generator(self):
+        return getattr(self.parsed_args, "fs_generator", False)
+
+    def frozen_dag_generator_from_args(self):
+        self.ignored_tasks_file = self._ignored_tasks_file()
+        ignored_task_keys = frozenset() if self.ignored_tasks_file is None else _load_task_keys(self.ignored_tasks_file)
+        return FrozenDAGGenerator(self.parsed_args.pipeline_instance_dir, ignored_task_keys)
+
     def pipeline_instance_from_args(self):
 
         generator_mod_func = self.parsed_args.generator
         if generator_mod_func is None:
+            if hasattr(self.parsed_args, "fs_generator"):
+                raise Exception(f"--generator or --fs-generator is required")
             raise Exception(f"--generator is required")
 
         generator_func = func_from_mod_func(generator_mod_func)
@@ -1317,20 +1351,7 @@ class Cli:
                 "or DRYPIPE_PIPELINE_INSTANCE_DIR environment variable must be set"
             )
 
-        def ignored_tasks_file():
-            explicit_file = self.parsed_args.ignored_tasks
-            if explicit_file is not None:
-                if not os.path.exists(explicit_file):
-                    raise Exception(f"--ignored-tasks file {explicit_file} does not exist")
-                return explicit_file
-            implicit_file = Path(self.parsed_args.pipeline_instance_dir, "drypipe-ignored-tasks.tsv")
-            if implicit_file.is_symlink() and not implicit_file.exists():
-                raise Exception(f"{implicit_file} is a broken symlink")
-            if implicit_file.exists():
-                return implicit_file
-            return None
-
-        self.ignored_tasks_file = ignored_tasks_file()
+        self.ignored_tasks_file = self._ignored_tasks_file()
         if self.ignored_tasks_file is not None:
             self.ignored_task_keys = _load_task_keys(self.ignored_tasks_file)
             # for reporting, ex: rsync summary
@@ -2643,8 +2664,15 @@ class Cli:
 
 
     def filter_tasks(self, key_universe=None):
-        pipeline_instance = self.pipeline_instance_from_args()
-        pipeline_instance.prepare_instance_dir()
+
+        def dag_from_args():
+            if self._uses_fs_generator():
+                return self.frozen_dag_generator_from_args()
+            pipeline_instance = self.pipeline_instance_from_args()
+            pipeline_instance.prepare_instance_dir()
+            return pipeline_instance
+
+        dag = dag_from_args()
 
         filter_chain = self.create_filter_chain()
 
@@ -2658,7 +2686,7 @@ class Cli:
                     return False
             return True
 
-        for task, state_file in pipeline_instance.iterate_key_state_steps(key_universe):
+        for task, state_file in dag.iterate_key_state_steps(key_universe):
             if accept(*state_file.key_state_step()):
                 yield task, state_file
 
@@ -2666,6 +2694,9 @@ class Cli:
         """a bare function name (no module, i.e. no ":") is looked up in the --generator module"""
         if ":" in reference:
             return reference
+
+        if self._uses_fs_generator():
+            raise Exception(f"{option_name} '{reference}' must be given as module:function with --fs-generator")
 
         generator = self.parsed_args.generator
         if generator is None:
