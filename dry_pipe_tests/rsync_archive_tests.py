@@ -710,6 +710,33 @@ class RsyncPullTests(RsyncArchiveTestCase):
             output_paths(KEYS, keepers)
         )
 
+    def test_state_files_only_renames_local_state_files_according_to_remote(self):
+        self.prepare()
+        self.complete(["t01", "t02"])
+        self.set_state("t03", "failed.2")
+        self.rsync("--include-drypipe-files=minimal")
+
+        puller_pid = self.sandbox / "puller"
+        self.cli("prepare", pid=puller_pid)
+        local_log = self.control_dir("t01", puller_pid) / "out.log"
+        local_log.write_text("local")
+
+        def non_state_files():
+            return {f for f in self.dest_files(puller_pid) if "/state." not in f}
+
+        other_local_files = non_state_files()
+
+        self.cli("rsync-pull", f"--source={self.dest}/", "--state-files-only", "--no-confirm", pid=puller_pid)
+
+        for key in KEYS:
+            self.assertEqual(self.state_files(key, puller_pid), self.state_files(key, self.dest))
+        self.assertEqual(non_state_files(), other_local_files)
+        self.assertEqual(local_log.read_text(), "local")
+
+    def test_state_files_only_cannot_be_combined_with_tags(self):
+        with self.assertRaises(Exception):
+            self.cli("rsync-pull", f"--source={self.dest}/", "--state-files-only", "--tags=keepers", "--no-confirm")
+
 
 class ArchiveTests(RsyncArchiveTestCase):
 
