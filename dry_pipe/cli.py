@@ -1237,7 +1237,9 @@ class Cli:
             )
 
         yield Command('rsync-pull', pipeline_instance_dir, generator, tags, source, include_drypipe_files, exhaustive, state_files_only, no_confirm, info_progress2, *all_filters(),
-                      help="rsync output files having at least one of the --tags, of matching tasks, from --source")
+                      help="rsync output files having at least one of the --tags, of matching tasks, from --source"
+                      " note: unless --include-drypipe-files or --state-files-only option, only output (task produces) files get rsynced."
+                )
 
         def archive_name(parser):
             parser.add_argument(
