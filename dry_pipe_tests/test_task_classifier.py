@@ -1,15 +1,18 @@
 import unittest
 
-from dry_pipe.log_classifier import LogClassifier
+import tempfile
+from pathlib import Path
+
+from dry_pipe.task_classifier import TaskClassifier, RuntimeMetrics
 
 
-class LogClassifierTests(unittest.TestCase):
+class TaskClassifierTests(unittest.TestCase):
 
     def setUp(self):
-        self.classifier = LogClassifier().compile()
+        self.classifier = TaskClassifier().compile()
 
     def signature(self, out_log, key="t1"):
-        return self.classifier.signature(key, out_log, None, "failed", 1)
+        return self.classifier.signature(key, out_log, None, "failed", 1, None, None, None)
 
     def assertSameSignature(self, log1, log2):
         self.assertEqual(self.signature(log1, "t1"), self.signature(log2, "t2"))
@@ -89,19 +92,19 @@ Search progress: 0%\b\b\b  1%\b\b\b  2%\b\b\b
         self.assertEqual(self.signature(""), "<no error line>")
 
     def test_augmented_lists(self):
-        classifier = LogClassifier()
+        classifier = TaskClassifier()
         classifier.error_words.append(r"stopped unexpectedly")
         classifier.masks.insert(0, (r"PXD\d+", "<dataset>"))
         classifier.compile()
 
         self.assertEqual(
-            classifier.signature("t1", "worker for PXD000123 stopped unexpectedly\n", None, "failed", 1),
+            classifier.signature("t1", "worker for PXD000123 stopped unexpectedly\n", None, "failed", 1, None, None, None),
             "worker for <dataset> stopped unexpectedly"
         )
 
     def test_overridden_method(self):
 
-        class ToolAwareClassifier(LogClassifier):
+        class ToolAwareClassifier(TaskClassifier):
             def no_error_line_signature(self, lines, key):
                 if any("[progress:" in l for l in lines):
                     return "<no error line> while running MSFragger"
@@ -110,6 +113,31 @@ Search progress: 0%\b\b\b  1%\b\b\b  2%\b\b\b
         classifier = ToolAwareClassifier().compile()
 
         self.assertEqual(
-            classifier.signature("t1", "[progress: 12/100 (12%) - 87 spectra/s]\n", None, "failed", 1),
+            classifier.signature("t1", "[progress: 12/100 (12%) - 87 spectra/s]\n", None, "failed", 1, None, None, None),
             "<no error line> while running MSFragger"
         )
+
+
+class RuntimeMetricsTests(unittest.TestCase):
+
+    def test_elapsed_times_of_the_last_run(self):
+        with tempfile.TemporaryDirectory() as d:
+            drypipe_log = Path(d, "drypipe.log")
+            drypipe_log.write_text(
+                "2026-10-03 17:39:49-0400 - INFO - TIME_ELAPSED_FOR:STEP-0: 00:00:05, 5.0\n"
+                "2026-10-03 17:39:49-0400 - INFO - TIME_ELAPSED_FOR:TASK: 00:00:05, 5.0\n"
+                "2026-10-03 17:45:00-0400 - INFO - restarted\n"
+                "2026-10-03 17:45:02-0400 - INFO - TIME_ELAPSED_FOR:STEP-0: 00:00:02, 2.0\n"
+                "2026-10-03 17:45:09-0400 - INFO - TIME_ELAPSED_FOR:STEP-1: 00:00:07, 7.25\n"
+                "2026-10-03 17:45:09-0400 - INFO - TIME_ELAPSED_FOR:TASK: 00:00:09, 9.25\n"
+            )
+            metrics = RuntimeMetrics(drypipe_log)
+
+            self.assertEqual(metrics.elapsed, 9.25)
+            self.assertEqual(metrics.elapsed_by_step, {0: 2.0, 1: 7.25})
+            self.assertIsNone(metrics.max_rss)
+
+    def test_no_drypipe_log(self):
+        metrics = RuntimeMetrics(Path("/nonexistent/drypipe.log"))
+        self.assertIsNone(metrics.elapsed)
+        self.assertIsNone(metrics.elapsed_by_step)

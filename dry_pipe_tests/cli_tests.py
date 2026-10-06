@@ -5,6 +5,7 @@ import itertools
 import math
 import os.path
 import re
+import shutil
 import sqlite3
 import subprocess
 import time
@@ -16,6 +17,7 @@ from dry_pipe import DryPipe, TaskConf
 from dry_pipe.cli import Cli, _load_filter_from_keys, _signature_numbers
 from dry_pipe.core_lib import UpstreamTasksNotCompleted
 from dry_pipe.pipeline import Pipeline
+from dry_pipe.task_classifier import lazy_task_inputs_outputs
 from dry_pipe.task_process import TaskProcess
 
 from dry_pipe_tests.base_pipeline_test import BasePipelineTest
@@ -1338,6 +1340,106 @@ def log_classifier_merging_lookup_errors(default):
     """resolved by bare name from the --generator module (this module) in CliAnalyzeLogsTests"""
     default.masks.insert(0, (r"^(KeyError|IndexError):.*", "lookup error"))
     return default
+
+
+def dag_with_outputs(dsl):
+    t1 = dsl.task(key="t1").outputs(
+        f=dsl.file("f.tsv"), n=int, csvs=dsl.file_set("*.csv")
+    ).calls("""
+    #!/usr/bin/env bash
+    echo "..."
+    """)()
+    yield t1
+    yield dsl.task(key="t2").inputs(
+        t1.outputs.f, m=t1.outputs.n, csvs=t1.outputs.csvs, c=7
+    ).calls("""
+    #!/usr/bin/env bash
+    echo "..."
+    """)()
+
+
+def pipeline_with_outputs():
+    return DryPipe.create_pipeline(dag_with_outputs)
+
+
+def classifier_of_missing_outputs(default):
+    """resolved by bare name from the --generator module (this module) in CliTaskClassifierTests"""
+
+    class MissingOutputs(type(default)):
+        def signature(self, key, out_log, drypipe_log, state, step, task_inputs, task_outputs, runtime_metrics):
+            if key == "t1" and not task_outputs.f.exists():
+                return "FATAL_DID_NOT_PRODUCE_RESULTS"
+            return None
+
+    return MissingOutputs()
+
+
+class CliTaskClassifierTests(BasePipelineTest):
+
+    generator = 'dry_pipe_tests.cli_tests:pipeline_with_outputs'
+
+    def test_run_pipeline(self):
+        pass
+
+    def _prepare(self):
+        d = TestSandboxDir(self, other_func=inspect.stack()[1].function)
+        d.delete_sandbox()
+        test_cli(self, 'prepare', f'--pipeline-instance-dir={d.sandbox_dir}', f'--generator={self.generator}')
+        return Path(d.sandbox_dir)
+
+    def test_lazy_inputs_and_outputs(self):
+        pid = self._prepare()
+        t1_output_dir = Path(pid, "output", "t1")
+        t1_output_dir.mkdir(parents=True)
+        Path(t1_output_dir, "a.csv").write_text("")
+        Path(pid, ".drypipe", "t1", "output_vars").write_text("n=3\n")
+
+        t1_inputs, t1_outputs = lazy_task_inputs_outputs(str(Path(pid, ".drypipe", "t1")))
+        t2_inputs, _ = lazy_task_inputs_outputs(str(Path(pid, ".drypipe", "t2")))
+
+        self.assertEqual(t1_outputs.f, Path(t1_output_dir, "f.tsv"))
+        self.assertEqual(t1_outputs.n, 3)
+        self.assertEqual(t1_outputs.csvs, [Path(t1_output_dir, "a.csv")])
+
+        self.assertEqual(t2_inputs.f, Path(t1_output_dir, "f.tsv"))
+        self.assertEqual(t2_inputs.m, 3)
+        self.assertEqual(t2_inputs.csvs, [Path(t1_output_dir, "a.csv")])
+        self.assertEqual(t2_inputs.c, 7)
+
+        with self.assertRaisesRegex(Exception, "task t1 has no output 'nope'"):
+            t1_outputs.nope
+
+    def test_lazy_inputs_and_outputs_of_a_task_that_did_not_run(self):
+        pid = self._prepare()
+
+        _, t1_outputs = lazy_task_inputs_outputs(str(Path(pid, ".drypipe", "t1")))
+        t2_inputs, _ = lazy_task_inputs_outputs(str(Path(pid, ".drypipe", "t2")))
+
+        self.assertIsNone(t1_outputs.n)
+        self.assertEqual(t1_outputs.csvs, [])
+        self.assertIsNone(t2_inputs.m)
+
+    def test_analyze_logs_leaves_out_none_signatures(self):
+        pid = self._prepare()
+        test_cli(self, 'set-state', f'--pipeline-instance-dir={pid}', f'--generator={self.generator}', '--state=completed')
+        analysis_dir = Path(pid, "analysis")
+
+        def analyze_logs():
+            test_cli(
+                self, 'analyze-logs', f'--pipeline-instance-dir={pid}', f'--generator={self.generator}',
+                '--all-tasks', f'--dir={analysis_dir}', '--log-classifier=classifier_of_missing_outputs'
+            )
+            return sorted(f.name for f in analysis_dir.iterdir())
+
+        self.assertEqual(analyze_logs(), ["completed-1.md"])
+        md = Path(analysis_dir, "completed-1.md").read_text()
+        self.assertIn("`FATAL_DID_NOT_PRODUCE_RESULTS`", md)
+        self.assertNotIn("t2", md)
+
+        shutil.rmtree(analysis_dir)
+        Path(pid, "output", "t1").mkdir(parents=True)
+        Path(pid, "output", "t1", "f.tsv").write_text("")
+        self.assertEqual(analyze_logs(), [])
 
 
 class CliAnalyzeLogsTests(BasePipelineTest):

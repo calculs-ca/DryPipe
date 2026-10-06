@@ -27,6 +27,104 @@ APPTAINER_COMMAND = "apptainer"
 module_logger = logging.getLogger(__name__)
 
 
+def resolve_inputs_outputs(task_conf, control_dir, ensure_all_upstream_deps_complete, logger):
+
+    task_key = os.path.basename(control_dir)
+    pipeline_work_dir = os.path.dirname(control_dir)
+    pipeline_instance_dir = os.path.dirname(pipeline_work_dir)
+    pipeline_output_dir = os.path.join(pipeline_instance_dir, "output")
+    task_output_dir = os.path.join(pipeline_output_dir, task_key)
+
+    def resolve_upstream_and_constant_vars():
+
+        for i in task_conf.inputs:
+            i = TaskInput.from_json(i)
+            if logger.level == logging.DEBUG:
+                logger.debug("%s task_input:", i.as_string())
+            if i.is_upstream_output():
+
+                def ensure_upstream_task_is_completed():
+                    for state_file in glob.glob(
+                            os.path.join(pipeline_work_dir, i.upstream_task_key, "state.*")):
+                        if not "completed" in state_file:
+                            msg = f"upstream task {i.upstream_task_key} " + \
+                                  f"not completed (state={state_file}), this task " + \
+                                  f"dependency on {i.name}: {i.name_in_upstream_task} not satisfied"
+                            raise UpstreamTasksNotCompleted(i.upstream_task_key, msg)
+
+                if ensure_all_upstream_deps_complete:
+                    ensure_upstream_task_is_completed()
+
+                if i.is_file():
+                    yield i, i.name, os.path.join(pipeline_output_dir, i.upstream_task_key, i.name_in_upstream_task)
+                else:
+                    out_vars = dict(iterate_out_vars_from_file(
+                        os.path.join(pipeline_work_dir, i.upstream_task_key, "output_vars")
+                    ))
+                    v = out_vars.get(i.name_in_upstream_task)
+                    if v is not None:
+                        v = i.parse(v)
+                    yield i, i.name, v
+            elif i.is_constant():
+                yield i, i.name, i.value
+            elif i.is_file():
+                # not is_upstream_output means they have either absolute path, or in pipeline_instance_dir
+                if os.path.isabs(i.file_name):
+                    logger.debug(f"will resolve %s: %s", i.name, i.file_name)
+
+                    prefix = task_conf.external_files_root
+                    if prefix is not None:
+                        logger.debug(f"prefix : %s", prefix)
+                        # truncating the 2nd arg is necessary, or else the resulting path is 1st arg
+                        resolved_file_name = os.path.join(prefix, i.file_name[1:])
+                    else:
+                        resolved_file_name = i.file_name
+
+                    yield i, i.name, resolved_file_name
+                else:
+                    logger.debug(f"will resolve non abs file %s: %s", i.name, i.file_name)
+                    yield i, i.name, os.path.join(pipeline_instance_dir, i.file_name)
+
+    var_file = os.path.join(control_dir, "output_vars")
+
+    task_inputs = {}
+
+    for task_input, k, v in resolve_upstream_and_constant_vars():
+        task_inputs[k] = task_input
+        if v is not None:
+            task_input.resolved_value = v
+
+    task_outputs = {}
+    to = task_conf.outputs
+    if to is not None:
+        unparsed_out_vars = dict(iterate_out_vars_from_file(var_file))
+        for o in to:
+            o = TaskOutput.from_json(o)
+            o.task_key = task_key
+
+            if o.type == 'file_set':
+                o.task_output_dir = task_output_dir
+            elif o.type == 'file':
+                o.set_resolved_value(os.path.join(task_output_dir, o.produced_file_name))
+            else:
+                v = unparsed_out_vars.get(o.name)
+                if v is not None:
+                    o.set_resolved_value(v)
+
+            task_outputs[o.name] = o
+
+
+    return task_inputs, task_outputs
+
+
+def iterate_out_vars_from_file(file):
+    if os.path.exists(file):
+        with open(file) as f:
+            for line in f.readlines():
+                var_name, value = line.split("=")
+                yield var_name.strip(), value.strip()
+
+
 class TaskFailedException (Exception):
     pass
 
@@ -561,87 +659,9 @@ class TaskProcess:
             raise ex
 
     def _unserialize_and_resolve_inputs_outputs(self, ensure_all_upstream_deps_complete):
-
-        def resolve_upstream_and_constant_vars():
-
-            for i in self.task_conf.inputs:
-                i = TaskInput.from_json(i)
-                if self.task_logger.level == logging.DEBUG:
-                    self.task_logger.debug("%s task_input:", i.as_string())
-                if i.is_upstream_output():
-
-                    def ensure_upstream_task_is_completed():
-                        for state_file in glob.glob(
-                                os.path.join(self.pipeline_work_dir, i.upstream_task_key, "state.*")):
-                            if not "completed" in state_file:
-                                msg = f"upstream task {i.upstream_task_key} " + \
-                                      f"not completed (state={state_file}), this task " + \
-                                      f"dependency on {i.name}: {i.name_in_upstream_task} not satisfied"
-                                raise UpstreamTasksNotCompleted(i.upstream_task_key, msg)
-
-                    if ensure_all_upstream_deps_complete:
-                        ensure_upstream_task_is_completed()
-
-                    if i.is_file():
-                        yield i, i.name, os.path.join(self.pipeline_output_dir, i.upstream_task_key, i.name_in_upstream_task)
-                    else:
-                        out_vars = dict(self.iterate_out_vars_from(
-                            os.path.join(self.pipeline_work_dir, i.upstream_task_key, "output_vars")
-                        ))
-                        v = out_vars.get(i.name_in_upstream_task)
-                        if v is not None:
-                            v = i.parse(v)
-                        yield i, i.name, v
-                elif i.is_constant():
-                    yield i, i.name, i.value
-                elif i.is_file():
-                    # not is_upstream_output means they have either absolute path, or in pipeline_instance_dir
-                    if os.path.isabs(i.file_name):
-                        self.task_logger.debug(f"will resolve %s: %s", i.name, i.file_name)
-
-                        prefix = self.task_conf.external_files_root
-                        if prefix is not None:
-                            self.task_logger.debug(f"prefix : %s", prefix)
-                            # truncating the 2nd arg is necessary, or else the resulting path is 1st arg
-                            resolved_file_name = os.path.join(prefix, i.file_name[1:])
-                        else:
-                            resolved_file_name = i.file_name
-
-                        yield i, i.name, resolved_file_name
-                    else:
-                        self.task_logger.debug(f"will resolve non abs file %s: %s", i.name, i.file_name)
-                        yield i, i.name, os.path.join(self.pipeline_instance_dir, i.file_name)
-
-        var_file = os.path.join(self.control_dir, "output_vars")
-
-        task_inputs = {}
-
-        for task_input, k, v in resolve_upstream_and_constant_vars():
-            task_inputs[k] = task_input
-            if v is not None:
-                task_input.resolved_value = v
-
-        task_outputs = {}
-        to = self.task_conf.outputs
-        if to is not None:
-            unparsed_out_vars = dict(self.iterate_out_vars_from(var_file))
-            for o in to:
-                o = TaskOutput.from_json(o)
-                o.task_key = self.task_key
-
-                if o.type == 'file_set':
-                    o.task_output_dir = self.task_output_dir
-                elif o.type == 'file':
-                    o.set_resolved_value(os.path.join(self.task_output_dir, o.produced_file_name))
-                else:
-                    v = unparsed_out_vars.get(o.name)
-                    if v is not None:
-                        o.set_resolved_value(v)
-
-                task_outputs[o.name] = o
-
-
-        return task_inputs, task_outputs
+        return resolve_inputs_outputs(
+            self.task_conf, self.control_dir, ensure_all_upstream_deps_complete, self.task_logger
+        )
 
     def resolve_task(self, state_file):
 
@@ -689,11 +709,7 @@ class TaskProcess:
     def iterate_out_vars_from(self, file=None):
         if file is None:
             file = self.env["__output_var_file"]
-        if os.path.exists(file):
-            with open(file) as f:
-                for line in f.readlines():
-                    var_name, value = line.split("=")
-                    yield var_name.strip(), value.strip()
+        yield from iterate_out_vars_from_file(file)
 
     def iterate_task_env(self):
 

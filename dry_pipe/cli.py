@@ -30,7 +30,7 @@ from pathlib import Path
 from dry_pipe import PortablePopen, DryPipe
 from dry_pipe.core_lib import func_from_mod_func, is_inside_slurm_job, create_instance_logger
 from dry_pipe.frozen_dag_generator import FrozenDAGGenerator
-from dry_pipe.log_classifier import LogClassifier
+from dry_pipe.task_classifier import TaskClassifier, lazy_task_inputs_outputs, RuntimeMetrics
 from dry_pipe.pipeline_instance import Monitor, PipelineInstance
 from dry_pipe.task_process import TaskPackExchausted, TaskProcess, TaskFailedException
 from dry_pipe.slurm_array_task import SlurmArrayParentTask
@@ -970,9 +970,10 @@ class Cli:
                 help='''
                 customizes the error signatures, by default the universal classifier is used.
                 The value is a function in "module:function" format, or a bare function name looked up in the
-                --generator module. The function receives the default LogClassifier and returns a classifier:
+                --generator module. The function receives the default TaskClassifier and returns a classifier:
                 the default with its regex lists augmented, or a replacement, ex:
                 "def my_classifier(c): c.error_words.append(r'stopped unexpectedly'); return c"
+                A signature of None leaves the task out of analyze-logs, and is null in status-db.
                 '''
             )
 
@@ -1188,7 +1189,7 @@ class Cli:
                            "--filter-unhealthy was given, other filters narrow the selection further, see --all-tasks. Each file starts with a table that groups its tasks by error "
                            "signature, followed by the tail of each task's out.log. The signature of a task is its last "
                            "error line in out.log, with variable parts (paths, numbers, quoted strings, etc) masked, "
-                           "see dry_pipe/log_classifier.py and --log-classifier")
+                           "see dry_pipe/task_classifier.py and --log-classifier")
 
         def analysis_file(parser):
             parser.add_argument('analysis_file', help="a markdown file written by analyze-logs")
@@ -2445,8 +2446,11 @@ class Cli:
         tasks = sorted(filter(is_selected, self.filter_key_state_step()), key=state_step)
         for (state, step), group in groupby(tasks, key=state_step):
             group = list(group)
-            keys = [key for key, _, _, _ in group]
             signature_groups = self._signature_groups(group, classifier)
+            classified_keys = {key for _, sig_keys in signature_groups for key in sig_keys}
+            keys = [key for key, _, _, _ in group if key in classified_keys]
+            if len(keys) == 0:
+                continue
             with open(dest_dir / file_name(state, step, len(keys)), "w") as f:
                 self._write_error_signatures_table(signature_groups, f)
                 self._write_markdown_tails(keys, signature_groups, f)
@@ -2459,13 +2463,14 @@ class Cli:
     def _log_classifier(self):
         spec = self.parsed_args.log_classifier
         if spec is None:
-            return LogClassifier().compile()
+            return TaskClassifier().compile()
 
         customize = func_from_mod_func(self._resolve_against_generator_module(spec, "--log-classifier"))
-        classifier = customize(LogClassifier())
+        classifier = customize(TaskClassifier())
         if not hasattr(classifier, "signature"):
             raise Exception(
-                f"--log-classifier '{spec}' must return a classifier with a signature(key, out_log, drypipe_log, state, step) method, "
+                f"--log-classifier '{spec}' must return a classifier with a "
+                f"signature(key, out_log, drypipe_log, state, step, task_inputs, task_outputs, runtime_metrics) method, "
                 f"got a {type(classifier).__name__}"
             )
         return classifier.compile() if hasattr(classifier, "compile") else classifier
@@ -2484,10 +2489,15 @@ class Cli:
         classified_lines = 1000
         out_log = self._out_log(key)
         last_lines = self._last_lines(out_log, classified_lines) if out_log.exists() else None
-        return classifier.signature(key, last_lines, drypipe_log, state, step)
+        control_dir = Path(self.parsed_args.pipeline_instance_dir, ".drypipe", key)
+        task_inputs, task_outputs = lazy_task_inputs_outputs(str(control_dir))
+        runtime_metrics = RuntimeMetrics(control_dir / "drypipe.log")
+        return classifier.signature(
+            key, last_lines, drypipe_log, state, step, task_inputs, task_outputs, runtime_metrics
+        )
 
     def _signature_groups(self, tasks, classifier):
-        """(signature, keys) pairs, largest group first, their rank is the signature number"""
+        """(signature, keys) pairs, largest group first, their rank is the signature number, None signatures are left out"""
 
         def read_drypipe_log(key):
             drypipe_log = Path(self.parsed_args.pipeline_instance_dir, ".drypipe", key, "drypipe.log")
@@ -2498,7 +2508,8 @@ class Cli:
         keys_by_signature = collections.defaultdict(list)
         for key, state, step, _ in tasks:
             signature = self._log_signature(key, state, step, read_drypipe_log(key), classifier)
-            keys_by_signature[signature].append(key)
+            if signature is not None:
+                keys_by_signature[signature].append(key)
         return sorted(keys_by_signature.items(), key=lambda i: -len(i[1]))
 
     def _write_error_signatures_table(self, signature_groups, file):

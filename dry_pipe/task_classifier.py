@@ -1,10 +1,21 @@
+import functools
+import logging
+import os
 import re
+from pathlib import Path
+
+from dry_pipe import TaskConf
+from dry_pipe.reports import parse_timers_in_log
+from dry_pipe.task_process import resolve_inputs_outputs
+
+module_logger = logging.getLogger(__name__)
 
 
-class LogClassifier:
+class TaskClassifier:
     """
-    signature(key, out_log, drypipe_log, state, step) reduces a task's log to a string, tasks with equal signatures have the same kind of error.
-    Missing logs are None.
+    signature(key, out_log, drypipe_log, state, step, task_inputs, task_outputs, runtime_metrics) reduces a task
+    to a string, tasks with equal signatures have the same kind of error, None leaves the task out.
+    Missing logs are None. The default signature only looks at out_log.
     Customize by editing the lists (they are regexes), or by overriding methods in a subclass.
     """
 
@@ -90,7 +101,7 @@ class LogClassifier:
         """has at least one word outside of masks, a bare progress line like '<n>%…' is not meaningful"""
         return re.search(r"(?<!<)\b[A-Za-z]{3,}", masked_line) is not None
 
-    def signature(self, key, out_log, drypipe_log, state, step):
+    def signature(self, key, out_log, drypipe_log, state, step, task_inputs, task_outputs, runtime_metrics):
 
         if out_log is None:
             return "<no out.log>"
@@ -121,3 +132,90 @@ class LogClassifier:
             return "<no error line> last: " + last
 
         return "<no error line>"
+
+
+def lazy_task_inputs_outputs(control_dir):
+    """
+    (task_inputs, task_outputs) of a task, task-conf.json is loaded at the first attribute access of either.
+    A file is a Path, a file_set a list of Path, a var its value, None if not produced yet.
+    """
+
+    task_key = os.path.basename(control_dir)
+
+    @functools.cache
+    def inputs_and_outputs():
+        task_conf = TaskConf.from_json_file(control_dir)
+        return resolve_inputs_outputs(task_conf, control_dir, False, module_logger)
+
+    def input_value(task_input):
+        if task_input.type == "file":
+            return Path(task_input.resolved_value)
+        if task_input.type == "file_set":
+            upstream_control_dir = os.path.join(os.path.dirname(control_dir), task_input.upstream_task_key)
+            _, upstream_outputs = lazy_task_inputs_outputs(upstream_control_dir)
+            return getattr(upstream_outputs, task_input.name_in_upstream_task)
+        return task_input.resolved_value
+
+    def output_value(task_output):
+        if task_output.type == "file":
+            return Path(os.fspath(task_output))
+        if task_output.type == "file_set":
+            return list(task_output)
+        return task_output._resolved_value
+
+    return (
+        LazyAttributes(lambda: inputs_and_outputs()[0], input_value, f"task {task_key} has no input"),
+        LazyAttributes(lambda: inputs_and_outputs()[1], output_value, f"task {task_key} has no output")
+    )
+
+
+class LazyAttributes:
+
+    def __init__(self, load_declared_by_name, value_of, missing_message):
+        self._load_declared_by_name = load_declared_by_name
+        self._value_of = value_of
+        self._missing_message = missing_message
+
+    def __getattr__(self, name):
+        if name.startswith("_"):
+            raise AttributeError(name)
+        declared = self._load_declared_by_name().get(name)
+        if declared is None:
+            raise Exception(f"{self._missing_message} '{name}'")
+        return self._value_of(declared)
+
+
+class RuntimeMetrics:
+    """
+    read from drypipe.log at the first access, an unavailable metric is None.
+    Only elapsed times are recorded today, see todo/task-runtime-metrics-recording.md
+    """
+
+    cpu_time = None
+    max_rss = None
+    cpus = None
+    exit_code = None
+    hostname = None
+
+    def __init__(self, drypipe_log_file):
+        self._drypipe_log_file = drypipe_log_file
+
+    @functools.cached_property
+    def _seconds_by_timer(self):
+        if not Path(self._drypipe_log_file).exists():
+            return {}
+        # a restarted task logs its timers again, the last ones win
+        return {label: float(seconds) for label, _, seconds in parse_timers_in_log(self._drypipe_log_file)}
+
+    @property
+    def elapsed(self):
+        return self._seconds_by_timer.get("TASK")
+
+    @property
+    def elapsed_by_step(self):
+        by_step = {
+            int(label.removeprefix("STEP-")): seconds
+            for label, seconds in self._seconds_by_timer.items()
+            if label.startswith("STEP-")
+        }
+        return by_step or None
