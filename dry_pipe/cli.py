@@ -28,7 +28,7 @@ from os import environ
 from pathlib import Path
 
 from dry_pipe import PortablePopen, DryPipe
-from dry_pipe.core_lib import func_from_mod_func, is_inside_slurm_job, create_instance_logger
+from dry_pipe.core_lib import func_from_mod_func, is_inside_slurm_job, create_instance_logger, read_last_lines
 from dry_pipe.frozen_dag_generator import FrozenDAGGenerator
 from dry_pipe.task_classifier import TaskClassifier, lazy_task_inputs_outputs, RuntimeMetrics
 from dry_pipe.pipeline_instance import Monitor, PipelineInstance
@@ -956,7 +956,9 @@ class Cli:
         def lean(parser):
             parser.add_argument(
                 "--lean",
-                help='produces smaller database (or tsv) by storing out.log and drypipe.log of only non completed tasks, and only the last 50 lines',
+                help='produces smaller database (or tsv) by storing out.log and drypipe.log of only non completed tasks, and only the last 50 lines. '
+                     'WARNING: the logs of completed tasks are not read, the classifier (see --log-classifier) receives None for both, '
+                     'the default classifier gives them the signature "<no out.log>"',
                 action='store_true',
                 default=False
             )
@@ -2480,15 +2482,16 @@ class Cli:
 
     @staticmethod
     def _last_lines(out_log, n):
-        with open(out_log, errors="replace") as f:
-            return "".join(collections.deque(f, maxlen=n))
+        text = read_last_lines(out_log, n).decode(errors="replace")
+        # the newlines of a file read in text mode
+        return text.replace("\r\n", "\n").replace("\r", "\n")
 
-    def _log_signature(self, key, state, step, drypipe_log, classifier):
+    def _log_signature(self, key, state, step, drypipe_log, classifier, read_out_log=True):
         # the end of out.log: long enough to hold a stack trace with its message, short enough to not reach
         # back to old, harmless errors when a task dies without an error line (ex: timeouts)
         classified_lines = 1000
         out_log = self._out_log(key)
-        last_lines = self._last_lines(out_log, classified_lines) if out_log.exists() else None
+        last_lines = self._last_lines(out_log, classified_lines) if read_out_log and out_log.exists() else None
         control_dir = Path(self.parsed_args.pipeline_instance_dir, ".drypipe", key)
         task_inputs, task_outputs = lazy_task_inputs_outputs(str(control_dir))
         runtime_metrics = RuntimeMetrics(control_dir / "drypipe.log")
@@ -3093,7 +3096,8 @@ class Cli:
         PipelineInstance.write_status_db(
             self.parsed_args.pipeline_instance_dir,
             iterate_key_state_steps,
-            lambda key, state, step, drypipe_log: self._log_signature(key, state, step, drypipe_log, classifier),
+            lambda key, state, step, drypipe_log, read_out_log:
+                self._log_signature(key, state, step, drypipe_log, classifier, read_out_log),
             self.parsed_args.instance_name,
             self.parsed_args.tsv,
             self.parsed_args.lean

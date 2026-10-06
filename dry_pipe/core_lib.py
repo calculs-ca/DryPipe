@@ -350,6 +350,21 @@ class TimeLogger:
         self.logger_func(f"TIME_ELAPSED_FOR:{self.label}: {td}, {round(t, 2)}")
 
 
+def read_last_lines(file, line_count):
+    """bytes of the last line_count lines, read backwards from the end: the cost is the tail, not the file"""
+    block_size = 8192
+    with open(file, "rb") as f:
+        position = f.seek(0, os.SEEK_END)
+        data = b""
+        # line_count + 1 newlines guarantee that the first of the last line_count lines is complete
+        while position > 0 and data.count(b"\n") <= line_count:
+            read_size = min(block_size, position)
+            position -= read_size
+            f.seek(position)
+            data = f.read(read_size) + data
+    return b"".join(data.splitlines(keepends=True)[-line_count:])
+
+
 def current_stack_as_string():
     stack_trace_list = traceback.format_stack()[:-3]
     return "".join(stack_trace_list)

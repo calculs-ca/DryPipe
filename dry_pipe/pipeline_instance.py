@@ -10,7 +10,7 @@ import traceback
 from itertools import groupby
 from pathlib import Path
 
-from dry_pipe.core_lib import TimeLogger, current_stack_as_string, create_instance_logger
+from dry_pipe.core_lib import TimeLogger, current_stack_as_string, create_instance_logger, read_last_lines
 from dry_pipe.state_file import StateFile
 from dry_pipe.state_machine import StateMachine, AllRunnableTasksCompletedOrInError
 from dry_pipe.state_file_tracker import StateFileTracker
@@ -288,19 +288,6 @@ class PipelineInstance:
 
         lean_line_count = 50
 
-        def read_last_lines(f, line_count):
-            block_size = 8192
-            with open(f, "rb") as _f:
-                position = _f.seek(0, os.SEEK_END)
-                data = b""
-                # line_count + 1 newlines guarantee that the first of the last line_count lines is complete
-                while position > 0 and data.count(b"\n") <= line_count:
-                    read_size = min(block_size, position)
-                    position -= read_size
-                    _f.seek(position)
-                    data = _f.read(read_size) + data
-            return b"".join(data.splitlines(keepends=True)[-line_count:])
-
         def read_log_or_none(f):
             if not f.exists():
                 return None
@@ -322,12 +309,14 @@ class PipelineInstance:
                 nonlocal instance_state, error
                 try:
                     for key, state, step in iterate_key_state_steps():
-                        if lean and state == "completed":
+                        skip_logs = lean and state == "completed"
+                        if skip_logs:
                             drypipe_log, out_log = None, None
                         else:
                             drypipe_log = read_log_or_none(drypipe_dir.joinpath(key, "drypipe.log"))
                             out_log = read_log_or_none(drypipe_dir.joinpath(key, "out.log"))
-                        yield instance_name, key, state, step, drypipe_log, out_log, log_signature(key, state, step, drypipe_log)
+                        signature = log_signature(key, state, step, drypipe_log, not skip_logs)
+                        yield instance_name, key, state, step, drypipe_log, out_log, signature
                     instance_state = "ok"
                 except Exception:
                     instance_state = "digest failed"

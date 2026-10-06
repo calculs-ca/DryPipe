@@ -921,8 +921,11 @@ class CliStatusDbTests(BasePipelineTest):
         _, _, drypipe_log, out_log = task_rows[0]
         self.assertEqual(out_log, "".join(out_lines[-50:]))
         self.assertEqual(drypipe_log, "a\nb\nc")
-        # --lean drops the logs of completed tasks
+        # --lean drops the logs of completed tasks, they are not read for the signature either
         self.assertEqual(task_rows[1][2:], (None, None))
+        self.assertEqual(
+            self._query(d, "select log_signature from task_status where key = 't02'"), [("<no out.log>",)]
+        )
 
         # without --lean, completed tasks keep their logs
         self._status_db(d, '--filter=t02')
