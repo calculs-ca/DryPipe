@@ -274,7 +274,8 @@ class PipelineInstance:
             yield task, state_file
 
     @staticmethod
-    def write_status_db(pipeline_instance_dir, iterate_key_state_steps, instance_name=None, as_tsv=False, lean=False):
+    def write_status_db(pipeline_instance_dir, iterate_key_state_steps, log_signature, instance_name=None, as_tsv=False,
+                        lean=False):
 
         drypipe_dir = Path(pipeline_instance_dir, ".drypipe")
 
@@ -326,7 +327,7 @@ class PipelineInstance:
                         else:
                             drypipe_log = read_log_or_none(drypipe_dir.joinpath(key, "drypipe.log"))
                             out_log = read_log_or_none(drypipe_dir.joinpath(key, "out.log"))
-                        yield instance_name, key, state, step, drypipe_log, out_log
+                        yield instance_name, key, state, step, drypipe_log, out_log, log_signature(key, state, step, drypipe_log)
                     instance_state = "ok"
                 except Exception:
                     instance_state = "digest failed"
@@ -354,7 +355,7 @@ class PipelineInstance:
             return
 
         with PipelineInstance.create_empty_status_db(drypipe_dir.joinpath("status.db")) as conn:
-            conn.executemany("insert into task_status values (?, ?, ?, ?, ?, ?)", task_rows)
+            conn.executemany("insert into task_status values (?, ?, ?, ?, ?, ?, ?)", task_rows)
             # a failed digest has no task rows, the ones inserted before the failure are dropped
             if instance_state == "digest failed":
                 conn.execute("delete from task_status")
@@ -376,7 +377,8 @@ class PipelineInstance:
                     state text,
                     step int,
                     drypipe_log text,
-                    out_log text
+                    out_log text,
+                    log_signature text
                 )
             """)
             conn.execute("""

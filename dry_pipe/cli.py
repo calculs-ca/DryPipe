@@ -962,6 +962,20 @@ class Cli:
             )
 
 
+        def log_classifier(parser):
+            parser.add_argument(
+                '--log-classifier',
+                type=str,
+                default=None,
+                help='''
+                customizes the error signatures, by default the universal classifier is used.
+                The value is a function in "module:function" format, or a bare function name looked up in the
+                --generator module. The function receives the default LogClassifier and returns a classifier:
+                the default with its regex lists augmented, or a replacement, ex:
+                "def my_classifier(c): c.error_words.append(r'stopped unexpectedly'); return c"
+                '''
+            )
+
         def pipeline_instance_dir_optional(parser):
             arg = pipeline_instance_dir(parser)
             arg.required = False
@@ -975,7 +989,7 @@ class Cli:
             )
 
         yield Command(
-            'status-db', pipeline_instance_dir_optional, generator_optional, tsv, instance_name, empty_db, lean, *all_filters(),
+            'status-db', pipeline_instance_dir_optional, generator_optional, tsv, instance_name, empty_db, lean, log_classifier, *all_filters(),
             help="""
                 creates an sqlite3 database with tables : 
 
@@ -985,7 +999,8 @@ class Cli:
                     state text,
                     step int,
                     drypipe_log text,
-                    out_log text
+                    out_log text,
+                    log_signature text
                 );
 
                 create table instance_status (
@@ -998,6 +1013,8 @@ class Cli:
                 instance_name is the folder name of --pid OR value given by argument --instance-name
 
                 (key, state, step) is what would be returned by the "status" command.
+
+                log_signature is the error signature of out.log, as computed by analyze-logs, see --log-classifier
 
                 The instance_status table has a single row
 
@@ -1145,20 +1162,6 @@ class Cli:
                 type=str,
                 default=os.getcwd(),
                 help="destination directory of the markdown files, created if missing, defaults to $PWD"
-            )
-
-        def log_classifier(parser):
-            parser.add_argument(
-                '--log-classifier',
-                type=str,
-                default=None,
-                help='''
-                customizes the error signatures, by default the universal classifier is used.
-                The value is a function in "module:function" format, or a bare function name looked up in the
-                --generator module. The function receives the default LogClassifier and returns a classifier:
-                the default with its regex lists augmented, or a replacement, ex:
-                "def my_classifier(c): c.error_words.append(r'stopped unexpectedly'); return c"
-                '''
             )
 
         def full(parser):
@@ -2441,8 +2444,9 @@ class Cli:
 
         tasks = sorted(filter(is_selected, self.filter_key_state_step()), key=state_step)
         for (state, step), group in groupby(tasks, key=state_step):
+            group = list(group)
             keys = [key for key, _, _, _ in group]
-            signature_groups = self._signature_groups(keys, classifier)
+            signature_groups = self._signature_groups(group, classifier)
             with open(dest_dir / file_name(state, step, len(keys)), "w") as f:
                 self._write_error_signatures_table(signature_groups, f)
                 self._write_markdown_tails(keys, signature_groups, f)
@@ -2461,7 +2465,7 @@ class Cli:
         classifier = customize(LogClassifier())
         if not hasattr(classifier, "signature"):
             raise Exception(
-                f"--log-classifier '{spec}' must return a classifier with a signature(out_log, key) method, "
+                f"--log-classifier '{spec}' must return a classifier with a signature(key, out_log, drypipe_log, state, step) method, "
                 f"got a {type(classifier).__name__}"
             )
         return classifier.compile() if hasattr(classifier, "compile") else classifier
@@ -2474,21 +2478,27 @@ class Cli:
         with open(out_log, errors="replace") as f:
             return "".join(collections.deque(f, maxlen=n))
 
-    def _signature_groups(self, keys, classifier):
+    def _log_signature(self, key, state, step, drypipe_log, classifier):
+        # the end of out.log: long enough to hold a stack trace with its message, short enough to not reach
+        # back to old, harmless errors when a task dies without an error line (ex: timeouts)
+        classified_lines = 1000
+        out_log = self._out_log(key)
+        last_lines = self._last_lines(out_log, classified_lines) if out_log.exists() else None
+        return classifier.signature(key, last_lines, drypipe_log, state, step)
+
+    def _signature_groups(self, tasks, classifier):
         """(signature, keys) pairs, largest group first, their rank is the signature number"""
 
-        def signature(key):
-            # the end of out.log: long enough to hold a stack trace with its message, short enough to not reach
-            # back to old, harmless errors when a task dies without an error line (ex: timeouts)
-            classified_lines = 1000
-            out_log = self._out_log(key)
-            if not out_log.exists():
-                return "<no out.log>"
-            return classifier.signature(self._last_lines(out_log, classified_lines), key)
+        def read_drypipe_log(key):
+            drypipe_log = Path(self.parsed_args.pipeline_instance_dir, ".drypipe", key, "drypipe.log")
+            if not drypipe_log.exists():
+                return None
+            return drypipe_log.read_text(errors="replace")
 
         keys_by_signature = collections.defaultdict(list)
-        for key in keys:
-            keys_by_signature[signature(key)].append(key)
+        for key, state, step, _ in tasks:
+            signature = self._log_signature(key, state, step, read_drypipe_log(key), classifier)
+            keys_by_signature[signature].append(key)
         return sorted(keys_by_signature.items(), key=lambda i: -len(i[1]))
 
     def _write_error_signatures_table(self, signature_groups, file):
@@ -3067,9 +3077,12 @@ class Cli:
             for key, state, step, _ in self.filter_key_state_step():
                 yield key, state, step
 
+        classifier = self._log_classifier()
+
         PipelineInstance.write_status_db(
             self.parsed_args.pipeline_instance_dir,
             iterate_key_state_steps,
+            lambda key, state, step, drypipe_log: self._log_signature(key, state, step, drypipe_log, classifier),
             self.parsed_args.instance_name,
             self.parsed_args.tsv,
             self.parsed_args.lean

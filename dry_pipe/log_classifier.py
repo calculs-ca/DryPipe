@@ -3,7 +3,8 @@ import re
 
 class LogClassifier:
     """
-    signature(out_log, key) reduces a task's log to a string, tasks with equal signatures have the same kind of error.
+    signature(key, out_log, drypipe_log, state, step) reduces a task's log to a string, tasks with equal signatures have the same kind of error.
+    Missing logs are None.
     Customize by editing the lists (they are regexes), or by overriding methods in a subclass.
     """
 
@@ -89,9 +90,12 @@ class LogClassifier:
         """has at least one word outside of masks, a bare progress line like '<n>%…' is not meaningful"""
         return re.search(r"(?<!<)\b[A-Za-z]{3,}", masked_line) is not None
 
-    def signature(self, out_log, key):
+    def signature(self, key, out_log, drypipe_log, state, step):
 
-        lines = [l for l in (out_log or "").splitlines() if l.strip()]
+        if out_log is None:
+            return "<no out.log>"
+
+        lines = [l for l in out_log.splitlines() if l.strip()]
 
         error_line = next((l for l in reversed(lines) if self.is_error_line(l)), None)
         if error_line is not None:

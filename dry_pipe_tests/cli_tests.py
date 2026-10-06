@@ -870,9 +870,31 @@ class CliStatusDbTests(BasePipelineTest):
 
         task_rows = self._query(d, "select * from task_status order by key")
         self.assertEqual([row[1] for row in task_rows], [f"t0{i}" for i in range(1, 10)])
-        self.assertEqual(task_rows[0], ("z", "t01", "waiting", None, None, "t01 says hi\n"))
+        self.assertEqual(task_rows[0], ("z", "t01", "waiting", None, None, "t01 says hi\n", "<no error line> last: <key> says hi"))
         # t02 never ran, it has no logs
-        self.assertEqual(task_rows[1], ("z", "t02", "waiting", None, None, None))
+        self.assertEqual(task_rows[1], ("z", "t02", "waiting", None, None, None, "<no out.log>"))
+
+    def test_status_db_log_signature(self):
+        d = TestSandboxDir(self)
+        test_cli(self, 'prepare', f'--pipeline-instance-dir={d.sandbox_dir}', f'--generator={self.generator}')
+
+        Path(d.sandbox_dir, ".drypipe", "t01", "out.log").write_text("t01 starts\nKeyError: 'x' at row 3\n")
+
+        def signatures():
+            return self._query(d, "select key, log_signature from task_status order by key")
+
+        self._status_db(d, '--filter=t0[12]')
+        self.assertEqual(signatures(), [("t01", "KeyError: <str> at row <n>"), ("t02", "<no out.log>")])
+
+        self._status_db(d, '--filter=t01', '--log-classifier=log_classifier_merging_lookup_errors')
+        self.assertEqual(signatures(), [("t01", "lookup error")])
+
+        self._status_db(d, '--tsv', '--filter=t01')
+        [row] = self._import_tsv(
+            d, "task_status",
+            "create table task_status (instance_name text, key text, state text, step int, drypipe_log text, out_log text, log_signature text)"
+        )
+        self.assertEqual(row[-1], "KeyError: <str> at row <n>")
 
     def test_status_db_lean(self):
         d = TestSandboxDir(self)
@@ -985,9 +1007,9 @@ class CliStatusDbTests(BasePipelineTest):
 
         self._status_db(d, '--tsv', '--filter=t01')
 
-        [(_, key, state, _, drypipe_log, out_log)] = self._import_tsv(
+        [(_, key, state, _, drypipe_log, out_log, _)] = self._import_tsv(
             d, "task_status",
-            "create table task_status (instance_name text, key text, state text, step int, drypipe_log text, out_log text)"
+            "create table task_status (instance_name text, key text, state text, step int, drypipe_log text, out_log text, log_signature text)"
         )
 
         self.assertEqual((key, state), ("t01", "waiting"))

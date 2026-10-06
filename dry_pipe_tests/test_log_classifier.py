@@ -9,7 +9,7 @@ class LogClassifierTests(unittest.TestCase):
         self.classifier = LogClassifier().compile()
 
     def signature(self, out_log, key="t1"):
-        return self.classifier.signature(out_log, key)
+        return self.classifier.signature(key, out_log, None, "failed", 1)
 
     def assertSameSignature(self, log1, log2):
         self.assertEqual(self.signature(log1, "t1"), self.signature(log2, "t2"))
@@ -95,7 +95,7 @@ Search progress: 0%\b\b\b  1%\b\b\b  2%\b\b\b
         classifier.compile()
 
         self.assertEqual(
-            classifier.signature("worker for PXD000123 stopped unexpectedly\n", "t1"),
+            classifier.signature("t1", "worker for PXD000123 stopped unexpectedly\n", None, "failed", 1),
             "worker for <dataset> stopped unexpectedly"
         )
 
@@ -110,6 +110,6 @@ Search progress: 0%\b\b\b  1%\b\b\b  2%\b\b\b
         classifier = ToolAwareClassifier().compile()
 
         self.assertEqual(
-            classifier.signature("[progress: 12/100 (12%) - 87 spectra/s]\n", "t1"),
+            classifier.signature("t1", "[progress: 12/100 (12%) - 87 spectra/s]\n", None, "failed", 1),
             "<no error line> while running MSFragger"
         )
