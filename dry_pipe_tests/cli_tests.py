@@ -891,6 +891,12 @@ class CliStatusDbTests(BasePipelineTest):
         self._status_db(d, '--filter=t01', '--log-classifier=log_classifier_merging_lookup_errors')
         self.assertEqual(signatures(), [("t01", "lookup error")])
 
+        test_cli(
+            self, 'status-db', f'--pipeline-instance-dir={d.sandbox_dir}', f'--generator={self.generator}', '--filter=t01',
+            env={"DRYPIPE_LOG_CLASSIFIER": "log_classifier_merging_lookup_errors"}
+        )
+        self.assertEqual(signatures(), [("t01", "lookup error")])
+
         self._status_db(d, '--tsv', '--filter=t01')
         [row] = self._import_tsv(
             d, "task_status",

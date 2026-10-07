@@ -968,6 +968,10 @@ class Cli:
             parser.add_argument(
                 '--log-classifier',
                 type=str,
+                action=EnvDefault,
+                envvar="DRYPIPE_LOG_CLASSIFIER",
+                env=self.env,
+                required=False,
                 default=None,
                 help='''
                 customizes the error signatures, by default the universal classifier is used.
@@ -976,6 +980,7 @@ class Cli:
                 the default with its regex lists augmented, or a replacement, ex:
                 "def my_classifier(c): c.error_words.append(r'stopped unexpectedly'); return c"
                 A signature of None leaves the task out of analyze-logs, and is null in status-db.
+                Can also be set with environment var DRYPIPE_LOG_CLASSIFIER.
                 '''
             )
 
