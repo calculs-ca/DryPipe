@@ -913,9 +913,11 @@ class CliStatusDbTests(BasePipelineTest):
         )
 
         # 60 lines of 200 chars span more than one of the 8192 bytes blocks read from the end
-        out_lines = [f"{i:03d} {'x' * 195}\r\n" for i in range(60)]
-        Path(d.sandbox_dir, ".drypipe", "t01", "out.log").write_text("".join(out_lines), newline="")
-        # fewer than 50 lines, and no newline at the end
+        last_step = ["================ t01: step-2.sh ====================\r\n"] + [f"{i:03d} {'x' * 195}\r\n" for i in range(60)]
+        Path(d.sandbox_dir, ".drypipe", "t01", "out.log").write_text(
+            "================ t01: step-1.sh ====================\r\nError: in step 1\r\n" + "".join(last_step), newline=""
+        )
+        # no step start, fewer than 100 lines, and no newline at the end
         Path(d.sandbox_dir, ".drypipe", "t01", "drypipe.log").write_text("a\nb\nc")
 
         Path(d.sandbox_dir, ".drypipe", "t02", "out.log").write_text("t02 log")
@@ -925,7 +927,10 @@ class CliStatusDbTests(BasePipelineTest):
         task_rows = self._query(d, "select key, state, drypipe_log, out_log from task_status order by key")
         self.assertEqual([(key, state) for key, state, _, _ in task_rows], [("t01", "waiting"), ("t02", "completed"), ("t03", "waiting")])
         _, _, drypipe_log, out_log = task_rows[0]
-        self.assertEqual(out_log, "".join(out_lines[-50:]))
+        self.assertEqual(out_log, "".join(last_step))
+        # the error of a previous step is not in the last step
+        [(signature,)] = self._query(d, "select log_signature from task_status where key = 't01'")
+        self.assertTrue(signature.startswith("<no error line> last: <n> xxx"))
         self.assertEqual(drypipe_log, "a\nb\nc")
         # --lean drops the logs of completed tasks, they are not read for the signature either
         self.assertEqual(task_rows[1][2:], (None, None))
@@ -936,6 +941,13 @@ class CliStatusDbTests(BasePipelineTest):
         # without --lean, completed tasks keep their logs
         self._status_db(d, '--filter=t02')
         self.assertEqual(self._query(d, "select out_log from task_status"), [("t02 log",)])
+
+        # a classifier can be lean without --lean
+        self._status_db(d, '--filter=t0[12]', '--log-classifier=always_lean_classifier')
+        self.assertEqual(
+            self._query(d, "select key, drypipe_log, out_log from task_status order by key"),
+            [("t01", "a\nb\nc", "".join(last_step)), ("t02", None, None)]
+        )
 
     def test_status_db_missing_drypipe(self):
         d = TestSandboxDir(self)
@@ -1351,6 +1363,19 @@ def log_classifier_merging_lookup_errors(default):
     return default
 
 
+def always_lean_classifier(default):
+    """resolved by bare name from the --generator module (this module) in CliStatusDbTests"""
+
+    class AlwaysLean(type(default)):
+        def reads_logs(self, key, state, step, is_lean):
+            return super().reads_logs(key, state, step, True)
+
+        def extract_out_log(self, context, is_lean):
+            return super().extract_out_log(context, True)
+
+    return AlwaysLean().compile()
+
+
 def dag_with_outputs(dsl):
     t1 = dsl.task(key="t1").outputs(
         f=dsl.file("f.tsv"), n=int, csvs=dsl.file_set("*.csv")
@@ -1375,8 +1400,8 @@ def classifier_of_missing_outputs(default):
     """resolved by bare name from the --generator module (this module) in CliTaskClassifierTests"""
 
     class MissingOutputs(type(default)):
-        def signature(self, key, out_log, drypipe_log, state, step, task_inputs, task_outputs, runtime_metrics):
-            if key == "t1" and not task_outputs.f.exists():
+        def signature(self, key, state, step, context):
+            if key == "t1" and not context.outputs.f.exists():
                 return "FATAL_DID_NOT_PRODUCE_RESULTS"
             return None
 
@@ -1578,7 +1603,8 @@ class CliAnalyzeLogsTests(BasePipelineTest):
         self.assertIn("````text\nt08 says hi\nIndexError: list index out of range | row 3\n```\n````\n", md)
 
     def test_signatures_ignore_errors_before_the_classified_lines(self):
-        progress = "".join(f"{i}% done\n" for i in range(1000))
+        # without a step banner, only the last 2000 lines are classified
+        progress = "".join(f"{i}% done\n" for i in range(2000))
         analysis_dir = self._analyze_logs(out_log_of_t03=f"connection failed, retrying\n{progress}")
 
         self.assertEqual(self.signatures_table(Path(analysis_dir, 'timed-out.1-1.md'))[6:-1], [

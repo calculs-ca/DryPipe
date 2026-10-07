@@ -1,10 +1,12 @@
 import os
 import shutil
+import tempfile
 import unittest
 from pathlib import Path
 
 from base_pipeline_test import TestWithDirectorySandbox
-from dry_pipe.core_lib import expandvars_from_dict
+from dry_pipe.core_lib import expandvars_from_dict, read_last_step_lines, reversed_lines, is_step_banner, \
+    read_out_log_last_step, read_drypipe_log_last_step
 from dry_pipe import AutoRestartManager
 from test_utils import TestSandboxDir, DummyLogger
 
@@ -43,6 +45,62 @@ class TestExpandVars(unittest.TestCase):
         for t, v in tests.items():
             g = expandvars_from_dict(t, envars)
             self.assertEqual(g, v)
+
+
+class TestReadLastStepLines(unittest.TestCase):
+
+    def _out_log(self, text):
+        tmp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp_dir.cleanup)
+        out_log = Path(tmp_dir.name, "out.log")
+        out_log.write_text(text, newline="")
+        return out_log
+
+    def test_reversed_lines_span_blocks(self):
+        # 200 chars lines span more than one of the 8192 bytes blocks
+        lines = [f"{i:03d} {'x' * 195}\r\n" for i in range(60)] + ["no newline at the end"]
+        out_log = self._out_log("".join(lines))
+        self.assertEqual(list(reversed_lines(out_log)), [l.encode() for l in reversed(lines)])
+
+    def test_last_step_starts_at_its_banner(self):
+        out_log = self._out_log(
+            "================ t1: step-1.sh ====================\n"
+            "Error: old\n"
+            "\n================ step 1 restarted after failure =====================\n\n"
+            "================ t1: step-1.sh ====================\n"
+            "ok\n"
+        )
+        self.assertEqual(read_out_log_last_step(out_log), b"================ t1: step-1.sh ====================\nok\n")
+
+    def test_restart_banner_is_not_a_step_start(self):
+        out_log = self._out_log(
+            "================ t1: step-1.sh ====================\n"
+            "Error: old\n"
+            "\n================ step 1 restarted after failure =====================\n\n"
+        )
+        self.assertTrue(read_out_log_last_step(out_log).startswith(b"================ t1: step-1.sh"))
+
+    def test_drypipe_log_last_step_starts_at_its_timer(self):
+        drypipe_log = self._out_log(
+            "2026-10-07 INFO START_TIMER_FOR:STEP-0\n"
+            "2026-10-07 INFO TIME_ELAPSED_FOR:STEP-0: 00:00:01, 1.0\n"
+            "2026-10-07 INFO START_TIMER_FOR:STEP-1\n"
+            "2026-10-07 INFO killed\n"
+        )
+        self.assertEqual(
+            read_drypipe_log_last_step(drypipe_log),
+            b"2026-10-07 INFO START_TIMER_FOR:STEP-1\n2026-10-07 INFO killed\n"
+        )
+
+    def test_long_last_step_keeps_its_banner(self):
+        banner = "================ mod:func(1,{}) ====================\n"
+        lines = [f"{i}\n" for i in range(10)]
+        out_log = self._out_log("before\n" + banner + "".join(lines))
+        self.assertEqual(read_last_step_lines(out_log, is_step_banner, 3), (banner + "".join(lines[-3:])).encode())
+
+    def test_no_banner(self):
+        out_log = self._out_log("a\nb\nc\n")
+        self.assertEqual(read_last_step_lines(out_log, is_step_banner, 2), b"b\nc\n")
 
 
 class MockStateFileForAutoRestartManager:

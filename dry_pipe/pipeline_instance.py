@@ -10,7 +10,7 @@ import traceback
 from itertools import groupby
 from pathlib import Path
 
-from dry_pipe.core_lib import TimeLogger, current_stack_as_string, create_instance_logger, read_last_lines
+from dry_pipe.core_lib import TimeLogger, current_stack_as_string, create_instance_logger
 from dry_pipe.state_file import StateFile
 from dry_pipe.state_machine import StateMachine, AllRunnableTasksCompletedOrInError
 from dry_pipe.state_file_tracker import StateFileTracker
@@ -274,8 +274,9 @@ class PipelineInstance:
             yield task, state_file
 
     @staticmethod
-    def write_status_db(pipeline_instance_dir, iterate_key_state_steps, log_signature, instance_name=None, as_tsv=False,
-                        lean=False):
+    def write_status_db(pipeline_instance_dir, iterate_key_state_steps, logs_and_signature, instance_name=None,
+                        as_tsv=False):
+        """logs_and_signature(key, state, step) returns (drypipe_log, out_log, log_signature) of a task"""
 
         drypipe_dir = Path(pipeline_instance_dir, ".drypipe")
 
@@ -286,19 +287,9 @@ class PipelineInstance:
         instance_state = None
         error = None
 
-        lean_line_count = 50
-
-        def read_log_or_none(f):
-            if not f.exists():
-                return None
-            if lean:
-                data = read_last_lines(f, lean_line_count)
-            else:
-                with open(f, "rb") as _f:
-                    data = _f.read()
-            # a stray binary byte in a log should not fail the whole digest,
-            # and the sqlite3 shell's .import truncates a field at NUL
-            return data.decode(errors="replace").replace("\x00", "\ufffd")
+        def without_nul(log):
+            # the sqlite3 shell's .import truncates a field at NUL
+            return None if log is None else log.replace("\x00", "\ufffd")
 
         if not drypipe_dir.exists():
             instance_state = "missing .drypipe"
@@ -309,14 +300,8 @@ class PipelineInstance:
                 nonlocal instance_state, error
                 try:
                     for key, state, step in iterate_key_state_steps():
-                        skip_logs = lean and state == "completed"
-                        if skip_logs:
-                            drypipe_log, out_log = None, None
-                        else:
-                            drypipe_log = read_log_or_none(drypipe_dir.joinpath(key, "drypipe.log"))
-                            out_log = read_log_or_none(drypipe_dir.joinpath(key, "out.log"))
-                        signature = log_signature(key, state, step, drypipe_log, not skip_logs)
-                        yield instance_name, key, state, step, drypipe_log, out_log, signature
+                        drypipe_log, out_log, signature = logs_and_signature(key, state, step)
+                        yield instance_name, key, state, step, without_nul(drypipe_log), without_nul(out_log), signature
                     instance_state = "ok"
                 except Exception:
                     instance_state = "digest failed"

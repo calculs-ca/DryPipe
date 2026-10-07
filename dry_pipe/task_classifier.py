@@ -5,6 +5,7 @@ import re
 from pathlib import Path
 
 from dry_pipe import TaskConf
+from dry_pipe.core_lib import is_banner, read_out_log_last_step, read_drypipe_log_last_step
 from dry_pipe.reports import parse_timers_in_log
 from dry_pipe.task_process import resolve_inputs_outputs
 
@@ -13,9 +14,10 @@ module_logger = logging.getLogger(__name__)
 
 class TaskClassifier:
     """
-    signature(key, out_log, drypipe_log, state, step, task_inputs, task_outputs, runtime_metrics) reduces a task
-    to a string, tasks with equal signatures have the same kind of error, None leaves the task out.
-    Missing logs are None. The default signature only looks at out_log.
+    signature(key, state, step, context) reduces a task to a string, tasks with equal signatures have the same
+    kind of error, None leaves the task out. context is a TaskClassifyContext.
+    The default signature only looks at context.out_log_last_step_extract().
+    reads_logs, extract_out_log and extract_drypipe_log decide what status-db reads and stores, see status-db --lean.
     Customize by editing the lists (they are regexes), or by overriding methods in a subclass.
     """
 
@@ -101,12 +103,25 @@ class TaskClassifier:
         """has at least one word outside of masks, a bare progress line like '<n>%…' is not meaningful"""
         return re.search(r"(?<!<)\b[A-Za-z]{3,}", masked_line) is not None
 
-    def signature(self, key, out_log, drypipe_log, state, step, task_inputs, task_outputs, runtime_metrics):
+    def reads_logs(self, key, state, step, is_lean):
+        """False makes the logs of the task missing, for the signature and for status-db"""
+        return not (is_lean and state == "completed")
 
+    def extract_out_log(self, context, is_lean):
+        """the out.log stored by status-db"""
+        return context.out_log_last_step_extract() if is_lean else context.full_out_log()
+
+    def extract_drypipe_log(self, context, is_lean):
+        """the drypipe.log stored by status-db"""
+        return context.drypipe_log_last_step_extract() if is_lean else context.full_drypipe_log()
+
+    def signature(self, key, state, step, context):
+
+        out_log = context.out_log_last_step_extract()
         if out_log is None:
             return "<no out.log>"
 
-        lines = [l for l in out_log.splitlines() if l.strip()]
+        lines = [l for l in out_log.splitlines() if l.strip() and not is_banner(l)]
 
         error_line = next((l for l in reversed(lines) if self.is_error_line(l)), None)
         if error_line is not None:
@@ -132,6 +147,41 @@ class TaskClassifier:
             return "<no error line> last: " + last
 
         return "<no error line>"
+
+
+class TaskClassifyContext:
+    """
+    what a classifier knows of a task besides its key, state and step, read at first use.
+    inputs, outputs: see lazy_task_inputs_outputs, runtime_metrics: see RuntimeMetrics.
+    A missing log is None, logs not read (status-db --lean on completed tasks) are missing.
+    """
+
+    def __init__(self, control_dir, logs_readable=True):
+        self._out_log_file = Path(control_dir, "out.log")
+        self._drypipe_log_file = Path(control_dir, "drypipe.log")
+        self._logs_readable = logs_readable
+        self.inputs, self.outputs = lazy_task_inputs_outputs(str(control_dir))
+        self.runtime_metrics = RuntimeMetrics(self._drypipe_log_file)
+
+    def has_out_log(self):
+        return self._logs_readable and self._out_log_file.exists()
+
+    def has_drypipe_log(self):
+        return self._logs_readable and self._drypipe_log_file.exists()
+
+    def out_log_last_step_extract(self):
+        """the out.log lines of the last step, at most 2000"""
+        return read_out_log_last_step(self._out_log_file).decode(errors="replace") if self.has_out_log() else None
+
+    def drypipe_log_last_step_extract(self):
+        """the drypipe.log lines of the last step, at most 100"""
+        return read_drypipe_log_last_step(self._drypipe_log_file).decode(errors="replace") if self.has_drypipe_log() else None
+
+    def full_out_log(self):
+        return self._out_log_file.read_bytes().decode(errors="replace") if self.has_out_log() else None
+
+    def full_drypipe_log(self):
+        return self._drypipe_log_file.read_bytes().decode(errors="replace") if self.has_drypipe_log() else None
 
 
 def lazy_task_inputs_outputs(control_dir):

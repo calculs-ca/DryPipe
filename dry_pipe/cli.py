@@ -30,7 +30,7 @@ from pathlib import Path
 from dry_pipe import PortablePopen, DryPipe
 from dry_pipe.core_lib import func_from_mod_func, is_inside_slurm_job, create_instance_logger, read_last_lines
 from dry_pipe.frozen_dag_generator import FrozenDAGGenerator
-from dry_pipe.task_classifier import TaskClassifier, lazy_task_inputs_outputs, RuntimeMetrics
+from dry_pipe.task_classifier import TaskClassifier, TaskClassifyContext
 from dry_pipe.pipeline_instance import Monitor, PipelineInstance
 from dry_pipe.task_process import TaskPackExchausted, TaskProcess, TaskFailedException
 from dry_pipe.slurm_array_task import SlurmArrayParentTask
@@ -956,9 +956,12 @@ class Cli:
         def lean(parser):
             parser.add_argument(
                 "--lean",
-                help='produces smaller database (or tsv) by storing out.log and drypipe.log of only non completed tasks, and only the last 50 lines. '
-                     'WARNING: the logs of completed tasks are not read, the classifier (see --log-classifier) receives None for both, '
-                     'the default classifier gives them the signature "<no out.log>"',
+                help='produces smaller database (or tsv) by storing out.log and drypipe.log of only non completed tasks, the last step of out.log '
+                     '(its banner and at most its last 2000 lines), and of drypipe.log (at most its last 100 lines). '
+                     'WARNING: the logs of completed tasks are not read, the classifier (see --log-classifier) sees them as missing, '
+                     'the default classifier gives them the signature "<no out.log>". '
+                     'A --log-classifier can change what is read and stored, see reads_logs, extract_out_log and '
+                     'extract_drypipe_log in dry_pipe/task_classifier.py',
                 action='store_true',
                 default=False
             )
@@ -1195,7 +1198,7 @@ class Cli:
                            "when the task has no step. Only tasks that ended without completing are analyzed, as if "
                            "--filter-unhealthy was given, other filters narrow the selection further, see --all-tasks. Each file starts with a table that groups its tasks by error "
                            "signature, followed by the tail of each task's out.log. The signature of a task is its last "
-                           "error line in out.log, with variable parts (paths, numbers, quoted strings, etc) masked, "
+                           "error line in the last step of out.log, with variable parts (paths, numbers, quoted strings, etc) masked, "
                            "see dry_pipe/task_classifier.py and --log-classifier")
 
         def analysis_file(parser):
@@ -2474,11 +2477,13 @@ class Cli:
 
         customize = func_from_mod_func(self._resolve_against_generator_module(spec, "--log-classifier"))
         classifier = customize(TaskClassifier())
-        if not hasattr(classifier, "signature"):
+        missing_methods = [
+            m for m in ("signature", "reads_logs", "extract_out_log", "extract_drypipe_log") if not hasattr(classifier, m)
+        ]
+        if missing_methods:
             raise Exception(
-                f"--log-classifier '{spec}' must return a classifier with a "
-                f"signature(key, out_log, drypipe_log, state, step, task_inputs, task_outputs, runtime_metrics) method, "
-                f"got a {type(classifier).__name__}"
+                f"--log-classifier '{spec}' must return a classifier with the methods of TaskClassifier, "
+                f"got a {type(classifier).__name__} without {', '.join(missing_methods)}"
             )
         return classifier.compile() if hasattr(classifier, "compile") else classifier
 
@@ -2491,31 +2496,20 @@ class Cli:
         # the newlines of a file read in text mode
         return text.replace("\r\n", "\n").replace("\r", "\n")
 
-    def _log_signature(self, key, state, step, drypipe_log, classifier, read_out_log=True):
-        # the end of out.log: long enough to hold a stack trace with its message, short enough to not reach
-        # back to old, harmless errors when a task dies without an error line (ex: timeouts)
-        classified_lines = 1000
-        out_log = self._out_log(key)
-        last_lines = self._last_lines(out_log, classified_lines) if read_out_log and out_log.exists() else None
-        control_dir = Path(self.parsed_args.pipeline_instance_dir, ".drypipe", key)
-        task_inputs, task_outputs = lazy_task_inputs_outputs(str(control_dir))
-        runtime_metrics = RuntimeMetrics(control_dir / "drypipe.log")
-        return classifier.signature(
-            key, last_lines, drypipe_log, state, step, task_inputs, task_outputs, runtime_metrics
+    def _classify_context(self, key, state, step, classifier, is_lean):
+        return TaskClassifyContext(
+            Path(self.parsed_args.pipeline_instance_dir, ".drypipe", key), classifier.reads_logs(key, state, step, is_lean)
         )
+
+    def _log_signature(self, key, state, step, classifier):
+        return classifier.signature(key, state, step, self._classify_context(key, state, step, classifier, False))
 
     def _signature_groups(self, tasks, classifier):
         """(signature, keys) pairs, largest group first, their rank is the signature number, None signatures are left out"""
 
-        def read_drypipe_log(key):
-            drypipe_log = Path(self.parsed_args.pipeline_instance_dir, ".drypipe", key, "drypipe.log")
-            if not drypipe_log.exists():
-                return None
-            return drypipe_log.read_text(errors="replace")
-
         keys_by_signature = collections.defaultdict(list)
         for key, state, step, _ in tasks:
-            signature = self._log_signature(key, state, step, read_drypipe_log(key), classifier)
+            signature = self._log_signature(key, state, step, classifier)
             if signature is not None:
                 keys_by_signature[signature].append(key)
         return sorted(keys_by_signature.items(), key=lambda i: -len(i[1]))
@@ -3097,15 +3091,22 @@ class Cli:
                 yield key, state, step
 
         classifier = self._log_classifier()
+        is_lean = self.parsed_args.lean
+
+        def logs_and_signature(key, state, step):
+            context = self._classify_context(key, state, step, classifier, is_lean)
+            return (
+                classifier.extract_drypipe_log(context, is_lean),
+                classifier.extract_out_log(context, is_lean),
+                classifier.signature(key, state, step, context)
+            )
 
         PipelineInstance.write_status_db(
             self.parsed_args.pipeline_instance_dir,
             iterate_key_state_steps,
-            lambda key, state, step, drypipe_log, read_out_log:
-                self._log_signature(key, state, step, drypipe_log, classifier, read_out_log),
+            logs_and_signature,
             self.parsed_args.instance_name,
-            self.parsed_args.tsv,
-            self.parsed_args.lean
+            self.parsed_args.tsv
         )
 
 

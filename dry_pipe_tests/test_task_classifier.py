@@ -3,7 +3,16 @@ import unittest
 import tempfile
 from pathlib import Path
 
-from dry_pipe.task_classifier import TaskClassifier, RuntimeMetrics
+from dry_pipe.task_classifier import TaskClassifier, RuntimeMetrics, TaskClassifyContext
+
+
+class OutLogContext:
+
+    def __init__(self, out_log):
+        self._out_log = out_log
+
+    def out_log_last_step_extract(self):
+        return self._out_log
 
 
 class TaskClassifierTests(unittest.TestCase):
@@ -12,7 +21,7 @@ class TaskClassifierTests(unittest.TestCase):
         self.classifier = TaskClassifier().compile()
 
     def signature(self, out_log, key="t1"):
-        return self.classifier.signature(key, out_log, None, "failed", 1, None, None, None)
+        return self.classifier.signature(key, "failed", 1, OutLogContext(out_log))
 
     def assertSameSignature(self, log1, log2):
         self.assertEqual(self.signature(log1, "t1"), self.signature(log2, "t2"))
@@ -91,14 +100,22 @@ Search progress: 0%\b\b\b  1%\b\b\b  2%\b\b\b
     def test_empty_log(self):
         self.assertEqual(self.signature(""), "<no error line>")
 
+    def test_banners_are_not_error_lines(self):
+        log = (
+            "================ t1: /pipeline/fail-safe-script.sh ====================\n"
+            "\n================ step 1 restarted after failure =====================\n\n"
+        )
+        self.assertEqual(self.signature(log), "<no error line>")
+
     def test_augmented_lists(self):
         classifier = TaskClassifier()
         classifier.error_words.append(r"stopped unexpectedly")
         classifier.masks.insert(0, (r"PXD\d+", "<dataset>"))
         classifier.compile()
 
+        log = "worker for PXD000123 stopped unexpectedly\n"
         self.assertEqual(
-            classifier.signature("t1", "worker for PXD000123 stopped unexpectedly\n", None, "failed", 1, None, None, None),
+            classifier.signature("t1", "failed", 1, OutLogContext(log)),
             "worker for <dataset> stopped unexpectedly"
         )
 
@@ -112,10 +129,40 @@ Search progress: 0%\b\b\b  1%\b\b\b  2%\b\b\b
 
         classifier = ToolAwareClassifier().compile()
 
+        log = "[progress: 12/100 (12%) - 87 spectra/s]\n"
         self.assertEqual(
-            classifier.signature("t1", "[progress: 12/100 (12%) - 87 spectra/s]\n", None, "failed", 1, None, None, None),
+            classifier.signature("t1", "failed", 1, OutLogContext(log)),
             "<no error line> while running MSFragger"
         )
+
+
+class TaskClassifyContextTests(unittest.TestCase):
+
+    def setUp(self):
+        tmp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp_dir.cleanup)
+        self.control_dir = Path(tmp_dir.name)
+
+    def test_logs(self):
+        Path(self.control_dir, "out.log").write_text(
+            "before\n================ t1: step-1.sh ====================\r\nError: x\r\n", newline=""
+        )
+        context = TaskClassifyContext(self.control_dir)
+
+        self.assertTrue(context.has_out_log())
+        self.assertEqual(context.out_log_last_step_extract(), "================ t1: step-1.sh ====================\r\nError: x\r\n")
+        self.assertEqual(context.full_out_log(), "before\n================ t1: step-1.sh ====================\r\nError: x\r\n")
+        self.assertFalse(context.has_drypipe_log())
+        self.assertIsNone(context.drypipe_log_last_step_extract())
+        self.assertIsNone(context.full_drypipe_log())
+
+    def test_unreadable_logs_are_missing(self):
+        Path(self.control_dir, "out.log").write_text("Error: x\n")
+        context = TaskClassifyContext(self.control_dir, logs_readable=False)
+
+        self.assertFalse(context.has_out_log())
+        self.assertIsNone(context.out_log_last_step_extract())
+        self.assertIsNone(context.full_out_log())
 
 
 class RuntimeMetricsTests(unittest.TestCase):

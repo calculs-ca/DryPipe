@@ -365,6 +365,64 @@ def read_last_lines(file, line_count):
     return b"".join(data.splitlines(keepends=True)[-line_count:])
 
 
+def reversed_lines(file):
+    """lines (bytes) of file, last first, read backwards from the end: the cost is the lines consumed"""
+    block_size = 8192
+    with open(file, "rb") as f:
+        position = f.seek(0, os.SEEK_END)
+        # the first line of a block is complete only once the previous block is prepended
+        partial_line = b""
+        while position > 0:
+            read_size = min(block_size, position)
+            position -= read_size
+            f.seek(position)
+            lines = (f.read(read_size) + partial_line).splitlines(keepends=True)
+            partial_line = lines.pop(0)
+            yield from reversed(lines)
+        if partial_line:
+            yield partial_line
+
+
+def is_banner(line):
+    """
+    written to out.log before each step (see TaskProcess.dump_function_call_in_stdout), and before a restart
+    after failure. Meant for humans, a more distinctive marker is a TODO
+    """
+    return re.match(r"={16} .+ ={20,}\s*$", line) is not None
+
+
+def is_step_banner(line):
+    return is_banner(line) and re.match(r"={16} step \d+ restarted after failure ", line) is None
+
+
+def read_last_step_lines(file, is_step_start, max_line_count):
+    """
+    bytes of the lines of the last step, starting with its first line. A last step longer than max_line_count
+    lines keeps its first line and its last max_line_count lines. Without a step start, the last max_line_count lines.
+    """
+
+    def start_and_kept_lines_last_first():
+        kept_line_count = 0
+        for line in reversed_lines(file):
+            if is_step_start(line.decode(errors="replace")):
+                yield line
+                return
+            if kept_line_count < max_line_count:
+                kept_line_count += 1
+                yield line
+
+    return b"".join(reversed(list(start_and_kept_lines_last_first())))
+
+
+def read_out_log_last_step(file):
+    return read_last_step_lines(file, is_step_banner, 2000)
+
+
+def read_drypipe_log_last_step(file):
+    # logged by the TimeLogger of each step, see TaskProcess._run_steps
+    return read_last_step_lines(file, lambda line: "START_TIMER_FOR:STEP-" in line, 100)
+
+
 def current_stack_as_string():
     stack_trace_list = traceback.format_stack()[:-3]
     return "".join(stack_trace_list)
