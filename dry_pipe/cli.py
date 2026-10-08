@@ -2487,9 +2487,12 @@ class Cli:
     def _log_classifier(self):
         spec = self.parsed_args.log_classifier
         if spec is None:
+            print("log classifier: default TaskClassifier (no --log-classifier or DRYPIPE_LOG_CLASSIFIER)")
             return TaskClassifier().compile()
 
-        customize = func_from_mod_func(self._resolve_against_generator_module(spec, "--log-classifier"))
+        mod_func = self._resolve_against_generator_module(spec, "--log-classifier")
+        print(f"log classifier: {mod_func}")
+        customize = func_from_mod_func(mod_func)
         classifier = customize(TaskClassifier())
         missing_methods = [
             m for m in ("signature", "reads_logs", "extract_out_log", "extract_drypipe_log") if not hasattr(classifier, m)
