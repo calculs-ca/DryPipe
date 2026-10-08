@@ -157,31 +157,31 @@ class TaskClassifyContext:
     """
 
     def __init__(self, control_dir, logs_readable=True):
-        self._out_log_file = Path(control_dir, "out.log")
-        self._drypipe_log_file = Path(control_dir, "drypipe.log")
+        self.out_log_file = Path(control_dir, "out.log")
+        self.drypipe_log_file = Path(control_dir, "drypipe.log")
         self._logs_readable = logs_readable
         self.inputs, self.outputs = lazy_task_inputs_outputs(str(control_dir))
-        self.runtime_metrics = RuntimeMetrics(self._drypipe_log_file)
+        self.runtime_metrics = RuntimeMetrics(self.drypipe_log_file)
 
     def has_out_log(self):
-        return self._logs_readable and self._out_log_file.exists()
+        return self._logs_readable and self.out_log_file.exists()
 
     def has_drypipe_log(self):
-        return self._logs_readable and self._drypipe_log_file.exists()
+        return self._logs_readable and self.drypipe_log_file.exists()
 
     def out_log_last_step_extract(self):
         """the out.log lines of the last step, at most 1000"""
-        return read_out_log_last_step(self._out_log_file, 1000).decode(errors="replace") if self.has_out_log() else None
+        return read_out_log_last_step(self.out_log_file, 1000).decode(errors="replace") if self.has_out_log() else None
 
     def drypipe_log_last_step_extract(self):
         """the drypipe.log lines of the last step, at most 100"""
-        return read_drypipe_log_last_step(self._drypipe_log_file, 100).decode(errors="replace") if self.has_drypipe_log() else None
+        return read_drypipe_log_last_step(self.drypipe_log_file, 100).decode(errors="replace") if self.has_drypipe_log() else None
 
     def full_out_log(self):
-        return self._out_log_file.read_bytes().decode(errors="replace") if self.has_out_log() else None
+        return self.out_log_file.read_bytes().decode(errors="replace") if self.has_out_log() else None
 
     def full_drypipe_log(self):
-        return self._drypipe_log_file.read_bytes().decode(errors="replace") if self.has_drypipe_log() else None
+        return self.drypipe_log_file.read_bytes().decode(errors="replace") if self.has_drypipe_log() else None
 
 
 def lazy_task_inputs_outputs(control_dir):
