@@ -414,13 +414,13 @@ def read_last_step_lines(file, is_step_start, max_line_count):
     return b"".join(reversed(list(start_and_kept_lines_last_first())))
 
 
-def read_out_log_last_step(file):
-    return read_last_step_lines(file, is_step_banner, 2000)
+def read_out_log_last_step(file, max_line_count):
+    return read_last_step_lines(file, is_step_banner, max_line_count)
 
 
-def read_drypipe_log_last_step(file):
+def read_drypipe_log_last_step(file, max_line_count):
     # logged by the TimeLogger of each step, see TaskProcess._run_steps
-    return read_last_step_lines(file, lambda line: "START_TIMER_FOR:STEP-" in line, 100)
+    return read_last_step_lines(file, lambda line: "START_TIMER_FOR:STEP-" in line, max_line_count)
 
 
 def current_stack_as_string():

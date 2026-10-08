@@ -70,7 +70,7 @@ class TestReadLastStepLines(unittest.TestCase):
             "================ t1: step-1.sh ====================\n"
             "ok\n"
         )
-        self.assertEqual(read_out_log_last_step(out_log), b"================ t1: step-1.sh ====================\nok\n")
+        self.assertEqual(read_out_log_last_step(out_log, 1000), b"================ t1: step-1.sh ====================\nok\n")
 
     def test_restart_banner_is_not_a_step_start(self):
         out_log = self._out_log(
@@ -78,7 +78,7 @@ class TestReadLastStepLines(unittest.TestCase):
             "Error: old\n"
             "\n================ step 1 restarted after failure =====================\n\n"
         )
-        self.assertTrue(read_out_log_last_step(out_log).startswith(b"================ t1: step-1.sh"))
+        self.assertTrue(read_out_log_last_step(out_log, 1000).startswith(b"================ t1: step-1.sh"))
 
     def test_drypipe_log_last_step_starts_at_its_timer(self):
         drypipe_log = self._out_log(
@@ -88,7 +88,7 @@ class TestReadLastStepLines(unittest.TestCase):
             "2026-10-07 INFO killed\n"
         )
         self.assertEqual(
-            read_drypipe_log_last_step(drypipe_log),
+            read_drypipe_log_last_step(drypipe_log, 100),
             b"2026-10-07 INFO START_TIMER_FOR:STEP-1\n2026-10-07 INFO killed\n"
         )
 

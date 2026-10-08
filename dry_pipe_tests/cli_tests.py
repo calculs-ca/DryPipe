@@ -1603,8 +1603,8 @@ class CliAnalyzeLogsTests(BasePipelineTest):
         self.assertIn("````text\nt08 says hi\nIndexError: list index out of range | row 3\n```\n````\n", md)
 
     def test_signatures_ignore_errors_before_the_classified_lines(self):
-        # without a step banner, only the last 2000 lines are classified
-        progress = "".join(f"{i}% done\n" for i in range(2000))
+        # without a step banner, only the last 1000 lines are classified
+        progress = "".join(f"{i}% done\n" for i in range(1000))
         analysis_dir = self._analyze_logs(out_log_of_t03=f"connection failed, retrying\n{progress}")
 
         self.assertEqual(self.signatures_table(Path(analysis_dir, 'timed-out.1-1.md'))[6:-1], [

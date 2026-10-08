@@ -957,7 +957,7 @@ class Cli:
             parser.add_argument(
                 "--lean",
                 help='produces smaller database (or tsv) by storing out.log and drypipe.log of only non completed tasks, the last step of out.log '
-                     '(its banner and at most its last 2000 lines), and of drypipe.log (at most its last 100 lines). '
+                     '(its banner and at most its last 1000 lines), and of drypipe.log (at most its last 100 lines). '
                      'WARNING: the logs of completed tasks are not read, the classifier (see --log-classifier) sees them as missing, '
                      'the default classifier gives them the signature "<no out.log>". '
                      'A --log-classifier can change what is read and stored, see reads_logs, extract_out_log and '

@@ -170,12 +170,12 @@ class TaskClassifyContext:
         return self._logs_readable and self._drypipe_log_file.exists()
 
     def out_log_last_step_extract(self):
-        """the out.log lines of the last step, at most 2000"""
-        return read_out_log_last_step(self._out_log_file).decode(errors="replace") if self.has_out_log() else None
+        """the out.log lines of the last step, at most 1000"""
+        return read_out_log_last_step(self._out_log_file, 1000).decode(errors="replace") if self.has_out_log() else None
 
     def drypipe_log_last_step_extract(self):
         """the drypipe.log lines of the last step, at most 100"""
-        return read_drypipe_log_last_step(self._drypipe_log_file).decode(errors="replace") if self.has_drypipe_log() else None
+        return read_drypipe_log_last_step(self._drypipe_log_file, 100).decode(errors="replace") if self.has_drypipe_log() else None
 
     def full_out_log(self):
         return self._out_log_file.read_bytes().decode(errors="replace") if self.has_out_log() else None
