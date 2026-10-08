@@ -277,7 +277,12 @@ def _signature_numbers(text, signature_count):
     return numbers
 
 
-def _load_filter_from_keys(spec):
+def _load_filter_from_keys(specs):
+    """the union of the keys of the files of each --filter-from"""
+    return set().union(*(_load_keys_of_filter_file(spec) for spec in specs))
+
+
+def _load_keys_of_filter_file(spec):
     """
     an analyze-logs file: "failed.2-5.md" for all its tasks, "failed.2-5.md:1,3" for the tasks of signatures 1 and 3,
     else a file of keys (see _load_task_keys)
@@ -622,7 +627,10 @@ class Cli:
                 '--filter-from',
                 help="file of task keys, one per line (first column of a tsv), ex: written by extract-keys. "
                      "Or a markdown file written by analyze-logs: --filter-from=failed.2-5.md selects all its tasks, "
-                     "--filter-from=failed.2-5.md:1,3 the tasks of its signatures 1 and 3",
+                     "--filter-from=failed.2-5.md:1,3 the tasks of its signatures 1 and 3. "
+                     "Can be repeated to select the union of the tasks of several files: "
+                     "--filter-from=failed.2-5.md:1 --filter-from=failed.3-7.md",
+                action='append',
                 default=None
             )
 

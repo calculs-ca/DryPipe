@@ -14,7 +14,7 @@ import unittest.mock
 from pathlib import Path
 
 from dry_pipe import DryPipe, TaskConf
-from dry_pipe.cli import Cli, _load_filter_from_keys, _signature_numbers
+from dry_pipe.cli import Cli, _load_filter_from_keys, _load_keys_of_filter_file, _signature_numbers
 from dry_pipe.core_lib import UpstreamTasksNotCompleted
 from dry_pipe.pipeline import Pipeline
 from dry_pipe.task_classifier import lazy_task_inputs_outputs
@@ -636,25 +636,31 @@ ValueError: bad | value 2
 
     def test_key_file(self):
         f = self.write("keys.tsv", "t1\tignored column\n\n  t2  \nt3\n")
-        self.assertEqual(_load_filter_from_keys(str(f)), {"t1", "t2", "t3"})
+        self.assertEqual(_load_keys_of_filter_file(str(f)), {"t1", "t2", "t3"})
 
     def test_whole_analysis_file(self):
         f = self.write("failed.0-3.md", self.analysis_file)
         # t99 is in a fenced tail, it's not a task of the file
-        self.assertEqual(_load_filter_from_keys(str(f)), {"t1", "t2", "t3"})
+        self.assertEqual(_load_keys_of_filter_file(str(f)), {"t1", "t2", "t3"})
 
     def test_signatures_of_analysis_file(self):
         f = self.write("failed.0-3.md", self.analysis_file)
-        self.assertEqual(_load_filter_from_keys(f"{f}:1"), {"t1", "t3"})
-        self.assertEqual(_load_filter_from_keys(f"{f}:2"), {"t2"})
-        self.assertEqual(_load_filter_from_keys(f"{f}:2, 1"), {"t1", "t2", "t3"})
+        self.assertEqual(_load_keys_of_filter_file(f"{f}:1"), {"t1", "t3"})
+        self.assertEqual(_load_keys_of_filter_file(f"{f}:2"), {"t2"})
+        self.assertEqual(_load_keys_of_filter_file(f"{f}:2, 1"), {"t1", "t2", "t3"})
+
+    def test_several_files(self):
+        md = self.write("failed.0-3.md", self.analysis_file)
+        keys = self.write("keys.tsv", "t7\nt8\n")
+        self.assertEqual(_load_filter_from_keys([f"{md}:2", f"{md}:1"]), {"t1", "t2", "t3"})
+        self.assertEqual(_load_filter_from_keys([f"{md}:2", str(keys)]), {"t2", "t7", "t8"})
 
     def test_invalid_signature_numbers(self):
         f = self.write("failed.0-3.md", self.analysis_file)
         for numbers in ["3", "0", "1,x", ""]:
             with self.subTest(numbers):
                 with self.assertRaises(Exception):
-                    _load_filter_from_keys(f"{f}:{numbers}")
+                    _load_keys_of_filter_file(f"{f}:{numbers}")
 
     def test_signature_numbers(self):
         self.assertEqual(_signature_numbers("1, 3,3\n", 3), {1, 3})
@@ -664,7 +670,7 @@ ValueError: bad | value 2
     def test_key_with_spaces(self):
         f = self.write("keys.tsv", "t1\nt 2\tignored column\n")
         with self.assertRaisesRegex(Exception, r"keys.tsv:2: task keys can't contain spaces, got 't 2'"):
-            _load_filter_from_keys(str(f))
+            _load_keys_of_filter_file(str(f))
 
     def test_analysis_file_with_keys_column(self):
         f = self.write("failed.0-3.md", self.analysis_file.replace(
@@ -673,7 +679,7 @@ ValueError: bad | value 2
             "| # | tasks | signature | keys |\n|---:|---:|---|---|\n"
             "| 1 | 2 | `ValueError: bad \\| value <n>` | t1 t3 |\n| 2 | 1 | `KeyError: <str>` | t2 |"
         ))
-        self.assertEqual(_load_filter_from_keys(f"{f}:2"), {"t2"})
+        self.assertEqual(_load_keys_of_filter_file(f"{f}:2"), {"t2"})
 
     def test_malformed_analysis_files(self):
         table = "| # | tasks | signature |\n|---:|---:|---|\n"
@@ -692,13 +698,13 @@ ValueError: bad | value 2
                 f = self.write("failed.0-3.md", self.analysis_file.replace(old, new))
                 for spec in [str(f), f"{f}:1"]:
                     with self.assertRaisesRegex(Exception, error):
-                        _load_filter_from_keys(spec)
+                        _load_keys_of_filter_file(spec)
 
     def test_missing_file(self):
         for spec in ["no-such-keys.txt", "no-such-analysis.md", "no-such-analysis.md:1"]:
             with self.subTest(spec):
                 with self.assertRaises(FileNotFoundError):
-                    _load_filter_from_keys(spec)
+                    _load_keys_of_filter_file(spec)
 
 
 class CliFuncFilterTests(BasePipelineTest):
@@ -1722,6 +1728,18 @@ class CliAnalyzeLogsTests(BasePipelineTest):
         with self.assertRaisesRegex(Exception, "valid numbers are 1 to 3"):
             self._list_keys_filtered_from(analysis_dir, f"{md}:4")
 
+
+    def test_repeated_filter_from_is_a_union(self):
+        analysis_dir = self._analyze_logs()
+        md = Path(analysis_dir, 'failed.2-5.md')
+
+        self.assertEqual(
+            sorted(Cli.invoke_and_iterate_lines(
+                'list-keys', f'--pipeline-instance-dir={analysis_dir.parent}', f'--generator={self.generator}',
+                f'--filter-from={md}:2', f'--filter-from={md}:3', test_mode=True
+            )),
+            ['t07', 't08']
+        )
 
     def test_filter_from_intersects_with_other_filters(self):
         analysis_dir = self._analyze_logs()
