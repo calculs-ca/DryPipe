@@ -606,7 +606,7 @@ class FilterFromTests(unittest.TestCase):
 
 ### 1. t1 (signature 1)
 
-tail -50 .drypipe/t1/out.log
+last step of .drypipe/t1/out.log
 
 ````text
 ### 9. t99 (signature 1)
@@ -621,7 +621,7 @@ no out.log
 
 ### 3. t3 (signature 1)
 
-tail -50 .drypipe/t3/out.log
+last step of .drypipe/t3/out.log
 
 ```text
 ValueError: bad | value 2
@@ -1597,7 +1597,7 @@ class CliAnalyzeLogsTests(BasePipelineTest):
 
         self.assertIn(
             "### 1. t04 (signature 1)\n\n"
-            "tail -50 .drypipe/t04/out.log\n\n"
+            "last step of .drypipe/t04/out.log\n\n"
             "```text\n"
             "t04 says hi\n"
             "ValueError: bad mass 12.5 in /data/t04/a.mgf\n"

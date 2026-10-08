@@ -28,7 +28,7 @@ from os import environ
 from pathlib import Path
 
 from dry_pipe import PortablePopen, DryPipe
-from dry_pipe.core_lib import func_from_mod_func, is_inside_slurm_job, create_instance_logger, read_last_lines
+from dry_pipe.core_lib import func_from_mod_func, is_inside_slurm_job, create_instance_logger
 from dry_pipe.frozen_dag_generator import FrozenDAGGenerator
 from dry_pipe.task_classifier import TaskClassifier, TaskClassifyContext
 from dry_pipe.pipeline_instance import Monitor, PipelineInstance
@@ -1200,12 +1200,12 @@ class Cli:
                      "was given (failed, timed-out, killed, crashed). --all-tasks analyzes all tasks that match the filters"
             )
 
-        yield Command('analyze-logs', tail_n, generator_optional, fs_generator, pipeline_instance_dir, analyze_logs_dir, log_classifier, full, all_tasks, *all_filters(),
+        yield Command('analyze-logs', generator_optional, fs_generator, pipeline_instance_dir, analyze_logs_dir, log_classifier, full, all_tasks, *all_filters(),
                       help="writes one markdown file per (state, step) of matching tasks, named <state>.<step>-<N>.md "
                            "where N is the number of tasks in the file (ex: failed.3-12.md), <state>-<N>.md "
                            "when the task has no step. Only tasks that ended without completing are analyzed, as if "
                            "--filter-unhealthy was given, other filters narrow the selection further, see --all-tasks. Each file starts with a table that groups its tasks by error "
-                           "signature, followed by the tail of each task's out.log. The signature of a task is its last "
+                           "signature, followed by the last step of each task's out.log. The signature of a task is its last "
                            "error line in the last step of out.log, with variable parts (paths, numbers, quoted strings, etc) masked, "
                            "see dry_pipe/task_classifier.py and --log-classifier")
 
@@ -2504,15 +2504,6 @@ class Cli:
             )
         return classifier.compile() if hasattr(classifier, "compile") else classifier
 
-    def _out_log(self, key):
-        return Path(self.parsed_args.pipeline_instance_dir, ".drypipe", key, "out.log")
-
-    @staticmethod
-    def _last_lines(out_log, n):
-        text = read_last_lines(out_log, n).decode(errors="replace")
-        # the newlines of a file read in text mode
-        return text.replace("\r\n", "\n").replace("\r", "\n")
-
     def _classify_context(self, key, state, step, classifier, is_lean):
         return TaskClassifyContext(
             Path(self.parsed_args.pipeline_instance_dir, ".drypipe", key), classifier.reads_logs(key, state, step, is_lean)
@@ -2595,13 +2586,14 @@ class Cli:
         print("## Tails\n", file=file)
         for i, key in enumerate(keys, start=1):
             print(f"### {i}. {key} (signature {signature_number_of_key[key]})\n", file=file)
-            out_log = self._out_log(key)
-            if not out_log.exists():
+            text = TaskClassifyContext(Path(self.parsed_args.pipeline_instance_dir, ".drypipe", key)).out_log_last_step_extract()
+            if text is None:
                 print("no out.log\n", file=file)
                 continue
-            text = self._last_lines(out_log, self.parsed_args.n)
+            # the newlines of a file read in text mode
+            text = text.replace("\r\n", "\n").replace("\r", "\n")
             fence = code_fence(text)
-            print(f"tail -{self.parsed_args.n} .drypipe/{key}/out.log\n", file=file)
+            print(f"last step of .drypipe/{key}/out.log\n", file=file)
             print(f"{fence}text\n{text.rstrip()}\n{fence}\n", file=file)
 
     def complain_if_no_generator(self, msg):
