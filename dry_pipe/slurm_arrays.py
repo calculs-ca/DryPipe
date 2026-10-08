@@ -277,9 +277,10 @@ class SequenceOfFiles:
 
 class SlurmArrayBatchSubmit:
 
-    def __init__(self, array_task_manager, pre_submit_func, sbatch_command, post_submit_func, task_keys):
+    def __init__(self, array_task_manager, pre_submit_func, sbatch_command, post_submit_func, task_keys, sbatch_options):
         self.array_task_manager = array_task_manager
         self.sbatch_command = sbatch_command
+        self.sbatch_options = sbatch_options
         self.pre_submit_func = pre_submit_func
         self.post_submit_func = post_submit_func
         self.task_keys = task_keys
@@ -503,7 +504,24 @@ class ArrayTaskManager:
         else:
             return f"%{self.slurm_max_jobs}"
 
-    def prepare_sbatch_command(self, task_key_file, array_size, sbatch_options):
+    def resolved_sbatch_options(self, sbatch_options):
+        a = self.array_task_conf().slurm_account
+        if a is not None:
+            yield f"--account={a}"
+
+        for o in sbatch_options:
+            if self.task_process.tasks_per_job is None:
+                yield o
+            elif not o.startswith("--time="):
+                yield o
+            else:
+                _, t = o.split("=")
+                slurm_time = SlurmTime(t)
+                scaled_time = slurm_time * self.task_process.tasks_per_job
+                self.logger().info(f"packed array, walltime is {self.task_process.tasks_per_job} times longer, {slurm_time} becomes: {scaled_time}")
+                yield f"--time={scaled_time}"
+
+    def prepare_sbatch_command(self, task_key_file, array_size, resolved_sbatch_options):
 
         if array_size == 0:
             raise Exception(f"should not start an empty array")
@@ -515,23 +533,8 @@ class ArrayTaskManager:
         def sbatch_lines():
             yield "sbatch"
             yield f"--array={array_arg}"
-            a = self.array_task_conf().slurm_account
-            if a is not None:
-                yield f"--account={a}"
-
             yield f"--output={self.array_task_control_dir()}/launch-%A_%a.out"
-
-            for o in sbatch_options:
-                if self.task_process.tasks_per_job is None:
-                    yield o
-                elif not o.startswith("--time="):
-                    yield o
-                else:
-                    _, t = o.split("=")
-                    slurm_time = SlurmTime(t)
-                    scaled_time = slurm_time * self.task_process.tasks_per_job
-                    self.logger().info(f"packed array, walltime is {self.task_process.tasks_per_job} times longer, {slurm_time} becomes: {scaled_time}")
-                    yield f"--time={scaled_time}"
+            yield from resolved_sbatch_options
 
             def gen_env():
                 yield f"DRYPIPE_TASK_CONTROL_DIR={self.array_task_control_dir()}"
@@ -778,8 +781,10 @@ class ArrayTaskManager:
                     array_size = math.ceil(tasks_in_batch / self.task_process.tasks_per_job)
                     
 
+                resolved_sbatch_options = list(self.resolved_sbatch_options(sbatch_options))
+
                 command_args = self.prepare_sbatch_command(
-                    next_task_key_file, array_size, sbatch_options
+                    next_task_key_file, array_size, resolved_sbatch_options
                 )
 
                 def post_submit_func(job_id):
@@ -790,7 +795,7 @@ class ArrayTaskManager:
                             print(" ".join(command_args), file=f)
                             print(submitted_by, file=f)
 
-                yield SlurmArrayBatchSubmit(self, pre_submit_func, command_args, post_submit_func, task_keys)
+                yield SlurmArrayBatchSubmit(self, pre_submit_func, command_args, post_submit_func, task_keys, resolved_sbatch_options)
 
         return list(g())
 

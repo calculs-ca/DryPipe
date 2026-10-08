@@ -1778,11 +1778,17 @@ class Cli:
         def is_confirmed():
             """each submit writes its task keys in an array.<n>.tsv file, and submits it as one slurm array"""
             for submit in submits:
-                print(f"Will submit slurm array with {len(submit.task_keys)} tasks", file=sys.stderr)
+                print(f"Will submit slurm array with {len(submit.task_keys)} tasks, sbatch options:", file=sys.stderr)
+                for o in submit.sbatch_options:
+                    print(f"  {o}", file=sys.stderr)
             print("submit ? [y/N] ", end="", file=sys.stderr, flush=True)
             return sys.stdin.readline().strip().lower() in ("y", "yes")
 
-        needs_confirmation = len(submits) > 0 and not self.parsed_args.yes and not self.parsed_args.dry_run
+        if len(submits) == 0:
+            print("warning: no tasks to submit, the array is empty", file=sys.stderr)
+            return
+
+        needs_confirmation = not self.parsed_args.yes and not self.parsed_args.dry_run
         if needs_confirmation and not is_confirmed():
             print("nothing submitted", file=sys.stderr)
             return
