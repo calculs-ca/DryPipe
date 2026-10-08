@@ -5,6 +5,7 @@ import subprocess
 import re
 import time
 import traceback
+from datetime import datetime
 from logging.handlers import RotatingFileHandler
 
 
@@ -368,16 +369,22 @@ def reversed_lines(file):
             yield partial_line
 
 
-def is_banner(line):
-    """
-    written to out.log before each step (see TaskProcess.dump_function_call_in_stdout), and before a restart
-    after failure. Meant for humans, a more distinctive marker is a TODO
-    """
-    return re.match(r"={16} .+ ={20,}\s*$", line) is not None
+def step_banner(step_number, job_id, description):
+    """written to out.log and drypipe.log when a step starts, see TaskProcess._run_steps"""
+    at = datetime.now().astimezone().isoformat(timespec="seconds")
+    return f"#>drypipe:step-start step={step_number} job={job_id} at={at} | {description}"
 
 
 def is_step_banner(line):
-    return is_banner(line) and re.match(r"={16} step \d+ restarted after failure ", line) is None
+    """
+    an old step banner is the one written before step_banner existed, it can follow output with no trailing
+    newline. The old "step N restarted after failure" line, written in the same style, is not a step banner
+    """
+    def is_old_step_banner():
+        return re.search(r"={16} .+ ={20,}\s*$", line) is not None and \
+            re.search(r"={16} step \d+ restarted after failure ", line) is None
+
+    return line.startswith("#>drypipe:step-start ") or is_old_step_banner()
 
 
 def read_last_step_lines(file, is_step_start, max_line_count):
@@ -404,8 +411,10 @@ def read_out_log_last_step(file, max_line_count):
 
 
 def read_drypipe_log_last_step(file, max_line_count):
-    # logged by the TimeLogger of each step, see TaskProcess._run_steps
-    return read_last_step_lines(file, lambda line: "START_TIMER_FOR:STEP-" in line, max_line_count)
+    # START_TIMER_FOR is logged by the TimeLogger of each step, before step_banner existed
+    return read_last_step_lines(
+        file, lambda line: "#>drypipe:step-start " in line or "START_TIMER_FOR:STEP-" in line, max_line_count
+    )
 
 
 def current_stack_as_string():

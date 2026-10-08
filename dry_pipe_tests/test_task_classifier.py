@@ -103,9 +103,17 @@ Search progress: 0%\b\b\b  1%\b\b\b  2%\b\b\b
     def test_banners_are_not_error_lines(self):
         log = (
             "================ t1: /pipeline/fail-safe-script.sh ====================\n"
-            "\n================ step 1 restarted after failure =====================\n\n"
+            "\n#>drypipe:step-start step=1 job=1 at=x | bash /pipeline/fail-safe-script.sh\n"
         )
         self.assertEqual(self.signature(log), "<no error line>")
+
+    def test_old_restart_line_is_not_the_error_line(self):
+        log = (
+            "================ t1: /pipeline/step-1.sh ====================\n"
+            "java.io.IOException: No space left on device\n"
+            "\n================ step 1 restarted after failure =====================\n\n"
+        )
+        self.assertEqual(self.signature(log), "java.io.IOException: No space left on device")
 
     def test_augmented_lists(self):
         classifier = TaskClassifier()

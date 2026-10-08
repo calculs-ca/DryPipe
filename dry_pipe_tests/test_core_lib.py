@@ -6,7 +6,7 @@ from pathlib import Path
 
 from base_pipeline_test import TestWithDirectorySandbox
 from dry_pipe.core_lib import expandvars_from_dict, read_last_step_lines, reversed_lines, is_step_banner, \
-    read_out_log_last_step, read_drypipe_log_last_step
+    read_out_log_last_step, read_drypipe_log_last_step, step_banner
 from dry_pipe import AutoRestartManager
 from test_utils import TestSandboxDir, DummyLogger
 
@@ -72,13 +72,46 @@ class TestReadLastStepLines(unittest.TestCase):
         )
         self.assertEqual(read_out_log_last_step(out_log, 1000), b"================ t1: step-1.sh ====================\nok\n")
 
-    def test_restart_banner_is_not_a_step_start(self):
+    def test_old_banner_after_output_without_newline(self):
         out_log = self._out_log(
             "================ t1: step-1.sh ====================\n"
-            "Error: old\n"
-            "\n================ step 1 restarted after failure =====================\n\n"
+            "10% 20%================ t1: step-1.sh ====================\n"
+            "ok\n"
         )
-        self.assertTrue(read_out_log_last_step(out_log, 1000).startswith(b"================ t1: step-1.sh"))
+        self.assertEqual(read_out_log_last_step(out_log, 1000), b"10% 20%================ t1: step-1.sh ====================\nok\n")
+
+    def test_last_step_starts_at_its_step_banner(self):
+        out_log = self._out_log(
+            "\n" + step_banner(1, "123", "bash step-1.sh") + "\n"
+            "Error: old\n"
+            "\n" + step_banner(1, "124", "bash step-1.sh") + "\n"
+            "ok\n"
+        )
+        last_step = read_out_log_last_step(out_log, 1000).decode()
+        self.assertTrue(last_step.startswith("#>drypipe:step-start step=1 job=124 at="))
+        self.assertTrue(last_step.endswith(" | bash step-1.sh\nok\n"))
+
+    def test_old_and_new_banners_in_same_log(self):
+        out_log = self._out_log(
+            "\n" + step_banner(1, "123", "bash step-1.sh") + "\n"
+            "Error: old\n"
+            "================ t1: step-1.sh ====================\n"
+            "ok\n"
+        )
+        self.assertEqual(read_out_log_last_step(out_log, 1000), b"================ t1: step-1.sh ====================\nok\n")
+
+    def test_drypipe_log_last_step_starts_at_its_step_banner(self):
+        drypipe_log = self._out_log(
+            "2026-10-07 INFO START_TIMER_FOR:STEP-0\n"
+            "2026-10-07 INFO #>drypipe:step-start step=0 job=1 at=x | bash s.sh\n"
+            "2026-10-07 INFO START_TIMER_FOR:STEP-1\n"
+            "2026-10-07 INFO #>drypipe:step-start step=1 job=1 at=x | bash s.sh\n"
+            "2026-10-07 INFO killed\n"
+        )
+        self.assertEqual(
+            read_drypipe_log_last_step(drypipe_log, 100),
+            b"2026-10-07 INFO #>drypipe:step-start step=1 job=1 at=x | bash s.sh\n2026-10-07 INFO killed\n"
+        )
 
     def test_drypipe_log_last_step_starts_at_its_timer(self):
         drypipe_log = self._out_log(

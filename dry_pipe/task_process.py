@@ -17,7 +17,7 @@ from threading import Thread
 from dry_pipe.slurm_arrays import ArrayTaskManager, SAcctParser, SQueueParser
 from dry_pipe import TaskConf, RemotePipelineSpecs, AutoRestartManager
 from dry_pipe.core_lib import UpstreamTasksNotCompleted, PortablePopen, func_from_mod_func, invoke_rsync, \
-    FileCreationDefaultModes, expandvars_from_dict, TimeLogger
+    FileCreationDefaultModes, expandvars_from_dict, TimeLogger, step_banner
 
 from dry_pipe.task import TaskOutput, TaskInputs, TaskOutputs, TaskInput
 
@@ -502,9 +502,13 @@ class TaskProcess:
         else:
             return None
 
-    def dump_function_call_in_stdout(self, func_log):
+    def write_step_banner(self, step_number, description):
+        job_id = self.slurm_job_id or f"pid-{os.getpid()}"
+        banner = step_banner(step_number, job_id, description)
+        # the leading newline starts the banner on its own line, even when the step's output has no trailing newline
         with open(os.path.join(self.control_dir, "out.log"), mode="a") as out:
-            out.write(f"================ {func_log} ====================\n")
+            out.write(f"\n{banner}\n")
+        self.task_logger.info(banner)
 
     def cleanup_slurm_tmp_dir(self):        
         i = list(self.slurm_tmp_dir.iterdir())
@@ -609,8 +613,6 @@ class TaskProcess:
         func_log = f"{mod_func}({','.join(map(str, args))},{kwargs})"
         log_msg = f"will invoke PythonCall: {func_log}"
         self.task_logger.info(log_msg)
-
-        self.dump_function_call_in_stdout(func_log)
 
         try:
             out_vars = python_call.func(* args, ** kwargs)
@@ -1021,8 +1023,7 @@ class TaskProcess:
     def transition_to_step_started(self, state_file, step_number, previous_state_name=None, is_pre_launch=False):
 
         if previous_state_name == "failed":
-            with open(self.env['__out_log'], 'a') as out:
-                out.write(f"\n================ step {step_number} restarted after failure =====================\n\n")
+            self.task_logger.info("step %s restarted after failure", step_number)
 
 
         pre_launch_flag = "_" if is_pre_launch else ""
@@ -1225,8 +1226,6 @@ class TaskProcess:
         self._set_apptainer_bind_in_env(env)
 
         self.task_logger.info("run_script: %s", " ".join(cmd))
-
-        self.dump_function_call_in_stdout(f"{self.task_key}: {script}")
 
         has_failed = False
         try:
@@ -1458,6 +1457,8 @@ class TaskProcess:
 
                 self.step_timer = self.create_time_logger(f"STEP-{i}", self.task_logger.info)
                 with self.step_timer:
+                    description = step_invocation["module_function"] if call == "python" else step_invocation.get("script")
+                    self.write_step_banner(i, f"{call} {description}")
                     if call == "python":
                         module_function = step_invocation["module_function"]
                         self.task_logger.debug("step %s, %s %s", i, call, module_function)

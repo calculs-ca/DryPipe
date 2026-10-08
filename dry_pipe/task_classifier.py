@@ -5,7 +5,7 @@ import re
 from pathlib import Path
 
 from dry_pipe import TaskConf
-from dry_pipe.core_lib import is_banner, read_out_log_last_step, read_drypipe_log_last_step
+from dry_pipe.core_lib import is_step_banner, read_out_log_last_step, read_drypipe_log_last_step
 from dry_pipe.reports import parse_timers_in_log
 from dry_pipe.task_process import resolve_inputs_outputs
 
@@ -51,6 +51,7 @@ class TaskClassifier:
             r"\b0 (errors?|failures?|failed)\b",
             r"\b(errors?|failures?|failed)\s*[:=]\s*0\b",
             r"\bno errors?\b",
+            r"^={16} step \d+ restarted after failure ",        # written to out.log before step_banner existed
         ] if noise_lines is None else list(noise_lines)
 
         day = r"(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)[a-z]*"
@@ -121,7 +122,7 @@ class TaskClassifier:
         if out_log is None:
             return "<no out.log>"
 
-        lines = [l for l in out_log.splitlines() if l.strip() and not is_banner(l)]
+        lines = [l for l in out_log.splitlines() if l.strip() and not is_step_banner(l)]
 
         error_line = next((l for l in reversed(lines) if self.is_error_line(l)), None)
         if error_line is not None:
