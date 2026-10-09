@@ -1356,6 +1356,15 @@ class ArraySummarySubmitFiltersTests(unittest.TestCase):
             "'--filter=t0*' '--py-filter=lambda k, s, st: True' --filter-failed"
         )
 
+    def test_many_filter_from(self):
+        self.assertEqual(
+            self.filters(
+                "sbatch --array=0-2",
+                "/bin/drypipe array-submit -pid=/p -k=ap --filter-from=f1/failed.2-887.md:2 --filter-from=keys.txt"
+            ),
+            "--filter-from=f1/failed.2-887.md:2 --filter-from=keys.txt"
+        )
+
     def test_job_file_without_submit_command(self):
         self.assertEqual(self.filters("sbatch --array=0-2", "", "BATCH_ENDED"), "")
 

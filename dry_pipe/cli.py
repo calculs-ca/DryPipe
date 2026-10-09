@@ -2085,7 +2085,12 @@ class Cli:
                 value = getattr(submit_args, dest, None)
                 if value != subparser.get_default(dest):
                     option = "--" + dest.replace("_", "-")
-                    yield option if value is True else f"{option}={value}"
+                    if value is True:
+                        yield option
+                    elif isinstance(value, list):
+                        yield from (f"{option}={v}" for v in value)
+                    else:
+                        yield f"{option}={value}"
 
         return shlex.join(given_filters())
 
