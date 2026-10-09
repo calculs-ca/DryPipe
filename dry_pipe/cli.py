@@ -590,7 +590,7 @@ class Cli:
 
         def limit(parser):
             parser.add_argument(
-                '--limit', type=int, help='limit submitted array size to N tasks', metavar='N'
+                '--limit', type=int, help='limit selected tasks to N', metavar='N'
             )
 
         def by_runner(parser):
@@ -949,7 +949,9 @@ class Cli:
                         raise Exception(f"arg {a.__name__}  on command {name} failed with exception {e}")
 
         def all_filters():
-            return [filter, filter_from, py_filter, func_filter, filter_completed, filter_not_completed, filter_failed, filter_unhealthy, filter_timed_out, filter_ready]
+            return [filter, filter_from, py_filter, func_filter, filter_completed, filter_not_completed, 
+                    filter_failed, filter_unhealthy, filter_timed_out, filter_ready,
+                    limit]
 
         # argparse dests of the filter options, their functions are named after them
         self.filter_dests = [f.__name__ for f in all_filters()]
@@ -1181,7 +1183,7 @@ class Cli:
             )
 
         yield Command('array-submit',
-                      task_key, limit, regen, generator_optional, tail, wait, include_all_incompleted_tasks,
+                      task_key, regen, generator_optional, tail, wait, include_all_incompleted_tasks,
                       sbatch_options, reset, tasks_per_job, slurm_max_jobs, stop_after_step, yes, *all_filters(),
                       help="submit array, after a confirmation (see --yes)")
 
@@ -2813,9 +2815,13 @@ class Cli:
                     return False
             return True
 
-        for task, state_file in dag.iterate_key_state_steps(key_universe):
-            if accept(*state_file.key_state_step()):
-                yield task, state_file
+        accepted = (
+            (task, state_file)
+            for task, state_file in dag.iterate_key_state_steps(key_universe)
+            if accept(*state_file.key_state_step())
+        )
+
+        yield from itertools.islice(accepted, self.parsed_args.limit)
 
     def _resolve_against_generator_module(self, reference, option_name):
         """a bare function name (no module, i.e. no ":") is looked up in the --generator module"""
@@ -2868,7 +2874,10 @@ class Cli:
 
         if self.parsed_args.filter_unhealthy:
             return True
-        
+
+        if self.parsed_args.limit is not None:
+            return True
+
         return False
 
 
