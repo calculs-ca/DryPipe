@@ -46,6 +46,45 @@ logger = logging.getLogger(__name__)
 # squeue can block for a long time when slurmctld is backed up, don't let array-summary hang on it
 SQUEUE_TIMEOUT_SECS = 30
 
+
+class CliUserError(Exception):
+    """A failure caused by the user's input or environment: the message is enough, no stack trace"""
+    explainer = None
+
+
+class CliUsageError(CliUserError):
+    """Invalid options detected after argparse parsing, reported like argparse reports its own errors"""
+
+
+class InvalidTaskSet(CliUserError):
+    explainer = (
+        "The task set file (--task-set, DRYPIPE_TASK_SET, or <pipeline-instance-dir>/drypipe-task-set.rules) "
+        "has one rule per line: '- <glob>', '+ <glob>', '- @<file>' or '+ @<file>', see --task-set in --help"
+    )
+
+
+class NotAnAnalyzeLogsFile(CliUserError):
+    explainer = "Expected a markdown file written by 'drypipe analyze-logs'"
+
+
+class InvalidFuncFilter(CliUserError):
+    explainer = (
+        "--func-filter takes \"module:factory(args...)\", where args are python literals, "
+        "and factory returns a filter function(key, state_name, step) -> bool, see --func-filter in --help"
+    )
+
+
+class NotASlurmArray(CliUserError):
+    explainer = "This command only applies to tasks that are slurm array parents"
+
+
+class InvalidPrimaryGroup(CliUserError):
+    explainer = (
+        "When DRYPIPE_PRIMARY_GROUP is set, drypipe must run with it as primary group, "
+        "so that the files it creates are shared with the group's members"
+    )
+
+
 def call(mod_func):
 
     python_task = func_from_mod_func(mod_func)
@@ -69,7 +108,7 @@ def init_logging(logging_conf, verbose=False):
     if logging_conf is not None:
 
         if not Path(logging_conf).exists():
-            raise Exception(f"logging config file '{logging_conf}' refered by env var LOGGING_CONF does not exist")
+            raise CliUserError(f"logging config file '{logging_conf}' refered by env var LOGGING_CONF does not exist")
 
         with open(logging_conf, "r") as f:
             log_conf_json = json.load(f)
@@ -81,7 +120,7 @@ def init_logging(logging_conf, verbose=False):
                 if handler_class == "logging.FileHandler":
                     filename = handler.get("filename")
                     if filename is None or filename == "":
-                        raise Exception(f"logging.FileHandler '{k}' has no filename attribute in {logging_conf}")
+                        raise CliUserError(f"logging.FileHandler '{k}' has no filename attribute in {logging_conf}")
                     if "$" in filename:
                         filename = os.path.expandvars(filename)
                         handler["filename"] = os.path.expandvars(filename)
@@ -176,7 +215,7 @@ def _load_task_keys(file):
     def key(line_number, line):
         k = line.split("\t")[0].strip()
         if re.search(r"\s", k):
-            raise Exception(f"{file}:{line_number}: task keys can't contain spaces, got '{k}'")
+            raise InvalidTaskSet(f"{file}:{line_number}: task keys can't contain spaces, got '{k}'")
         return k
 
     with open(file) as f:
@@ -192,7 +231,7 @@ class TaskSet:
         def parse_rule(line_number, line):
             rule = re.fullmatch(r"([+-])\s+(\S+)", line)
             if rule is None:
-                raise Exception(
+                raise InvalidTaskSet(
                     f"{rules_file}:{line_number}: expected '+ <glob>', '- <glob>', '+ @<file>' or '- @<file>', got '{line}'"
                 )
             sign, pattern = rule.groups()
@@ -200,7 +239,7 @@ class TaskSet:
                 return sign == "+", lambda key: fnmatch.fnmatch(key, pattern), frozenset()
             keys_file = rules_dir / pattern[1:]
             if not keys_file.exists():
-                raise Exception(f"{rules_file}:{line_number}: {keys_file} does not exist")
+                raise InvalidTaskSet(f"{rules_file}:{line_number}: {keys_file} does not exist")
             keys = frozenset(_load_task_keys(keys_file))
             return sign == "+", keys.__contains__, keys
 
@@ -227,17 +266,17 @@ def _signatures_of_analysis_file(path, lines):
 
     header_index = next((i for i, line in enumerate(lines) if line in separator_of_header), None)
     if header_index is None:
-        raise Exception(f"{path}: not an analyze-logs file, it has no error signatures table")
+        raise NotAnAnalyzeLogsFile(f"{path}: not an analyze-logs file, it has no error signatures table")
 
     separator = separator_of_header[lines[header_index]]
     if lines[header_index + 1:header_index + 2] != [separator]:
-        raise Exception(f"{path}:{header_index + 2}: not an analyze-logs file, expected {separator}")
+        raise NotAnAnalyzeLogsFile(f"{path}:{header_index + 2}: not an analyze-logs file, expected {separator}")
 
     rows = itertools.takewhile(lambda l: l.startswith("|"), lines[header_index + 2:])
     for number, row in enumerate(rows, start=1):
         cells = re.fullmatch(rf"\| {number} \| (\d+) \| (`.*`) \|(?: [^|]* \|)?", row)
         if cells is None:
-            raise Exception(
+            raise NotAnAnalyzeLogsFile(
                 f"{path}:{header_index + 2 + number}: not an analyze-logs file, "
                 f"expected | {number} | <task count> | `<signature>` |"
             )
@@ -259,7 +298,7 @@ def _keys_and_signature_numbers_of_analysis_file(path, lines):
         elif line.startswith("### "):
             heading = re.fullmatch(r"### \d+\. (\S+) \(signature (\d+)\)", line)
             if heading is None:
-                raise Exception(
+                raise NotAnAnalyzeLogsFile(
                     f"{path}:{line_number}: not an analyze-logs file, expected ### <i>. <task-key> (signature <n>)"
                 )
             yield heading.group(1), int(heading.group(2))
@@ -270,10 +309,10 @@ def _signature_numbers(text, signature_count):
     try:
         numbers = {int(n) for n in text.split(",")}
     except ValueError:
-        raise Exception(f"expected comma separated signature numbers, got '{text.strip()}'")
+        raise CliUserError(f"expected comma separated signature numbers, got '{text.strip()}'")
     invalid = sorted(n for n in numbers if not 1 <= n <= signature_count)
     if invalid:
-        raise Exception(f"no signature numbered {invalid}, valid numbers are 1 to {signature_count}")
+        raise CliUserError(f"no signature numbered {invalid}, valid numbers are 1 to {signature_count}")
     return numbers
 
 
@@ -315,7 +354,7 @@ def _parse_func_filter_spec(spec):
         return spec.strip(), [], {}
 
     if not spec.rstrip().endswith(")"):
-        raise Exception(
+        raise InvalidFuncFilter(
             f"--func-filter '{spec}' is malformed, expected 'module:func' or \"module:func(args...)\""
         )
 
@@ -325,16 +364,16 @@ def _parse_func_filter_spec(spec):
     try:
         call_node = ast.parse(f"__f__{call_source}", mode="eval").body
     except SyntaxError:
-        raise Exception(f"--func-filter '{spec}' has an invalid argument list")
+        raise InvalidFuncFilter(f"--func-filter '{spec}' has an invalid argument list")
 
     if not isinstance(call_node, ast.Call):
-        raise Exception(f"--func-filter '{spec}' has an invalid argument list")
+        raise InvalidFuncFilter(f"--func-filter '{spec}' has an invalid argument list")
 
     try:
         args = [ast.literal_eval(a) for a in call_node.args]
         kwargs = {kw.arg: ast.literal_eval(kw.value) for kw in call_node.keywords}
     except ValueError:
-        raise Exception(
+        raise InvalidFuncFilter(
             f"--func-filter '{spec}' arguments must be python literals (str, int, ...), not expressions"
         )
 
@@ -387,6 +426,7 @@ class Cli:
         self.is_dp_func = environ.get("__IS_DRYPIPE_DP_FUNC") == "True"
 
         self.parser = argparse.ArgumentParser(
+            prog="drypipe",
             description="DryPipe CLI"
         )
 
@@ -1358,11 +1398,11 @@ class Cli:
         explicit_file = self.parsed_args.task_set
         if explicit_file is not None:
             if not os.path.exists(explicit_file):
-                raise Exception(f"--task-set file {explicit_file} does not exist")
+                raise InvalidTaskSet(f"--task-set file {explicit_file} does not exist")
             return explicit_file
         implicit_file = Path(self.parsed_args.pipeline_instance_dir, "drypipe-task-set.rules")
         if implicit_file.is_symlink() and not implicit_file.exists():
-            raise Exception(f"{implicit_file} is a broken symlink")
+            raise InvalidTaskSet(f"{implicit_file} is a broken symlink")
         if implicit_file.exists():
             return implicit_file
         return None
@@ -1386,8 +1426,8 @@ class Cli:
         generator_mod_func = self.parsed_args.generator
         if generator_mod_func is None:
             if hasattr(self.parsed_args, "fs_generator"):
-                raise Exception(f"--generator or --fs-generator is required")
-            raise Exception(f"--generator is required")
+                raise CliUsageError(f"--generator or --fs-generator is required")
+            raise CliUsageError(f"--generator is required")
 
         generator_func = func_from_mod_func(generator_mod_func)
 
@@ -1417,7 +1457,7 @@ class Cli:
         pipeline.generator_mod_func = generator_mod_func
 
         if self.parsed_args.pipeline_instance_dir is None:
-            raise Exception(
+            raise CliUsageError(
                 f"--pipeline-instance-dir is required, " +
                 "or DRYPIPE_PIPELINE_INSTANCE_DIR environment variable must be set"
             )
@@ -1434,7 +1474,7 @@ class Cli:
                     children_tasks = task.inputs.children_tasks
                     children_tasks.value = [t for t in children_tasks.value if not self._is_ignored(t.key)]
                     if len(children_tasks.value) == 0:
-                        raise Exception(
+                        raise InvalidTaskSet(
                             f"all children tasks of slurm array parent task {task.key} are ignored " +
                             f"by {self.task_set_file}, ignore {task.key} as well"
                         )
@@ -1739,7 +1779,7 @@ class Cli:
         )        
 
         if not self.task_process.is_slurm_array_parent():
-            raise Exception(f"task {self.parsed_args.task_key} is not a slurm array")
+            raise NotASlurmArray(f"task {self.parsed_args.task_key} is not a slurm array")
 
         self.array_task_manager = self.task_process.create_array_task_manager(
             self.parsed_args.slurm_max_jobs, instance_logger=self.instance_logger
@@ -1951,7 +1991,7 @@ class Cli:
         task_process = TaskProcess(self._control_dir(), no_logger=True)
 
         if not task_process.is_slurm_array_parent():
-            raise Exception(f"task {self.parsed_args.task_key} is not a slurm array")
+            raise NotASlurmArray(f"task {self.parsed_args.task_key} is not a slurm array")
 
         return task_process.create_array_task_manager(instance_logger=self.instance_logger)        
 
@@ -2195,7 +2235,7 @@ class Cli:
             m = re.search(r"version (\d+)\.(\d+)\.(\d+)", out)
             version = tuple(int(n) for n in m.groups()) if m else None
             if version is None or version < minimal_version:
-                raise Exception(
+                raise CliUserError(
                     f"rsync requires rsync >= {'.'.join(map(str, minimal_version))}, got: {out.splitlines()[0]}"
                 )
 
@@ -2209,12 +2249,12 @@ class Cli:
             self.parsed_args.tags is not None or getattr(self.parsed_args, "exclude_tags", None) is not None or
             include_drypipe_files != "none"
         ):
-            raise Exception("--exhaustive cannot be combined with --tags, --exclude-tags or --include-drypipe-files")
+            raise CliUsageError("--exhaustive cannot be combined with --tags, --exclude-tags or --include-drypipe-files")
 
         state_files_only = getattr(self.parsed_args, "state_files_only", False)
 
         if state_files_only and (self.parsed_args.tags is not None or include_drypipe_files != "none" or exhaustive):
-            raise Exception("--state-files-only cannot be combined with --tags, --include-drypipe-files or --exhaustive")
+            raise CliUsageError("--state-files-only cannot be combined with --tags, --include-drypipe-files or --exhaustive")
 
         tasks_and_file_outputs = self._tasks_and_selected_file_outputs()
 
@@ -2331,7 +2371,7 @@ class Cli:
         excluded_tags = tag_set(getattr(self.parsed_args, "exclude_tags", None))
 
         if tags is not None and excluded_tags is not None:
-            raise Exception("--tags cannot be combined with --exclude-tags")
+            raise CliUsageError("--tags cannot be combined with --exclude-tags")
 
         return tags, excluded_tags
 
@@ -2401,7 +2441,7 @@ class Cli:
         pipeline_instance = self.pipeline_instance_from_args()
 
         if self.task_set is None:
-            raise Exception(
+            raise CliUserError(
                 f"no ignored tasks: --task-set is not given and {pid}/drypipe-task-set.rules does not exist"
             )
 
@@ -2503,7 +2543,7 @@ class Cli:
             m for m in ("signature", "reads_logs", "extract_out_log", "extract_drypipe_log") if not hasattr(classifier, m)
         ]
         if missing_methods:
-            raise Exception(
+            raise CliUserError(
                 f"--log-classifier '{spec}' must return a classifier with the methods of TaskClassifier, "
                 f"got a {type(classifier).__name__} without {', '.join(missing_methods)}"
             )
@@ -2604,7 +2644,7 @@ class Cli:
     def complain_if_no_generator(self, msg):
         g = self.parsed_args.generator
         if g is None:
-            raise Exception(f"--generator is required {msg}")
+            raise CliUsageError(f"--generator is required {msg}")
 
     def _tail_all(self):
         b = getattr(self.parsed_args, 'tail_all', False)
@@ -2721,11 +2761,11 @@ class Cli:
             try:
                 inspect.signature(factory).bind(*call_args, **call_kwargs)
             except TypeError as e:
-                raise Exception(f"--func-filter '{spec}': arguments don't match {reference}: {e}")
+                raise InvalidFuncFilter(f"--func-filter '{spec}': arguments don't match {reference}: {e}")
 
             filter_func = factory(*call_args, **call_kwargs)
             if not callable(filter_func):
-                raise Exception(
+                raise InvalidFuncFilter(
                     f"--func-filter '{spec}': {reference} must return a filter function(key, state_name, step), "
                     f"got a {type(filter_func).__name__}"
                 )
@@ -2783,11 +2823,11 @@ class Cli:
             return reference
 
         if self._uses_fs_generator():
-            raise Exception(f"{option_name} '{reference}' must be given as module:function with --fs-generator")
+            raise CliUserError(f"{option_name} '{reference}' must be given as module:function with --fs-generator")
 
         generator = self.parsed_args.generator
         if generator is None:
-            raise Exception(
+            raise CliUserError(
                 f"{option_name} '{reference}' has no module, and can't be resolved against "
                 f"the --generator module because --generator is not set"
             )
@@ -3091,12 +3131,12 @@ class Cli:
 
         if self.parsed_args.empty_db is not None:
             if self.parsed_args.tsv:
-                raise Exception("--empty-db creates an sqlite db, it can't be combined with --tsv")
+                raise CliUsageError("--empty-db creates an sqlite db, it can't be combined with --tsv")
             PipelineInstance.create_empty_status_db(Path(self.parsed_args.empty_db)).close()
             return
 
         if self.parsed_args.pipeline_instance_dir is None:
-            raise Exception("--pipeline-instance-dir is required unless --empty-db is specified")
+            raise CliUsageError("--pipeline-instance-dir is required unless --empty-db is specified")
 
         self.complain_if_no_generator("unless --empty-db is specified")
 
@@ -3148,7 +3188,7 @@ def enforce_primary_group():
     try:
         expected_gid = grp.getgrnam(group_name).gr_gid
     except KeyError:
-        raise Exception(f"DRYPIPE_PRIMARY_GROUP={group_name} is not a known group")
+        raise InvalidPrimaryGroup(f"DRYPIPE_PRIMARY_GROUP={group_name} is not a known group")
 
     current_gid = os.getegid()
     if current_gid == expected_gid:
@@ -3159,7 +3199,7 @@ def enforce_primary_group():
     except KeyError:
         current_group_name = str(current_gid)
 
-    raise Exception(
+    raise InvalidPrimaryGroup(
         f"DRYPIPE_PRIMARY_GROUP={group_name}, and current group is "
         f"{current_group_name}, please run newgrp {group_name}"
     )
@@ -3170,6 +3210,16 @@ def handle_script_lib_main():
         enforce_primary_group()
         cli = Cli(sys.argv[1:])
         cli.invoke()
+    except CliUsageError as e:
+        command_parser = cli.subparsers.choices[cli.parsed_args.command]
+        command_parser.print_usage(sys.stderr)
+        print(f"{command_parser.prog}: error: {e}", file=sys.stderr)
+        sys.exit(2)
+    except CliUserError as e:
+        print(f"error: {e}", file=sys.stderr)
+        if e.explainer:
+            print(e.explainer, file=sys.stderr)
+        sys.exit(1)
     except Exception as e:
         logging.exception(e)
         raise
