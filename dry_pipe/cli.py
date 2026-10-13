@@ -210,7 +210,7 @@ def _cleanup_args(args):
 
 
 def _load_task_keys(file):
-    """one task key per line, first column of a tsv, other columns ignored, keys can't contain spaces"""
+    """one task key per line, first column of a tsv, other columns ignored, keys can't contain spaces, # starts a comment line"""
 
     def key(line_number, line):
         k = line.split("\t")[0].strip()
@@ -219,7 +219,10 @@ def _load_task_keys(file):
         return k
 
     with open(file) as f:
-        return {key(line_number, line) for line_number, line in enumerate(f, start=1) if line.strip() != ""}
+        return {
+            key(line_number, line) for line_number, line in enumerate(f, start=1)
+            if line.strip() != "" and not line.lstrip().startswith("#")
+        }
 
 
 class TaskSet:
@@ -665,7 +668,8 @@ class Cli:
         def filter_from(parser):
             parser.add_argument(
                 '--filter-from',
-                help="file of task keys, one per line (first column of a tsv), ex: written by extract-keys. "
+                help="file of task keys, one per line (first column of a tsv), lines starting with # are ignored, "
+                     "ex: written by extract-keys. "
                      "Or a markdown file written by analyze-logs: --filter-from=failed.2-5.md selects all its tasks, "
                      "--filter-from=failed.2-5.md:1,3 the tasks of its signatures 1 and 3. "
                      "Can be repeated to select the union of the tasks of several files: "

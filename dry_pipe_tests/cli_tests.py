@@ -635,7 +635,7 @@ ValueError: bad | value 2
         return f
 
     def test_key_file(self):
-        f = self.write("keys.tsv", "t1\tignored column\n\n  t2  \nt3\n")
+        f = self.write("keys.tsv", "# a comment\nt1\tignored column\n\n  t2  \n  # t4 commented out\nt3\n")
         self.assertEqual(_load_keys_of_filter_file(str(f)), {"t1", "t2", "t3"})
 
     def test_whole_analysis_file(self):
