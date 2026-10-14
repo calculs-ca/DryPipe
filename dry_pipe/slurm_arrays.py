@@ -275,6 +275,10 @@ class SequenceOfFiles:
 
 
 
+class SbatchRejected(Exception):
+    """sbatch refused the submission (QOS limits, invalid account, etc.), the message is sbatch's stderr"""
+
+
 class SlurmArrayBatchSubmit:
 
     def __init__(self, array_task_manager, pre_submit_func, sbatch_command, post_submit_func, task_keys, sbatch_options):
@@ -299,8 +303,10 @@ class SlurmArrayBatchSubmit:
                 self.array_task_manager.logger().info("sbatch command: %s", " ".join(self.sbatch_command))
                 try:
                     with PortablePopen(self.sbatch_command) as p:
-                        p.wait_and_raise_if_non_zero()
-                        job_id = p.stdout_as_string().strip()
+                        out, err = p.communicate()
+                        if p.popen.returncode != 0:
+                            raise SbatchRejected(err.strip())
+                        job_id = out.strip()
                 except Exception:
                     # sbatch failed, so the file written by pre_submit_func describes an array
                     # that was never launched: erase it, otherwise it lingers as an array.<n>.tsv

@@ -1083,6 +1083,7 @@ class ImportInputsTests(RsyncArchiveTestCase):
             {"a/b/c/shared.mgf", "d/r1/r1.mgf", "d/r2/r2.mgf"}
         )
         self.assertEqual((self.pid / "d/r1/r1.mgf").read_text(), "src2/d/r1/r1.mgf")
+        self.assertIn(f"rsync {self.sandbox}/src2/ -> {self.pid}: 2 files\n", out)
 
     def test_fs_generator_reads_the_rsync_sources_from_task_conf(self):
         self.prepare()

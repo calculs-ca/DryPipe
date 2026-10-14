@@ -34,6 +34,7 @@ from dry_pipe.task_classifier import TaskClassifier, TaskClassifyContext
 from dry_pipe.pipeline_instance import Monitor, PipelineInstance
 from dry_pipe.task_process import TaskPackExchausted, TaskProcess, TaskFailedException
 from dry_pipe.slurm_array_task import SlurmArrayParentTask
+from dry_pipe.slurm_arrays import SbatchRejected
 from dry_pipe.slurm_codes import SlurmJobStateCodes
 from dry_pipe.reports import timers_for_tasks
 from dry_pipe.state_machine import StateFileTracker
@@ -76,6 +77,10 @@ class InvalidFuncFilter(CliUserError):
 
 class NotASlurmArray(CliUserError):
     explainer = "This command only applies to tasks that are slurm array parents"
+
+
+class ArraySubmitRejected(CliUserError):
+    pass
 
 
 class InvalidPrimaryGroup(CliUserError):
@@ -1388,7 +1393,7 @@ class Cli:
                 default=None
             )
 
-        yield Command('import-inputs', pipeline_instance_dir, generator_optional, fs_generator, import_into, no_confirm, info_progress2, *all_filters(),
+        yield Command('import-inputs', pipeline_instance_dir, generator_optional, fs_generator, import_into, no_confirm, *all_filters(),
                       help="import the remote inputs of matching tasks, declared with dsl.file('a/b/f.mgf').rsync('my-host:/x/y/'): "
                            "one rsync is run per source and destination, with the file list passed on stdin (--files-from=-), "
                            "ex: my-host:/x/y/a/b/f.mgf is imported as <pid>/a/b/f.mgf"
@@ -1898,7 +1903,10 @@ class Cli:
             reset_restart_counts()
 
         for submit in submits:
-            submit.invoke()
+            try:
+                submit.invoke()
+            except SbatchRejected as e:
+                raise ArraySubmitRejected(f"sbatch rejected the array submission:\n{e}")
             launch_count += len(submit.task_keys)
         
 
@@ -2309,13 +2317,12 @@ class Cli:
             return
 
         def reporting_and_dry_run_options():
-            yield from ["-h", "--stats"]
-            if self.parsed_args.info_progress2:
-                yield "--info=progress2"
+            yield from ["-h", "--stats", "--info=progress2"]
             if self.parsed_args.dry_run:
                 yield "--dry-run"
 
         for (source, dest), paths in sorted(paths_by_source_and_dest.items()):
+            print(f"rsync {source} -> {dest}: {len(paths)} files", file=self.output, flush=True)
             subprocess.run(
                 ["rsync", "-a", *reporting_and_dry_run_options(), "--files-from=-", source, f"{dest}/"],
                 input="\n".join(sorted(paths)),
