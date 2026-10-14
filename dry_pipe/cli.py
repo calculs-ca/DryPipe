@@ -1341,7 +1341,18 @@ class Cli:
                      "and in .drypipe/<task-key>/, cannot be combined with --tags, --exclude-tags or --include-drypipe-files"
             )
 
-        yield Command('rsync-push', pipeline_instance_dir, generator, tags, rsync_to, include_drypipe_files, exhaustive, no_confirm, info_progress2, *all_filters(),
+        def chown(parser):
+            parser.add_argument(
+                '--chown',
+                help="passed to rsync --chown, sets the owner and group of the destination files, ex: my-user:my-group, "
+                     "can also be set with environment var DRYPIPE_RSYNC_PUSH_CHOWN",
+                action=EnvDefault,
+                envvar="DRYPIPE_RSYNC_PUSH_CHOWN",
+                env=self.env,
+                required=False
+            )
+
+        yield Command('rsync-push', pipeline_instance_dir, generator, tags, rsync_to, include_drypipe_files, exhaustive, no_confirm, info_progress2, chown, *all_filters(),
                       help="rsync output files having at least one of the --tags, of matching tasks, to --to")
 
         def rsync_from(parser):
@@ -2224,8 +2235,14 @@ class Cli:
 
 
     def rsync_push(self):
+
+        def chown_option():
+            if self.parsed_args.chown is not None:
+                yield f"--chown={self.parsed_args.chown}"
+
         self._rsync_selected_files(
-            f"{self.parsed_args.pipeline_instance_dir}/", self.parsed_args.rsync_to, f"to: {self.parsed_args.rsync_to}"
+            f"{self.parsed_args.pipeline_instance_dir}/", self.parsed_args.rsync_to, f"to: {self.parsed_args.rsync_to}",
+            list(chown_option())
         )
 
     def rsync_pull(self):
