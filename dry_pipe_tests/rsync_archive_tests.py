@@ -151,7 +151,7 @@ class RsyncArchiveTestCase(unittest.TestCase):
 
     def rsync(self, *args, confirm=False, global_args=()):
         no_confirm = [] if confirm else ["--no-confirm"]
-        return self.cli("rsync-push", f"--dest={self.dest}/", *no_confirm, *args, global_args=global_args)
+        return self.cli("rsync-push", f"--to={self.dest}/", *no_confirm, *args, global_args=global_args)
 
     def control_dir(self, key, root=None):
         return (root or self.pid) / ".drypipe" / key
@@ -704,7 +704,7 @@ class RsyncPullTests(RsyncArchiveTestCase):
 
         puller_pid = self.sandbox / "puller"
         self.cli("prepare", pid=puller_pid)
-        self.cli("rsync-pull", f"--source={self.dest}/", "--tags=keepers", "--no-confirm", pid=puller_pid)
+        self.cli("rsync-pull", f"--from={self.dest}/", "--tags=keepers", "--no-confirm", pid=puller_pid)
 
         self.assertEqual(
             {f for f in self.dest_files(puller_pid) if f.startswith("output/")},
@@ -727,7 +727,7 @@ class RsyncPullTests(RsyncArchiveTestCase):
 
         other_local_files = non_state_files()
 
-        self.cli("rsync-pull", f"--source={self.dest}/", "--state-files-only", "--no-confirm", pid=puller_pid)
+        self.cli("rsync-pull", f"--from={self.dest}/", "--state-files-only", "--no-confirm", pid=puller_pid)
 
         for key in KEYS:
             self.assertEqual(self.state_files(key, puller_pid), self.state_files(key, self.dest))
@@ -736,7 +736,7 @@ class RsyncPullTests(RsyncArchiveTestCase):
 
     def test_state_files_only_cannot_be_combined_with_tags(self):
         with self.assertRaises(Exception):
-            self.cli("rsync-pull", f"--source={self.dest}/", "--state-files-only", "--tags=keepers", "--no-confirm")
+            self.cli("rsync-pull", f"--from={self.dest}/", "--state-files-only", "--tags=keepers", "--no-confirm")
 
 
 class ArchiveTests(RsyncArchiveTestCase):
@@ -1022,7 +1022,7 @@ class RsyncRemoteDestTests(RsyncArchiveTestCase):
         for state in ["failed.2", "ready", "completed"]:
             self.set_state("t01", state)
             self.cli(
-                "rsync-push", f"--dest={remote_dest}/", "--no-confirm",
+                "rsync-push", f"--to={remote_dest}/", "--no-confirm",
                 "--filter=t01", "--include-drypipe-files=minimal"
             )
             self.assertEqual(self.remote_state_files(user_at_host, remote_dir, "t01"), [f"state.{state}"])

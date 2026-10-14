@@ -1295,11 +1295,14 @@ class Cli:
                         default=False
                     )
         """
-        def dest(parser):
+        def rsync_to(parser):
             parser.add_argument(
-                '--dest',
-                help="rsync destination, ex: my-host:/a/b/my-pipeline/",
-                required=True
+                '--to',
+                dest="rsync_to",
+                help="rsync destination, ex: my-host:/a/b/my-pipeline/, can also be set with environment var DRYPIPE_RSYNC_PUSH_TO",
+                action=EnvDefault,
+                envvar="DRYPIPE_RSYNC_PUSH_TO",
+                env=self.env
             )
 
         def include_drypipe_files(parser):
@@ -1338,14 +1341,17 @@ class Cli:
                      "and in .drypipe/<task-key>/, cannot be combined with --tags, --exclude-tags or --include-drypipe-files"
             )
 
-        yield Command('rsync-push', pipeline_instance_dir, generator, tags, dest, include_drypipe_files, exhaustive, no_confirm, info_progress2, *all_filters(),
-                      help="rsync output files having at least one of the --tags, of matching tasks, to --dest")
+        yield Command('rsync-push', pipeline_instance_dir, generator, tags, rsync_to, include_drypipe_files, exhaustive, no_confirm, info_progress2, *all_filters(),
+                      help="rsync output files having at least one of the --tags, of matching tasks, to --to")
 
-        def source(parser):
+        def rsync_from(parser):
             parser.add_argument(
-                '--source',
-                help="rsync source, ex: my-host:/a/b/my-pipeline/",
-                required=True
+                '--from',
+                dest="rsync_from",
+                help="rsync source, ex: my-host:/a/b/my-pipeline/, can also be set with environment var DRYPIPE_RSYNC_PULL_FROM",
+                action=EnvDefault,
+                envvar="DRYPIPE_RSYNC_PULL_FROM",
+                env=self.env
             )
 
         def state_files_only(parser):
@@ -1357,8 +1363,8 @@ class Cli:
                      "cannot be combined with --tags, --include-drypipe-files or --exhaustive"
             )
 
-        yield Command('rsync-pull', pipeline_instance_dir, generator, tags, source, include_drypipe_files, exhaustive, state_files_only, no_confirm, info_progress2, *all_filters(),
-                      help="rsync output files having at least one of the --tags, of matching tasks, from --source"
+        yield Command('rsync-pull', pipeline_instance_dir, generator, tags, rsync_from, include_drypipe_files, exhaustive, state_files_only, no_confirm, info_progress2, *all_filters(),
+                      help="rsync output files having at least one of the --tags, of matching tasks, from --from"
                       " note: unless --include-drypipe-files or --state-files-only option, only output (task produces) files get rsynced."
                 )
 
@@ -2219,12 +2225,12 @@ class Cli:
 
     def rsync_push(self):
         self._rsync_selected_files(
-            f"{self.parsed_args.pipeline_instance_dir}/", self.parsed_args.dest, f"dest: {self.parsed_args.dest}"
+            f"{self.parsed_args.pipeline_instance_dir}/", self.parsed_args.rsync_to, f"to: {self.parsed_args.rsync_to}"
         )
 
     def rsync_pull(self):
         self._rsync_selected_files(
-            self.parsed_args.source, f"{self.parsed_args.pipeline_instance_dir}/", f"source: {self.parsed_args.source}"
+            self.parsed_args.rsync_from, f"{self.parsed_args.pipeline_instance_dir}/", f"from: {self.parsed_args.rsync_from}"
         )
 
     def archive(self):
