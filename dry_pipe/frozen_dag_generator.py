@@ -1,14 +1,22 @@
+import json
 import os
 from pathlib import Path
 
 from dry_pipe.state_file import StateFile
 from dry_pipe.state_file_tracker import StateFileTracker
+from dry_pipe.task import TaskInput
 
 
 class FrozenTask:
 
-    def __init__(self, key):
+    def __init__(self, key, control_dir):
         self.key = key
+        self.control_dir = control_dir
+
+    @property
+    def inputs(self):
+        with open(Path(self.control_dir, "task-conf.json")) as f:
+            return [TaskInput.from_json(i) for i in json.load(f)["inputs"]]
 
 
 class FrozenDAGGenerator:
@@ -46,4 +54,4 @@ class FrozenDAGGenerator:
 
         for key, state_file_path in self._tasks_on_disk():
             if is_selected(key):
-                yield FrozenTask(key), StateFile(key, None, str(self.pipeline_work_dir), path=state_file_path)
+                yield FrozenTask(key, self.pipeline_work_dir / key), StateFile(key, None, str(self.pipeline_work_dir), path=state_file_path)

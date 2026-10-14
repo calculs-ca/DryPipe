@@ -242,15 +242,25 @@ class TaskInput:
             upstream_task_key=j.get("upstream_task_key"),
             name_in_upstream_task=j.get("name_in_upstream_task"),
             file_name=j.get("file_name"),
-            value=j.get("value")
+            value=j.get("value"),
+            rsync_source=j.get("rsync_source"),
+            rsync_into=j.get("rsync_into")
         )
 
     def _dict(self):
+
+        def rsync_fields_when_set():
+            if self.rsync_source is not None:
+                yield "rsync_source", self.rsync_source
+            if self.rsync_into is not None:
+                yield "rsync_into", self.rsync_into
+
         return {
             "upstream_task_key": self.upstream_task_key,
             "name_in_upstream_task": self.name_in_upstream_task,
             "file_name": self.file_name,
-            "value": self.value
+            "value": self.value,
+            **dict(rsync_fields_when_set())
         }
 
     def as_string(self):
@@ -264,7 +274,8 @@ class TaskInput:
             ])
         )
 
-    def __init__(self, name, type, upstream_task_key=None, name_in_upstream_task=None, file_name=None, value=None):
+    def __init__(self, name, type, upstream_task_key=None, name_in_upstream_task=None, file_name=None, value=None,
+                 rsync_source=None, rsync_into=None):
 
         if type not in ['file', 'str', 'int', 'float', 'task-list', 'file_set']:
             raise Exception(f"invalid type {type}")
@@ -283,6 +294,8 @@ class TaskInput:
         self.value = value
 
         self.file_name = file_name
+        self.rsync_source = rsync_source
+        self.rsync_into = rsync_into
         self._cached_task_list_hash_codes = None
         self.resolved_value = None
 
@@ -385,6 +398,23 @@ class FileSet:
 
 class TaggedFile(type(pathlib.Path())):
     tags = None
+    rsync_source = None
+    rsync_into = None
+
+    def rsync(self, source, into=None):
+        """
+        remote source of an input file: dsl.file('a/b/f.mgf').rsync('my-host:/x/y/')
+        is my-host:/x/y/a/b/f.mgf, imported as <pipeline_instance_dir>/a/b/f.mgf by the CLI command import-inputs
+        :param into: directory where the file is imported, relative to the pipeline instance dir unless absolute,
+               overrides the --into of import-inputs
+        """
+        if self.is_absolute():
+            raise Exception(f"file {self} has an rsync source, it must be a relative path")
+        f = TaggedFile(self)
+        f.tags = self.tags
+        f.rsync_source = source
+        f.rsync_into = into
+        return f
 
 
 class TaskOutput:

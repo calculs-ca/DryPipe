@@ -53,6 +53,44 @@ $ drypipe run -p my_module:my_pipeline --instance-directory=/x/y/z
 ```
 
 
+## inputs
+
+### remote input files
+
+An input file that lives on another host can declare where to fetch it from:
+
+```python
+.inputs(
+    spectra=dsl.file("PXD002516/mgf/131023_Sunil_PPT_Brain_A_05.mgf").rsync(
+        "ip40:/home-vhost32/xroucou_group/no_backup/public_data/"
+    )
+)
+```
+
+The file path is relative to the rsync source, and the same relative path is used in the pipeline instance dir.
+The above task reads its input from `<pipeline_instance_dir>/PXD002516/mgf/131023_Sunil_PPT_Brain_A_05.mgf`.
+
+The `into` argument imports the file in another directory, relative to the pipeline instance dir unless absolute:
+
+```python
+dsl.file("PXD002516/mgf/131023_Sunil_PPT_Brain_A_05.mgf").rsync("ip40:/.../public_data/", into="raw")
+```
+
+is read by the task from `<pipeline_instance_dir>/raw/PXD002516/mgf/131023_Sunil_PPT_Brain_A_05.mgf`.
+
+#### import-inputs
+
+The remote input files of the tasks are imported with:
+
+```shell
+drypipe import-inputs --pipeline-instance-dir=/x/y/z -g my_module:my_tasks
+```
+
+One rsync is run per source and destination, the task filters (ex: `--filter`, `--filter-ready`) select
+the tasks whose inputs get imported. `--into` changes the destination of the files that don't have an `into`.
+With `--fs-generator` instead of `-g`, the inputs of the tasks already created (by `run` or `prepare`) are imported
+without running the DAG generator.
+
 ## outputs
 
 ### tags

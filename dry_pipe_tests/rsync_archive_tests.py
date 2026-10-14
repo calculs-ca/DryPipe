@@ -1,4 +1,5 @@
 import contextlib
+import json
 import os
 import shutil
 import subprocess
@@ -9,7 +10,7 @@ from pathlib import Path
 from unittest import mock
 
 from dry_pipe import DryPipe
-from dry_pipe.cli import Cli
+from dry_pipe.cli import Cli, CliUserError
 
 
 MODULE = "dry_pipe_tests.rsync_archive_tests"
@@ -57,6 +58,37 @@ def newline_in_output_name_dag(dsl):
 
 def newline_in_input_name_dag(dsl):
     yield dsl.task(key="n").inputs(f=dsl.file("/data/new\nline.txt")).calls(noop)()
+
+
+def remote_inputs_dag(dsl):
+    # src1/ and src2/ are siblings of the pipeline instance dir, standing in for remote hosts
+    sandbox = Path(dsl.pipeline_instance_dir()).parent
+    for key in ["r1", "r2"]:
+        yield dsl.task(key=key).inputs(
+            shared=dsl.file("a/b/c/shared.mgf").rsync(f"{sandbox}/src1/"),
+            own=dsl.file(f"d/{key}/{key}.mgf").rsync(f"{sandbox}/src2/"),
+            local=dsl.file("/data/local.tsv"),
+        ).calls(noop)()
+
+
+def remote_inputs_with_into_dag(dsl):
+    pid = Path(dsl.pipeline_instance_dir())
+    src = f"{pid.parent}/src1/"
+    yield dsl.task(key="r").inputs(
+        relative=dsl.file("a/b/c/shared.mgf").rsync(src, into="rel"),
+        outside=dsl.file("a/b/c/shared.mgf").rsync(src, into=f"{pid.parent}/outside"),
+        inside=dsl.file("a/b/c/shared.mgf").rsync(src, into=f"{pid}/inside"),
+        default=dsl.file("a/b/c/shared.mgf").rsync(src),
+    ).calls(noop)()
+
+
+def same_file_from_two_sources_dag(dsl):
+    yield dsl.task(key="r1").inputs(f=dsl.file("a/f.mgf").rsync("host-1:/x/")).calls(noop)()
+    yield dsl.task(key="r2").inputs(f=dsl.file("a/f.mgf").rsync("host-2:/x/")).calls(noop)()
+
+
+def rsync_source_on_output_dag(dsl):
+    yield dsl.task(key="o").outputs(f=dsl.file("f.mgf").rsync("my-host:/x/")).calls(noop)()
 
 
 def carriage_return_in_output_name_dag(dsl):
@@ -1026,6 +1058,97 @@ class RsyncRemoteDestTests(RsyncArchiveTestCase):
                 "--filter=t01", "--include-drypipe-files=minimal"
             )
             self.assertEqual(self.remote_state_files(user_at_host, remote_dir, "t01"), [f"state.{state}"])
+
+
+class ImportInputsTests(RsyncArchiveTestCase):
+
+    generator = "remote_inputs_dag"
+
+    def write_sources(self):
+        for f in ["src1/a/b/c/shared.mgf", "src2/d/r1/r1.mgf", "src2/d/r2/r2.mgf", "src2/d/r2/not-an-input.mgf"]:
+            p = self.sandbox / f
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(f)
+
+    def import_inputs(self, *args):
+        return self.cli("import-inputs", "--no-confirm", *args)
+
+    def test_relative_paths_are_replicated_in_the_pipeline_instance_dir(self):
+        self.write_sources()
+        out = self.import_inputs()
+        self.assertIn(f"  {self.sandbox}/src1/ -> {self.pid}: 1\n", out)
+        self.assertIn(f"  {self.sandbox}/src2/ -> {self.pid}: 2\n", out)
+        self.assertEqual(
+            {f for f in self.dest_files(self.pid) if f.endswith(".mgf")},
+            {"a/b/c/shared.mgf", "d/r1/r1.mgf", "d/r2/r2.mgf"}
+        )
+        self.assertEqual((self.pid / "d/r1/r1.mgf").read_text(), "src2/d/r1/r1.mgf")
+
+    def test_fs_generator_reads_the_rsync_sources_from_task_conf(self):
+        self.prepare()
+        self.write_sources()
+        self.generator = "not_a_generator"
+        self.import_inputs(f"--into={self.dest}", "--fs-generator")
+        self.assertEqual(self.dest_files(), {"a/b/c/shared.mgf", "d/r1/r1.mgf", "d/r2/r2.mgf"})
+
+    def test_into(self):
+        self.write_sources()
+        self.import_inputs(f"--into={self.dest}")
+        self.assertEqual(self.dest_files(), {"a/b/c/shared.mgf", "d/r1/r1.mgf", "d/r2/r2.mgf"})
+
+    def test_filter_selects_the_tasks_whose_inputs_are_imported(self):
+        self.write_sources()
+        self.import_inputs(f"--into={self.dest}", "--filter=r1")
+        self.assertEqual(self.dest_files(), {"a/b/c/shared.mgf", "d/r1/r1.mgf"})
+
+    def test_missing_source_file_fails(self):
+        self.write_sources()
+        (self.sandbox / "src2/d/r2/r2.mgf").unlink()
+        with self.assertRaises(subprocess.CalledProcessError):
+            self.import_inputs(f"--into={self.dest}")
+
+    def test_rsync_into_overrides_the_cli_into(self):
+        for dag_args in [[], ["--fs-generator"]]:
+            with self.subTest(dag_args=dag_args):
+                self.setUp()
+                self.generator = "remote_inputs_with_into_dag"
+                self.prepare()
+                self.write_sources()
+                self.import_inputs(f"--into={self.dest}", *dag_args)
+                for d in [self.pid / "rel", self.sandbox / "outside", self.pid / "inside", self.dest]:
+                    self.assertEqual(self.dest_files(d), {"a/b/c/shared.mgf"})
+
+    def test_task_input_paths_point_to_the_rsync_into(self):
+        self.generator = "remote_inputs_with_into_dag"
+        self.prepare()
+        task_conf = json.loads((self.control_dir("r") / "task-conf.json").read_text())
+        self.assertEqual(
+            {i["name"]: i["file_name"] for i in task_conf["inputs"]},
+            {
+                "relative": "rel/a/b/c/shared.mgf",
+                "outside": f"{self.sandbox}/outside/a/b/c/shared.mgf",
+                "inside": "inside/a/b/c/shared.mgf",
+                "default": "a/b/c/shared.mgf",
+            }
+        )
+
+    def test_file_imported_from_two_sources_is_rejected(self):
+        self.generator = "same_file_from_two_sources_dag"
+        with self.assertRaisesRegex(CliUserError, "a/f.mgf: host-1:/x/, host-2:/x/"):
+            self.import_inputs()
+
+    def test_task_conf_has_rsync_fields_only_when_set(self):
+        self.prepare()
+        task_conf = json.loads((self.control_dir("r1") / "task-conf.json").read_text())
+        inputs = {i["name"]: i for i in task_conf["inputs"]}
+        self.assertEqual(inputs["shared"]["rsync_source"], f"{self.sandbox}/src1/")
+        self.assertNotIn("rsync_into", inputs["shared"])
+        self.assertNotIn("rsync_source", inputs["local"])
+
+    def test_rsync_source_on_outputs_is_rejected(self):
+        self.generator = "rsync_source_on_output_dag"
+        with self.assertRaisesRegex(Exception, "only inputs can have one"):
+            self.import_inputs()
 
 
 @unittest.skipUnless(os.environ.get("DRYPIPE_SLOW_TESTS"), "set DRYPIPE_SLOW_TESTS=1 to run")

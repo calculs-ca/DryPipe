@@ -198,6 +198,21 @@ class TaskBuilder:
             else:
                 yield k, TaskInput(k, v.type, upstream_task_key=v.task_key, name_in_upstream_task=v.name)
 
+        def input_imported_by_rsync(k, f):
+
+            def into_relative_to_pid_when_inside():
+                into = Path(f.rsync_into)
+                pid = None if self.dsl is None else Path(self.dsl.pipeline_instance_dir())
+                return into.relative_to(pid) if pid is not None and into.is_relative_to(pid) else into
+
+            if f.rsync_into is None:
+                return TaskInput(k, 'file', file_name=str(f), rsync_source=f.rsync_source)
+
+            into = into_relative_to_pid_when_inside()
+            return TaskInput(
+                k, 'file', file_name=str(into / f), rsync_source=f.rsync_source, rsync_into=str(into)
+            )
+
         def deps():
             for k, v in kwargs.items():
                 if isinstance(v, int):
@@ -214,7 +229,10 @@ class TaskBuilder:
                         raise Exception(
                             f"feature unsupported: tags on input files, task({self.key}).inputs({k}=...) got tags={v.tags}"
                         )
-                    yield k, TaskInput(k, 'file', file_name=str(v))
+                    if isinstance(v, TaggedFile) and v.rsync_source is not None:
+                        yield k, input_imported_by_rsync(k, v)
+                    else:
+                        yield k, TaskInput(k, 'file', file_name=str(v))
                 elif isinstance(v, list):
                     yield k, TaskInput(k, 'task-list', value=v)
                 else:
@@ -271,6 +289,10 @@ class TaskBuilder:
                     yield k, TaskOutput(k, 'float', task_key=self.key)
                 elif isinstance(v, Path):
                     _ensure_no_line_break_in_file_name(self.key, "outputs", k, v)
+                    if isinstance(v, TaggedFile) and v.rsync_source is not None:
+                        raise Exception(
+                            f"task({self.key}).outputs({k}=...) has an rsync source, only inputs can have one"
+                        )
                     tags = v.tags if isinstance(v, TaggedFile) else None
                     yield k, TaskOutput(k, 'file', task_key=self.key, produced_file_name=v.name, tags=tags)
                 elif isinstance(v, FileSet):

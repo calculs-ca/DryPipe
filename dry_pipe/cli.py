@@ -1379,6 +1379,21 @@ class Cli:
                       " note: unless --include-drypipe-files or --state-files-only option, only output (task produces) files get rsynced."
                 )
 
+        def import_into(parser):
+            parser.add_argument(
+                '--into',
+                help="directory where the input files are imported, the relative path of each file is replicated under it, "
+                     "files declared with .rsync(..., into=...) are imported in their own into "
+                     "(default: the pipeline instance dir)",
+                default=None
+            )
+
+        yield Command('import-inputs', pipeline_instance_dir, generator_optional, fs_generator, import_into, no_confirm, info_progress2, *all_filters(),
+                      help="import the remote inputs of matching tasks, declared with dsl.file('a/b/f.mgf').rsync('my-host:/x/y/'): "
+                           "one rsync is run per source and destination, with the file list passed on stdin (--files-from=-), "
+                           "ex: my-host:/x/y/a/b/f.mgf is imported as <pid>/a/b/f.mgf"
+                )
+
         def archive_name(parser):
             parser.add_argument(
                 '--name',
@@ -2249,6 +2264,64 @@ class Cli:
         self._rsync_selected_files(
             self.parsed_args.rsync_from, f"{self.parsed_args.pipeline_instance_dir}/", f"from: {self.parsed_args.rsync_from}"
         )
+
+    def import_inputs(self):
+
+        pid = self.parsed_args.pipeline_instance_dir
+        default_into = self.parsed_args.into or pid
+
+        def dest_and_path_relative_to_source(task_input):
+            if task_input.rsync_into is None:
+                return default_into, task_input.file_name
+            return (
+                os.path.join(pid, task_input.rsync_into),
+                os.path.relpath(task_input.file_name, task_input.rsync_into)
+            )
+
+        paths_by_source_and_dest = collections.defaultdict(set)
+        for task, _ in self.filter_tasks():
+            for i in task.inputs:
+                if i.rsync_source is not None:
+                    dest, path = dest_and_path_relative_to_source(i)
+                    paths_by_source_and_dest[i.rsync_source, dest].add(path)
+
+        def ensure_no_file_imported_from_many_sources():
+            sources_by_imported_file = collections.defaultdict(set)
+            for (source, dest), paths in paths_by_source_and_dest.items():
+                for path in paths:
+                    sources_by_imported_file[os.path.normpath(os.path.join(dest, path))].add(source)
+
+            conflicts = sorted(
+                (f, sorted(sources)) for f, sources in sources_by_imported_file.items() if len(sources) > 1
+            )
+            if conflicts:
+                examples = "\n".join(f"  {f}: {', '.join(sources)}" for f, sources in conflicts[:5])
+                raise CliUserError(f"{len(conflicts)} input files are imported from more than one rsync source, ex:\n{examples}")
+
+        ensure_no_file_imported_from_many_sources()
+
+        print("input files per rsync source -> destination:", file=self.output)
+        for (source, dest), paths in sorted(paths_by_source_and_dest.items()):
+            print(f"  {source} -> {dest}: {len(paths)}", file=self.output)
+        self._print_ignored_tasks_summary()
+
+        if not self.parsed_args.no_confirm and not self.query_yes_no("continue ?", default="no"):
+            return
+
+        def reporting_and_dry_run_options():
+            yield from ["-h", "--stats"]
+            if self.parsed_args.info_progress2:
+                yield "--info=progress2"
+            if self.parsed_args.dry_run:
+                yield "--dry-run"
+
+        for (source, dest), paths in sorted(paths_by_source_and_dest.items()):
+            subprocess.run(
+                ["rsync", "-a", *reporting_and_dry_run_options(), "--files-from=-", source, f"{dest}/"],
+                input="\n".join(sorted(paths)),
+                text=True,
+                check=True
+            )
 
     def archive(self):
         archive_file = Path(self.parsed_args.name).absolute()
