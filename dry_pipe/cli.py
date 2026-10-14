@@ -172,6 +172,7 @@ class EnvDefault(argparse.Action):
 
     def __call__(self, parser, namespace, values, option_string=None):
         setattr(namespace, self.dest, values)
+        setattr(namespace, f"{self.dest}_is_explicit", True)
 
 class CliMonitor(Monitor):
 
@@ -1537,6 +1538,20 @@ class Cli:
                 return True
             else:
                 return False
+
+    def confirm_pid_from_env_var_is_current_dir(self):
+        pid = getattr(self.parsed_args, 'pipeline_instance_dir', None)
+        if pid is None or getattr(self.parsed_args, 'pipeline_instance_dir_is_explicit', False):
+            return True
+        if Path(pid).resolve() == Path.cwd().resolve():
+            return True
+        print(
+            f"warning: DRYPIPE_PIPELINE_INSTANCE_DIR={pid} is not the current dir ({Path.cwd()})",
+            file=sys.stderr
+        )
+        if getattr(self.parsed_args, 'no_confirm', False) or not sys.stdin.isatty():
+            return True
+        return self.query_yes_no("continue ?", default="no")
 
     def query_yes_no(self, question, default="yes"):
         valid = {"yes": True, "y": True, "ye": True, "no": False, "n": False}
@@ -3222,6 +3237,8 @@ def handle_script_lib_main():
         setup_file_creation_mask()
         enforce_primary_group()
         cli = Cli(sys.argv[1:])
+        if not cli.confirm_pid_from_env_var_is_current_dir():
+            sys.exit(1)
         cli.invoke()
     except CliUsageError as e:
         command_parser = cli.subparsers.choices[cli.parsed_args.command]
