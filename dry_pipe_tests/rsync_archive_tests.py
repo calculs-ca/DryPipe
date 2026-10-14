@@ -504,11 +504,11 @@ class RsyncOptionsTests(RsyncArchiveTestCase):
         self.assertNotIn("--info=progress2", rsync_args)
         self.assertNotIn("--dry-run", rsync_args)
 
-    def test_info_progress2_replaces_stats(self):
+    def test_info_progress2_adds_to_stats(self):
         self.prepare()
         rsync_args = self.rsync_args("--info-progress2")
         self.assertIn("--info=progress2", rsync_args)
-        self.assertNotIn("--stats", rsync_args)
+        self.assertIn("--stats", rsync_args)
 
     def test_dry_run_is_passed_to_rsync(self):
         self.prepare()

@@ -1327,7 +1327,7 @@ class Cli:
         def info_progress2(parser):
             parser.add_argument(
                 '--info-progress2',
-                help="rsync reports overall progress (rsync --info=progress2) instead of end of transfer statistics (rsync --stats)",
+                help="rsync also reports overall progress during the transfer (rsync --info=progress2)",
                 action='store_true',
                 default=False
             )
@@ -2351,7 +2351,9 @@ class Cli:
                 yield "--exclude=/.drypipe/*/*"
 
         def reporting_and_dry_run_options():
-            yield "--info=progress2" if getattr(self.parsed_args, "info_progress2", False) else "--stats"
+            yield from ["-h", "--stats"]
+            if getattr(self.parsed_args, "info_progress2", False):
+                yield "--info=progress2"
             if self.parsed_args.dry_run:
                 yield "--dry-run"
 
