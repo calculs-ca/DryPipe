@@ -201,6 +201,12 @@ class GarbageCollectTests(unittest.TestCase):
         self.garbage_collect_all_keys_dag(f"--task-set={empty_file}")
         self.assert_nothing_deleted()
 
+    def test_all_task_set_overrides_implicit_file(self):
+        self.prepare_with_all_keys()
+        self.implicit_task_set_file()
+        self.garbage_collect_all_keys_dag("--task-set=@ALL")
+        self.assert_nothing_deleted()
+
     def test_implicit_task_set_symlink(self):
         self.prepare_with_all_keys()
         (self.pid / "drypipe-task-set.rules").symlink_to(self.task_set_file())

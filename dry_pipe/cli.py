@@ -252,8 +252,13 @@ class TaskSet:
             keys = frozenset(_load_task_keys(keys_file))
             return sign == "+", keys.__contains__, keys
 
-        with open(rules_file) as f:
-            lines = [(line_number, line.split("#")[0].strip()) for line_number, line in enumerate(f, start=1)]
+        def numbered_lines():
+            if rules_file == "@ALL":
+                return [(1, "+ *")]
+            with open(rules_file) as f:
+                return [(line_number, line.split("#")[0].strip()) for line_number, line in enumerate(f, start=1)]
+
+        lines = numbered_lines()
 
         self.rules = [parse_rule(line_number, line) for line_number, line in lines if line != ""]
         self.keys_of_files = frozenset(k for _, _, keys in self.rules for k in keys)
@@ -810,6 +815,7 @@ class Cli:
                     + @tests.tsv
                 Note1: commands garbage-collect and purge-tasks-not-in-task-set purge ignored tasks if invoked
                 Note2: a file named $PIPELINE_INSTANCE_DIR/drypipe-task-set.rules is treated as if referred by --task-set. If --task-set is defined and $PIPELINE_INSTANCE_DIR/drypipe-task-set.rules also exists, --task-set wins
+                Note3: --task-set=@ALL is equivalent to a rules file with the single rule '+ *' (all tasks yielded by the generator)
                 """,
                 action=EnvDefault,
                 envvar="DRYPIPE_TASK_SET",
@@ -1441,7 +1447,7 @@ class Cli:
     def _task_set_file(self):
         explicit_file = self.parsed_args.task_set
         if explicit_file is not None:
-            if not os.path.exists(explicit_file):
+            if explicit_file != "@ALL" and not os.path.exists(explicit_file):
                 raise InvalidTaskSet(f"--task-set file {explicit_file} does not exist")
             return explicit_file
         implicit_file = Path(self.parsed_args.pipeline_instance_dir, "drypipe-task-set.rules")
