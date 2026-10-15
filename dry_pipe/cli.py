@@ -1821,7 +1821,13 @@ class Cli:
             else:
                 pass
 
-        self.prepare()
+        pipeline_instance = self.pipeline_instance_from_args()
+
+        def regen_array_task():
+            pipeline_instance.prepare_instance_dir()
+            pipeline_instance.regen_task(self.parsed_args.task_key)
+
+        self._run_in_rich(regen_array_task, pipeline_instance)
 
         self.task_process = TaskProcess(
             self._control_dir(),
@@ -1873,6 +1879,13 @@ class Cli:
         
         set_of_task_keys = set_of_task_keys_if_has_filter()
 
+        def regen_selected_children():
+            if set_of_task_keys is None:
+                pipeline_instance.regen_tasks_with_keys(set(self.array_task_manager.children_task_keys()))
+            else:
+                pipeline_instance.regen_tasks_with_keys(set_of_task_keys)
+
+        self._run_in_rich(regen_selected_children, pipeline_instance)
 
         submits = self.array_task_manager.next_submits(
             restart_failed=is_restart,

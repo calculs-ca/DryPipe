@@ -202,12 +202,15 @@ class PipelineInstance:
             raise Exception(f"expected a task with key {task_key}, found none")
 
     def regen_matching_tasks(self, task_key_glob_filter="*", log_handler=None):
-        self._regen_tasks(task_key_glob_filter=task_key_glob_filter, cli_tail_logger=None)
+        self._regen_tasks(lambda key: fnmatch.fnmatch(key, task_key_glob_filter), cli_tail_logger=None)
 
     def regen_task(self, task_key, cli_tail_logger=None):
-        self._regen_tasks(task_key_glob_filter=task_key, at_most_one=True, cli_tail_logger=cli_tail_logger)
+        self._regen_tasks(lambda key: fnmatch.fnmatch(key, task_key), at_most_one=True, cli_tail_logger=cli_tail_logger)
 
-    def _regen_tasks(self, task_key_glob_filter="*", at_most_one=False, cli_tail_logger=None):
+    def regen_tasks_with_keys(self, task_keys):
+        self._regen_tasks(lambda key: key in task_keys, cli_tail_logger=None)
+
+    def _regen_tasks(self, accept_key, at_most_one=False, cli_tail_logger=None):
 
         class BridgeHandler(logging.Handler):
             def __init__(self, target_logger):
@@ -239,7 +242,7 @@ class PipelineInstance:
         )
 
         for task in state_machine.gen_all_tasks():
-            if fnmatch.fnmatch(task.key, task_key_glob_filter):
+            if accept_key(task.key):
                 self.state_file_tracker.create_true_state_if_new_else_fetch_from_memory(task, force_save=True)
                 if at_most_one:
                     break

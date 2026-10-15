@@ -12,7 +12,7 @@ from dry_pipe_tests import task_launch_tests
 from dry_pipe_tests import test_core_lib
 from dry_pipe_tests import test_reports
 from dry_pipe_tests import test_task_timers
-from dry_pipe_tests.cli_tests import CliArrayTests1, CliTestsPipelineWithSlurmArray, CliTestScenario2, \
+from dry_pipe_tests.cli_tests import CliArrayTests1, CliTestsPipelineWithSlurmArray, CliTestScenario2, CliArraySubmitRegenTests, \
     CliFuncFilterTests
 from dry_pipe_tests.dsl_tests import TaskChangeTrackingTests
 from dry_pipe_tests.pipeline_tests_with_slurm_arrays import PipelineWithSlurmArray2StepsWith2Sbatch
@@ -39,6 +39,7 @@ def local_array_tests():
         CliArrayTests1,
         CliTestsPipelineWithSlurmArray,
         CliTestScenario2,
+        CliArraySubmitRegenTests,
         pipeline_tests_with_slurm_arrays.all_tests
     ]
 

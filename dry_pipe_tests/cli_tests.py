@@ -2,6 +2,7 @@ import glob
 import inspect
 import io
 import itertools
+import json
 import math
 import os.path
 import re
@@ -819,6 +820,57 @@ class CliFuncFilterTests(BasePipelineTest):
             self._list_keys(d, '--func-filter=func_filter_children_above(threshold=8)'),
             ['t09', 't10', 't11']
         )
+
+
+class CliArraySubmitRegenTests(BasePipelineTest):
+    """
+    array-submit regenerates the array parent and only the children selected by the filters.
+    A sentinel field is added to every task-conf.json, the ones that still have it were not regenerated.
+    """
+
+    generator = 'dry_pipe_tests.cli_tests:simple_array_pipeline'
+
+    def test_run_pipeline(self):
+        pass
+
+    def test_array_submit_regenerates_only_selected_children(self):
+        d = TestSandboxDir(self)
+
+        test_cli(
+            self,
+            'prepare',
+            f'--pipeline-instance-dir={d.sandbox_dir}',
+            f'--generator={self.generator}'
+        )
+
+        def task_conf_file(key):
+            return Path(d.sandbox_dir, ".drypipe", key, "task-conf.json")
+
+        all_keys = [f"t{i:02d}" for i in range(1, 12)] + ["ap"]
+
+        def add_sentinel(key):
+            task_conf = json.loads(task_conf_file(key).read_text())
+            task_conf["not_regenerated"] = True
+            task_conf_file(key).write_text(json.dumps(task_conf))
+
+        for key in all_keys:
+            add_sentinel(key)
+
+        test_cli(
+            self,
+            '--dry-run', 'array-submit',
+            f'--pipeline-instance-dir={d.sandbox_dir}',
+            f'--generator={self.generator}',
+            '--task-key=ap',
+            '--filter=t0[24]'
+        )
+
+        regenerated_keys = [
+            key for key in all_keys
+            if "not_regenerated" not in json.loads(task_conf_file(key).read_text())
+        ]
+
+        self.assertEqual(regenerated_keys, ["t02", "t04", "ap"])
 
 
 def dag_that_fails(dsl):
