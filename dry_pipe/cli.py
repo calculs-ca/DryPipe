@@ -28,7 +28,7 @@ from os import environ
 from pathlib import Path
 
 from dry_pipe import PortablePopen, DryPipe
-from dry_pipe.array_launch_loop import LaunchLoop, LoopIsRunning, LoopLock, count_queued_jobs
+from dry_pipe.array_launch_loop import LaunchLoop, LoopIsRunning, LoopLock, account_of_sbatch_options, count_queued_jobs
 from dry_pipe.core_lib import func_from_mod_func, is_inside_slurm_job, create_instance_logger
 from dry_pipe.frozen_dag_generator import FrozenDAGGenerator
 from dry_pipe.task_classifier import TaskClassifier, TaskClassifyContext
@@ -2047,6 +2047,21 @@ class Cli:
 
         task_keys = task_keys_to_submit()
 
+        sbatch_option_overrider = self.sbatch_options_overrider_func_if_option_exists()
+
+        def account():
+            sbatch_options = atm.array_task_conf().sbatch_options
+            if sbatch_option_overrider is not None:
+                sbatch_options = sbatch_option_overrider(sbatch_options)
+            account = account_of_sbatch_options(atm.resolved_sbatch_options(sbatch_options))
+            if account is None:
+                raise CliUserError(
+                    "--loop counts the jobs queued on the array's slurm account, the array has none, "
+                    "set its slurm_account, or --account in --sbatch-options"
+                )
+            return account
+
+        loop_account = account()
         loop_max_queued = args.max_queued
         margin = 10 if args.margin is None else args.margin
         min_batch = max(1, loop_max_queued // 10) if args.min_batch is None else args.min_batch
@@ -2064,7 +2079,7 @@ class Cli:
             return f"Will resume loop {unfinished_loop.number()}, {len(task_keys)} tasks left"
 
         print(
-            f"{loop_description()}, --max-queued={loop_max_queued} --margin={margin} "
+            f"{loop_description()}, account {loop_account}, --max-queued={loop_max_queued} --margin={margin} "
             f"--min-batch={min_batch} --sleep-interval={sleep_interval}",
             file=sys.stderr
         )
@@ -2083,14 +2098,11 @@ class Cli:
         launch_loop = unfinished_loop or LaunchLoop.create(atm, task_keys)
 
         def submits_of(keys):
-            return atm.next_submits(
-                set_of_task_keys=set(keys),
-                sbatch_option_overrider=self.sbatch_options_overrider_func_if_option_exists()
-            )
+            return atm.next_submits(set_of_task_keys=set(keys), sbatch_option_overrider=sbatch_option_overrider)
 
         launch_loop.run(
             loop_max_queued, margin, min_batch, sleep_interval * 60, args.tasks_per_job,
-            count_queued_jobs=lambda: count_queued_jobs(SQUEUE_TIMEOUT_SECS),
+            count_queued_jobs=lambda: count_queued_jobs(loop_account, SQUEUE_TIMEOUT_SECS),
             submits_of=submits_of
         )
 

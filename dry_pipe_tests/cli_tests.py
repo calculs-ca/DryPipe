@@ -17,7 +17,7 @@ import unittest.mock
 from pathlib import Path
 
 from dry_pipe import DryPipe, TaskConf
-from dry_pipe.array_launch_loop import LaunchLoop
+from dry_pipe.array_launch_loop import LaunchLoop, account_of_sbatch_options
 from dry_pipe.cli import Cli, CliUsageError, CliUserError, _load_filter_from_keys, _load_keys_of_filter_file, _signature_numbers
 from dry_pipe.core_lib import UpstreamTasksNotCompleted
 from dry_pipe.pipeline import Pipeline
@@ -1028,6 +1028,11 @@ class CliArraySubmitLoopTests(BasePipelineTest):
         self.prepare()
         with self.assertRaisesRegex(CliUsageError, "the loop could never submit"):
             self.cli('--loop', '--max-queued=10', '--margin=8', '--min-batch=3', '--yes', '--filter=t0*')
+
+    def test_account_of_sbatch_options(self):
+        self.assertEqual(account_of_sbatch_options(["--account=a1", "--time=1:00", "-A", "a2"]), "a2")
+        self.assertEqual(account_of_sbatch_options(["--account", "a1", "--time=1:00"]), "a1")
+        self.assertIsNone(account_of_sbatch_options(["--time=1:00"]))
 
     def test_loop_options_require_loop(self):
         self.prepare()

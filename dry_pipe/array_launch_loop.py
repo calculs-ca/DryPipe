@@ -20,12 +20,29 @@ def _print(msg):
     print(msg, file=sys.stderr, flush=True)
 
 
-def count_queued_jobs(timeout_secs):
+def account_of_sbatch_options(sbatch_options):
+    """the account of --account=A, --account A or -A A, the last one wins, as with sbatch, None when none"""
+    options = list(sbatch_options)
+
+    def accounts():
+        for option, next_option in zip(options, options[1:] + [None]):
+            if option.startswith("--account="):
+                yield option.split("=", 1)[1]
+            elif option in ("--account", "-A"):
+                yield next_option
+
+    return next(reversed(list(accounts())), None)
+
+
+def count_queued_jobs(account, timeout_secs):
     """
-    the number of jobs of the user in the queue, all pipelines included, array elements counted one by one
-    (-r), as MaxSubmitJobs counts them, None when squeue fails or times out
+    the number of jobs of the user in the queue on the slurm account, all pipelines included, array elements
+    counted one by one (-r), as MaxSubmitJobs counts them, None when squeue fails or times out
     """
-    with PortablePopen(["squeue", "-u", getpass.getuser(), "-h", "-r", "-o", "%i"]) as p:
+    if shutil.which("squeue") is None:
+        return None
+
+    with PortablePopen(["squeue", "-u", getpass.getuser(), "-A", account, "-h", "-r", "-o", "%i"]) as p:
         try:
             stdout, _ = p.communicate(timeout=timeout_secs)
         except subprocess.TimeoutExpired:

@@ -24,6 +24,8 @@ Welcome to DryPipe's documentation
    writing-pipelines/composition
    directory-structure
    task-launch
+   array-launch-loop
+   key-lists
    runtime-config
    cli-usage
    definitions
