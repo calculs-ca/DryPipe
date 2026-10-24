@@ -1868,6 +1868,9 @@ class Cli:
 
     def array_submit(self):
 
+        if self.parsed_args.loop:
+            self._apply_saved_loop_options()
+
         self._check_loop_options()
 
         cli_tail_logger = None
@@ -1993,6 +1996,36 @@ class Cli:
                 raise ArraySubmitRejected(f"sbatch rejected the array submission:\n{e}")
             launch_count += len(submit.task_keys)
 
+    def _saved_loop_options(self):
+        """the options saved in the loop file, {option: (dest, type)}, the selection is saved as the loop's keys"""
+        return {
+            "--max-queued": ("max_queued", int),
+            "--max-queued-account": ("max_queued_account", str),
+            "--margin": ("margin", int),
+            "--min-batch": ("min_batch", int),
+            "--sleep-interval": ("sleep_interval", float),
+            "--sbatch-options": ("sbatch_options", str),
+            "--tasks-per-job": ("tasks_per_job", int),
+            "--stop-after-step": ("stop_after_step", int),
+            "--slurm-max-jobs": ("slurm_max_jobs", int)
+        }
+
+    def _apply_saved_loop_options(self):
+        """the options saved by the unfinished loop, unless given again"""
+        saved_loop_options = self._saved_loop_options()
+        for option, value in LaunchLoop.saved_options(self._control_dir()).items():
+            if option not in saved_loop_options:
+                raise CliUserError(f"unknown option {option} in the loop file of {self._control_dir()}")
+            dest, option_type = saved_loop_options[option]
+            if getattr(self.parsed_args, dest) is None:
+                setattr(self.parsed_args, dest, option_type(value))
+
+    def _loop_options_to_save(self):
+        for option, (dest, _) in self._saved_loop_options().items():
+            value = getattr(self.parsed_args, dest)
+            if value is not None:
+                yield f"{option}={value}"
+
     def _check_loop_options(self):
         args = self.parsed_args
 
@@ -2088,11 +2121,14 @@ class Cli:
                 return f"Will start a loop with {len(task_keys)} tasks"
             return f"Will resume loop {unfinished_loop.number()}, {len(task_keys)} tasks left"
 
+        loop_options = list(self._loop_options_to_save())
+
         print(
             f"{loop_description()}, account {loop_account}, --max-queued={loop_max_queued} --margin={margin} "
             f"--min-batch={min_batch} --sleep-interval={sleep_interval}",
             file=sys.stderr
         )
+        print(f"options saved in the loop file: {shlex.join(loop_options)}", file=sys.stderr)
 
         if args.dry_run:
             return
@@ -2106,6 +2142,7 @@ class Cli:
         self._run_in_rich(lambda: pipeline_instance.regen_tasks_with_keys(set(task_keys)), pipeline_instance)
 
         launch_loop = unfinished_loop or LaunchLoop.create(atm, task_keys)
+        launch_loop.append_options(loop_options)
 
         def submits_of(keys):
             return atm.next_submits(set_of_task_keys=set(keys), sbatch_option_overrider=sbatch_option_overrider)

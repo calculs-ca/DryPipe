@@ -1,4 +1,5 @@
 import contextlib
+import fcntl
 import glob
 import inspect
 import io
@@ -18,7 +19,7 @@ import unittest.mock
 from pathlib import Path
 
 from dry_pipe import DryPipe, TaskConf
-from dry_pipe.array_launch_loop import LaunchLoop, account_of_sbatch_options
+from dry_pipe.array_launch_loop import LaunchLoop, LoopLock, account_of_sbatch_options
 from dry_pipe.cli import Cli, CliUsageError, CliUserError, _load_filter_from_keys, _load_keys_of_filter_file, _signature_numbers
 from dry_pipe.core_lib import UpstreamTasksNotCompleted
 from dry_pipe.pipeline import Pipeline
@@ -1012,6 +1013,34 @@ class CliArraySubmitLoopTests(BasePipelineTest):
         )
         self.assertEqual(list(self.array_control_dir.glob("loop.*.tsv")), [])
 
+    def test_lock_file_is_deleted_when_the_loop_ends(self):
+        self.prepare()
+        with self.assertRaisesRegex(CliUserError, "no unfinished loop to resume"):
+            self.cli('--loop', '--max-queued=100', '--yes')
+        self.assertFalse(Path(self.array_control_dir, "loop.lock").exists())
+
+    def test_lock_on_a_deleted_lock_file_is_taken_again(self):
+        self.prepare()
+        lock_path = Path(self.array_control_dir, "loop.lock")
+        lock = LoopLock(self.array_control_dir)
+        real_lockf = fcntl.lockf
+        calls = []
+
+        def lockf(f, flags):
+            """the first lock is taken on a file that its previous holder deletes"""
+            real_lockf(f, flags)
+            if len(calls) == 0:
+                os.remove(lock_path)
+            calls.append(f)
+
+        with unittest.mock.patch("fcntl.lockf", lockf):
+            lock.acquire()
+
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(lock_path.stat().st_ino, os.fstat(lock.file.fileno()).st_ino)
+        lock.release()
+        self.assertFalse(lock_path.exists())
+
     def test_abandon_loop(self):
         atm = self.prepare()
         LaunchLoop.create(atm, self.all_children)
@@ -1030,20 +1059,33 @@ class CliArraySubmitLoopTests(BasePipelineTest):
         with self.assertRaisesRegex(CliUsageError, "the loop could never submit"):
             self.cli('--loop', '--max-queued=10', '--margin=8', '--min-batch=3', '--yes', '--filter=t0*')
 
+    def dry_run_output(self, *args):
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            test_cli(
+                self, '--dry-run', 'array-submit', f'--pipeline-instance-dir={self.sandbox_dir}',
+                f'--generator={self.generator}', '--task-key=ap', '--loop', *args
+            )
+        return err.getvalue()
+
     def test_max_queued_account_replaces_the_sbatch_account(self):
         self.prepare()
+        self.assertIn("account dummy-account,", self.dry_run_output('--max-queued=100', '--filter=t0*'))
+        self.assertIn(
+            "account dummy-account_cpu,",
+            self.dry_run_output('--max-queued=100', '--filter=t0*', '--max-queued-account=dummy-account_cpu')
+        )
 
-        def dry_run_output(*args):
-            err = io.StringIO()
-            with contextlib.redirect_stderr(err):
-                test_cli(
-                    self, '--dry-run', 'array-submit', f'--pipeline-instance-dir={self.sandbox_dir}',
-                    f'--generator={self.generator}', '--task-key=ap', '--loop', '--max-queued=100', '--filter=t0*', *args
-                )
-            return err.getvalue()
+    def test_resume_uses_the_last_saved_options_unless_given_again(self):
+        launch_loop = LaunchLoop.create(self.prepare(), self.all_children)
+        launch_loop.append_options(["--max-queued=50", "--margin=4", "--sbatch-options=--mem=1G --time=1:00"])
+        launch_loop.append_options(["--max-queued=100", "--margin=5", "--sbatch-options=--mem=1G --time=1:00"])
 
-        self.assertIn("account dummy-account,", dry_run_output())
-        self.assertIn("account dummy-account_cpu,", dry_run_output('--max-queued-account=dummy-account_cpu'))
+        out = self.dry_run_output('--margin=7')
+
+        self.assertIn("--max-queued=100 --margin=7 --min-batch=10", out)
+        self.assertIn("options saved in the loop file: --max-queued=100 --margin=7 '--sbatch-options=--mem=1G --time=1:00'", out)
+        self.assertEqual(launch_loop.remaining_keys(), self.all_children)
 
     def test_account_of_sbatch_options(self):
         self.assertEqual(account_of_sbatch_options(["--account=a1", "--time=1:00", "-A", "a2"]), "a2")

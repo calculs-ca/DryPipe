@@ -3,6 +3,7 @@ import getpass
 import glob
 import math
 import os
+import shlex
 import shutil
 import signal
 import socket
@@ -62,7 +63,8 @@ class LoopIsRunning(Exception):
 class LoopLock:
     """
     .drypipe/<array-key>/loop.lock, held by the process that runs a loop of the array, it holds the
-    host, pid, user and start time of that process, a killed process releases its lock
+    host, pid, user and start time of that process. The file is deleted when the process ends, and a killed
+    process releases its lock, leaving an unlocked file
     """
 
     def __init__(self, array_control_dir):
@@ -79,6 +81,15 @@ class LoopLock:
             f.close()
             raise LoopIsRunning(self._running_message(holder))
 
+        def is_deleted_by_previous_holder():
+            # the file was opened before its holder deleted it, the lock is on a file no one else will see
+            return not self.path.exists() or os.stat(self.path).st_ino != os.fstat(f.fileno()).st_ino
+
+        if is_deleted_by_previous_holder():
+            f.close()
+            self.acquire()
+            return
+
         f.seek(0)
         f.truncate()
         f.write("\t".join([
@@ -89,6 +100,8 @@ class LoopLock:
 
     def release(self):
         if self.file is not None:
+            # deleted before closing: deleting it after the lock is released could delete another process's lock
+            os.remove(self.path)
             self.file.close()
             self.file = None
 
@@ -114,6 +127,7 @@ class LaunchLoop:
     .drypipe/<array-key>/loop.<n>.<state>.tsv, state is running, complete or abandoned.
     The keys of the loop, in submit order, followed by a "# array.<x>" comment per array submitted by the loop,
     written before its sbatch: an array is submitted only if its array.<x>.job.<job_id> exists.
+    A "# options: ..." comment is appended each time the loop is started or resumed, the last one wins.
     """
 
     def __init__(self, array_task_manager, path):
@@ -121,23 +135,52 @@ class LaunchLoop:
         self.path = Path(path)
 
     @staticmethod
-    def _loop_files(array_task_manager, state="*"):
-        return glob.glob(os.path.join(array_task_manager.array_task_control_dir(), f"loop.*.{state}.tsv"))
+    def _loop_files(array_control_dir, state="*"):
+        return glob.glob(os.path.join(array_control_dir, f"loop.*.{state}.tsv"))
 
     @staticmethod
-    def unfinished(array_task_manager):
-        running = LaunchLoop._loop_files(array_task_manager, "running")
+    def _unfinished_loop_file(array_control_dir):
+        running = LaunchLoop._loop_files(array_control_dir, "running")
         if len(running) == 0:
             return None
         if len(running) > 1:
             raise Exception(f"more than one running loop: {running}")
-        return LaunchLoop(array_task_manager, running[0])
+        return running[0]
+
+    @staticmethod
+    def unfinished(array_task_manager):
+        path = LaunchLoop._unfinished_loop_file(array_task_manager.array_task_control_dir())
+        return None if path is None else LaunchLoop(array_task_manager, path)
+
+    @staticmethod
+    def saved_options(array_control_dir):
+        """{"--option": "value"} of the "# options:" comments of the unfinished loop, the last ones win"""
+        path = LaunchLoop._unfinished_loop_file(array_control_dir)
+        if path is None:
+            return {}
+
+        prefix = "# options:"
+        with open(path) as f:
+            option_lines = [line[len(prefix):] for line in f if line.startswith(prefix)]
+
+        return dict(
+            token.split("=", 1)
+            for line in option_lines
+            for token in shlex.split(line)
+        )
+
+    def append_options(self, options):
+        with open(self.path, "a") as f:
+            f.write(f"# options: {shlex.join(options)}\n")
 
     @staticmethod
     def create(array_task_manager, task_keys):
 
         def next_number():
-            numbers = [int(os.path.basename(f).split(".")[1]) for f in LaunchLoop._loop_files(array_task_manager)]
+            numbers = [
+                int(os.path.basename(f).split(".")[1])
+                for f in LaunchLoop._loop_files(array_task_manager.array_task_control_dir())
+            ]
             return max(numbers, default=0) + 1
 
         path = Path(array_task_manager.array_task_control_dir(), f"loop.{next_number()}.running.tsv")
