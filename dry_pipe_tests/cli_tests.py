@@ -1,3 +1,4 @@
+import contextlib
 import glob
 import inspect
 import io
@@ -1029,6 +1030,21 @@ class CliArraySubmitLoopTests(BasePipelineTest):
         with self.assertRaisesRegex(CliUsageError, "the loop could never submit"):
             self.cli('--loop', '--max-queued=10', '--margin=8', '--min-batch=3', '--yes', '--filter=t0*')
 
+    def test_max_queued_account_replaces_the_sbatch_account(self):
+        self.prepare()
+
+        def dry_run_output(*args):
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                test_cli(
+                    self, '--dry-run', 'array-submit', f'--pipeline-instance-dir={self.sandbox_dir}',
+                    f'--generator={self.generator}', '--task-key=ap', '--loop', '--max-queued=100', '--filter=t0*', *args
+                )
+            return err.getvalue()
+
+        self.assertIn("account dummy-account,", dry_run_output())
+        self.assertIn("account dummy-account_cpu,", dry_run_output('--max-queued-account=dummy-account_cpu'))
+
     def test_account_of_sbatch_options(self):
         self.assertEqual(account_of_sbatch_options(["--account=a1", "--time=1:00", "-A", "a2"]), "a2")
         self.assertEqual(account_of_sbatch_options(["--account", "a1", "--time=1:00"]), "a1")
@@ -1036,8 +1052,8 @@ class CliArraySubmitLoopTests(BasePipelineTest):
 
     def test_loop_options_require_loop(self):
         self.prepare()
-        with self.assertRaisesRegex(CliUsageError, "--min-batch only apply with --loop"):
-            self.cli('--min-batch=3', '--filter=t0*')
+        with self.assertRaisesRegex(CliUsageError, "--max-queued-account, --min-batch only apply with --loop"):
+            self.cli('--max-queued-account=a_cpu', '--min-batch=3', '--filter=t0*')
 
     def test_running_loop_is_refused(self):
         self.prepare()

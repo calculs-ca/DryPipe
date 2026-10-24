@@ -1215,6 +1215,13 @@ class Cli:
                 help="with --loop, required, maximum number of your jobs in the queue, ex: your MaxSubmitJobs limit"
             )
             parser.add_argument(
+                '--max-queued-account',
+                default=None,
+                metavar='ACCOUNT',
+                help="with --loop, the slurm account whose queued jobs count against --max-queued, defaults to the "
+                     "account the arrays are submitted with, ex: rrg-abc_cpu, on clusters that add a suffix to accounts"
+            )
+            parser.add_argument(
                 '--margin',
                 type=int,
                 default=None,
@@ -1992,7 +1999,8 @@ class Cli:
         if not args.loop:
             given = [
                 option for option, value in [
-                    ("--max-queued", args.max_queued), ("--margin", args.margin),
+                    ("--max-queued", args.max_queued), ("--max-queued-account", args.max_queued_account),
+                    ("--margin", args.margin),
                     ("--min-batch", args.min_batch), ("--sleep-interval", args.sleep_interval)
                 ]
                 if value is not None
@@ -2050,6 +2058,8 @@ class Cli:
         sbatch_option_overrider = self.sbatch_options_overrider_func_if_option_exists()
 
         def account():
+            if args.max_queued_account is not None:
+                return args.max_queued_account
             sbatch_options = atm.array_task_conf().sbatch_options
             if sbatch_option_overrider is not None:
                 sbatch_options = sbatch_option_overrider(sbatch_options)
@@ -2057,7 +2067,7 @@ class Cli:
             if account is None:
                 raise CliUserError(
                     "--loop counts the jobs queued on the array's slurm account, the array has none, "
-                    "set its slurm_account, or --account in --sbatch-options"
+                    "set its slurm_account, --account in --sbatch-options, or --max-queued-account"
                 )
             return account
 
