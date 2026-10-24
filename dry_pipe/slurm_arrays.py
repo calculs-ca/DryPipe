@@ -281,8 +281,9 @@ class SbatchRejected(Exception):
 
 class SlurmArrayBatchSubmit:
 
-    def __init__(self, array_task_manager, pre_submit_func, sbatch_command, post_submit_func, task_keys, sbatch_options):
+    def __init__(self, array_task_manager, pre_submit_func, sbatch_command, post_submit_func, task_keys, sbatch_options, array_number):
         self.array_task_manager = array_task_manager
+        self.array_number = array_number
         self.sbatch_command = sbatch_command
         self.sbatch_options = sbatch_options
         self.pre_submit_func = pre_submit_func
@@ -801,7 +802,9 @@ class ArrayTaskManager:
                             print(" ".join(command_args), file=f)
                             print(submitted_by, file=f)
 
-                yield SlurmArrayBatchSubmit(self, pre_submit_func, command_args, post_submit_func, task_keys, resolved_sbatch_options)
+                yield SlurmArrayBatchSubmit(
+                    self, pre_submit_func, command_args, post_submit_func, task_keys, resolved_sbatch_options, next_array_number
+                )
 
         return list(g())
 

@@ -7,15 +7,18 @@ import math
 import os.path
 import re
 import shutil
+import signal
 import sqlite3
 import subprocess
+import sys
 import time
 import unittest
 import unittest.mock
 from pathlib import Path
 
 from dry_pipe import DryPipe, TaskConf
-from dry_pipe.cli import Cli, _load_filter_from_keys, _load_keys_of_filter_file, _signature_numbers
+from dry_pipe.array_launch_loop import LaunchLoop
+from dry_pipe.cli import Cli, CliUsageError, CliUserError, _load_filter_from_keys, _load_keys_of_filter_file, _signature_numbers
 from dry_pipe.core_lib import UpstreamTasksNotCompleted
 from dry_pipe.pipeline import Pipeline
 from dry_pipe.task_classifier import lazy_task_inputs_outputs
@@ -871,6 +874,190 @@ class CliArraySubmitRegenTests(BasePipelineTest):
         ]
 
         self.assertEqual(regenerated_keys, ["t02", "t04", "ap"])
+
+
+class CliArraySubmitLoopTests(BasePipelineTest):
+    """
+    array-submit --loop, with the queue counts given by the tests instead of squeue, and fake job ids
+    """
+
+    generator = 'dry_pipe_tests.cli_tests:simple_array_pipeline'
+
+    all_children = [f"t{i:02d}" for i in range(1, 12)]
+
+    def test_run_pipeline(self):
+        pass
+
+    def prepare(self):
+        d = TestSandboxDir(self)
+        test_cli(self, 'prepare', f'--pipeline-instance-dir={d.sandbox_dir}', f'--generator={self.generator}')
+        self.array_control_dir = Path(d.sandbox_dir, ".drypipe", "ap")
+        self.sandbox_dir = d.sandbox_dir
+        task_process = TaskProcess(self.array_control_dir.__str__(), test_mode=True)
+        return task_process.create_array_task_manager()
+
+    def run_loop(
+        self, launch_loop, queue_counts, tasks_per_job=None, max_queued=10, margin=2, min_batch=3,
+        before_submit=lambda: None, sleep=None
+    ):
+        sleeps = []
+        counts = iter(queue_counts)
+
+        def invoke_submit(submit):
+            before_submit()
+            submit.invoke(fake_job_id=f"{1000 + submit.array_number}")
+
+        launch_loop.run(
+            max_queued, margin, min_batch, 60, tasks_per_job,
+            count_queued_jobs=lambda: next(counts),
+            submits_of=lambda keys: launch_loop.array_task_manager.next_submits(set_of_task_keys=set(keys)),
+            sleep=sleep or sleeps.append,
+            invoke_submit=invoke_submit
+        )
+        return sleeps
+
+    def array_keys(self, array_n):
+        return Path(self.array_control_dir, f"array.{array_n}.tsv").read_text().split()
+
+    def loop_file(self, n, state):
+        return Path(self.array_control_dir, f"loop.{n}.{state}.tsv")
+
+    def cli(self, *args):
+        test_cli(
+            self, 'array-submit', f'--pipeline-instance-dir={self.sandbox_dir}', f'--generator={self.generator}',
+            '--task-key=ap', *args
+        )
+
+    def test_submits_as_queue_frees_up(self):
+        launch_loop = LaunchLoop.create(self.prepare(), self.all_children)
+
+        # free slots: 0 skipped, squeue failed, 4 submitted, 1 < min-batch, 8 for the last 7 tasks
+        sleeps = self.run_loop(launch_loop, [8, None, 4, 7, 0])
+
+        self.assertEqual(sleeps, [60] * 4)
+        self.assertEqual(self.array_keys(0), self.all_children[:4])
+        self.assertEqual(self.array_keys(1), self.all_children[4:])
+        self.assertTrue(self.loop_file(1, "complete").exists())
+        self.assertEqual(
+            self.loop_file(1, "complete").read_text().split("\n")[-3:],
+            ["# array.0", "# array.1", ""]
+        )
+
+    def test_ctrl_c_during_submit_stops_after_the_submit(self):
+        launch_loop = LaunchLoop.create(self.prepare(), self.all_children)
+
+        with self.assertRaises(SystemExit):
+            self.run_loop(launch_loop, [5], before_submit=lambda: os.kill(os.getpid(), signal.SIGINT))
+
+        self.assertTrue(Path(self.array_control_dir, "array.0.job.1000").exists())
+        self.assertEqual(launch_loop.remaining_keys(), self.all_children[3:])
+
+    def test_ctrl_c_while_sleeping_stops_the_loop(self):
+        launch_loop = LaunchLoop.create(self.prepare(), self.all_children)
+
+        with self.assertRaises(SystemExit):
+            self.run_loop(launch_loop, [10], sleep=lambda secs: os.kill(os.getpid(), signal.SIGINT))
+
+        self.assertTrue(self.loop_file(1, "running").exists())
+
+    def test_last_batch_smaller_than_min_batch_is_submitted(self):
+        launch_loop = LaunchLoop.create(self.prepare(), self.all_children[:2])
+
+        sleeps = self.run_loop(launch_loop, [0], min_batch=5)
+
+        self.assertEqual(sleeps, [])
+        self.assertEqual(self.array_keys(0), self.all_children[:2])
+
+    def test_packed_jobs_fill_free_slots(self):
+        launch_loop = LaunchLoop.create(self.prepare(), self.all_children)
+
+        self.run_loop(launch_loop, [6, 0], tasks_per_job=3, min_batch=1)
+
+        self.assertEqual(self.array_keys(0), self.all_children[:6])
+        self.assertEqual(self.array_keys(1), self.all_children[6:])
+
+    def test_arrays_without_job_file_are_not_submitted(self):
+        atm = self.prepare()
+        launch_loop = LaunchLoop.create(atm, self.all_children)
+
+        def write_array(array_n, keys, with_job_file):
+            Path(self.array_control_dir, f"array.{array_n}.tsv").write_text("\n".join(keys) + "\n")
+            if with_job_file:
+                Path(self.array_control_dir, f"array.{array_n}.job.{1000 + array_n}").write_text("sbatch\n")
+            with open(launch_loop.path, "a") as f:
+                f.write(f"# array.{array_n}\n")
+
+        write_array(0, ["t01", "t02"], with_job_file=True)
+        # killed before sbatch accepted the array
+        write_array(1, ["t03", "t04"], with_job_file=False)
+
+        self.assertEqual(LaunchLoop.unfinished(atm).remaining_keys(), self.all_children[2:])
+
+    def test_new_loop_without_filters_is_refused(self):
+        self.prepare()
+        with self.assertRaisesRegex(CliUserError, "no unfinished loop to resume"):
+            self.cli('--loop', '--max-queued=10', '--yes')
+
+    def test_new_loop_is_refused_when_one_is_unfinished(self):
+        LaunchLoop.create(self.prepare(), self.all_children)
+        with self.assertRaisesRegex(CliUserError, "loop 1 is unfinished"):
+            self.cli('--loop', '--max-queued=10', '--yes', '--filter=t0*')
+
+    def test_dry_run_starts_no_loop(self):
+        self.prepare()
+        test_cli(
+            self, '--dry-run', 'array-submit', f'--pipeline-instance-dir={self.sandbox_dir}',
+            f'--generator={self.generator}', '--task-key=ap', '--loop', '--max-queued=100', '--filter=t0*'
+        )
+        self.assertEqual(list(self.array_control_dir.glob("loop.*.tsv")), [])
+
+    def test_abandon_loop(self):
+        atm = self.prepare()
+        LaunchLoop.create(atm, self.all_children)
+        self.cli('--abandon-loop')
+        self.assertTrue(self.loop_file(1, "abandoned").exists())
+        self.assertIsNone(LaunchLoop.unfinished(atm))
+        self.assertEqual(LaunchLoop.create(atm, self.all_children).number(), 2)
+
+    def test_loop_requires_max_queued(self):
+        self.prepare()
+        with self.assertRaisesRegex(CliUsageError, "--loop requires --max-queued"):
+            self.cli('--loop', '--yes', '--filter=t0*')
+
+    def test_loop_that_could_never_submit_is_refused(self):
+        self.prepare()
+        with self.assertRaisesRegex(CliUsageError, "the loop could never submit"):
+            self.cli('--loop', '--max-queued=10', '--margin=8', '--min-batch=3', '--yes', '--filter=t0*')
+
+    def test_loop_options_require_loop(self):
+        self.prepare()
+        with self.assertRaisesRegex(CliUsageError, "--min-batch only apply with --loop"):
+            self.cli('--min-batch=3', '--filter=t0*')
+
+    def test_running_loop_is_refused(self):
+        self.prepare()
+        lock_file = Path(self.array_control_dir, "loop.lock")
+        holder = subprocess.Popen(
+            [
+                sys.executable, "-c",
+                "import fcntl, sys, time\n"
+                f"f = open('{lock_file}', 'a+')\n"
+                "fcntl.lockf(f, fcntl.LOCK_EX)\n"
+                "f.write('otherhost\\t41237\\tsomeone\\t2026-10-24 09:12')\n"
+                "f.flush()\n"
+                "print('locked', flush=True)\n"
+                "time.sleep(30)\n"
+            ],
+            stdout=subprocess.PIPE, text=True
+        )
+        try:
+            holder.stdout.readline()
+            with self.assertRaisesRegex(CliUserError, "pid 41237 on otherhost .*\n.*ssh otherhost kill 41237"):
+                self.cli('--loop', '--max-queued=10', '--yes', '--filter=t0*')
+        finally:
+            holder.kill()
+            holder.wait()
+            holder.stdout.close()
 
 
 def dag_that_fails(dsl):

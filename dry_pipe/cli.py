@@ -28,6 +28,7 @@ from os import environ
 from pathlib import Path
 
 from dry_pipe import PortablePopen, DryPipe
+from dry_pipe.array_launch_loop import LaunchLoop, LoopIsRunning, LoopLock, count_queued_jobs
 from dry_pipe.core_lib import func_from_mod_func, is_inside_slurm_job, create_instance_logger
 from dry_pipe.frozen_dag_generator import FrozenDAGGenerator
 from dry_pipe.task_classifier import TaskClassifier, TaskClassifyContext
@@ -1198,9 +1199,52 @@ class Cli:
                 help="submit without asking for confirmation, for scripts"
             )
 
+        def loop(parser):
+            parser.add_argument(
+                '--loop',
+                action='store_true',
+                default=False,
+                help="submit the selected tasks in small arrays, each time the queue has room for them, "
+                     "without --filter-* options: resume the unfinished loop"
+            )
+            parser.add_argument(
+                '--max-queued',
+                type=int,
+                default=None,
+                metavar='N',
+                help="with --loop, required, maximum number of your jobs in the queue, ex: your MaxSubmitJobs limit"
+            )
+            parser.add_argument(
+                '--margin',
+                type=int,
+                default=None,
+                metavar='N',
+                help="with --loop, free slots left unused, for jobs submitted by other means, default: 10"
+            )
+            parser.add_argument(
+                '--min-batch',
+                type=int,
+                default=None,
+                metavar='N',
+                help="with --loop, smallest array submitted, default: 10%% of --max-queued"
+            )
+            parser.add_argument(
+                '--sleep-interval',
+                type=float,
+                default=None,
+                metavar='MINUTES',
+                help="with --loop, minutes between two checks of the queue, default: 5"
+            )
+            parser.add_argument(
+                '--abandon-loop',
+                action='store_true',
+                default=False,
+                help="abandon the unfinished loop of the array"
+            )
+
         yield Command('array-submit',
                       task_key, regen, generator_optional, tail, wait, include_all_incompleted_tasks,
-                      sbatch_options, reset, tasks_per_job, slurm_max_jobs, stop_after_step, yes, *all_filters(),
+                      sbatch_options, reset, tasks_per_job, slurm_max_jobs, stop_after_step, yes, loop, *all_filters(),
                       help="submit array, after a confirmation (see --yes)")
 
         yield Command('array-upload', task_key, help="upload array task to remote location")
@@ -1817,6 +1861,8 @@ class Cli:
 
     def array_submit(self):
 
+        self._check_loop_options()
+
         cli_tail_logger = None
         if self._tail():
             cli_tail_logger = self.logger
@@ -1854,6 +1900,18 @@ class Cli:
         self.array_task_manager = self.task_process.create_array_task_manager(
             self.parsed_args.slurm_max_jobs, instance_logger=self.instance_logger
         )
+
+        if self.parsed_args.loop or self.parsed_args.abandon_loop:
+            self._array_submit_loop(pipeline_instance)
+            return
+
+        unfinished_loop = LaunchLoop.unfinished(self.array_task_manager)
+        if unfinished_loop is not None:
+            print(
+                f"warning: loop {unfinished_loop.number()} is unfinished, "
+                f"it will submit {len(unfinished_loop.remaining_keys())} more tasks when resumed",
+                file=sys.stderr
+            )
 
         if not self.has_filters():
             self.array_task_manager.invoke_sacct()
@@ -1927,7 +1985,115 @@ class Cli:
             except SbatchRejected as e:
                 raise ArraySubmitRejected(f"sbatch rejected the array submission:\n{e}")
             launch_count += len(submit.task_keys)
-        
+
+    def _check_loop_options(self):
+        args = self.parsed_args
+
+        if not args.loop:
+            given = [
+                option for option, value in [
+                    ("--max-queued", args.max_queued), ("--margin", args.margin),
+                    ("--min-batch", args.min_batch), ("--sleep-interval", args.sleep_interval)
+                ]
+                if value is not None
+            ]
+            if len(given) > 0:
+                raise CliUsageError(f"{', '.join(given)} only apply with --loop")
+        elif args.wait or self._tail():
+            raise CliUsageError("--loop can't be combined with --wait, --tail or --tail-all")
+        elif args.max_queued is None:
+            raise CliUsageError("--loop requires --max-queued")
+
+    def _array_submit_loop(self, pipeline_instance):
+        lock = LoopLock(self.array_task_manager.array_task_control_dir())
+        try:
+            lock.acquire()
+        except LoopIsRunning as e:
+            raise CliUserError(str(e))
+
+        try:
+            self._array_submit_loop_holding_lock(pipeline_instance)
+        finally:
+            lock.release()
+
+    def _array_submit_loop_holding_lock(self, pipeline_instance):
+
+        args = self.parsed_args
+        atm = self.array_task_manager
+
+        unfinished_loop = LaunchLoop.unfinished(atm)
+
+        if args.abandon_loop:
+            if unfinished_loop is None:
+                raise CliUserError("the array has no unfinished loop")
+            if args.dry_run:
+                print(f"DRY RUN: loop {unfinished_loop.number()} not abandoned", file=sys.stderr)
+                return
+            unfinished_loop.abandon()
+            print(f"loop {unfinished_loop.number()} abandoned, {unfinished_loop.path}", file=sys.stderr)
+            return
+
+        def task_keys_to_submit():
+            if unfinished_loop is not None:
+                if self.has_filters():
+                    raise CliUserError(
+                        f"loop {unfinished_loop.number()} is unfinished, resume it with --loop without --filter-* "
+                        f"options, or abandon it with --abandon-loop"
+                    )
+                return unfinished_loop.remaining_keys()
+            if not self.has_filters():
+                raise CliUserError("the array has no unfinished loop to resume, select the tasks of a new loop with --filter-* options")
+            return [key for key, _, _, _ in self.filter_key_state_step(atm.children_task_keys())]
+
+        task_keys = task_keys_to_submit()
+
+        loop_max_queued = args.max_queued
+        margin = 10 if args.margin is None else args.margin
+        min_batch = max(1, loop_max_queued // 10) if args.min_batch is None else args.min_batch
+        sleep_interval = 5 if args.sleep_interval is None else args.sleep_interval
+
+        if loop_max_queued - margin < min_batch:
+            raise CliUsageError(
+                f"--max-queued={loop_max_queued} minus --margin={margin} leaves fewer free slots than "
+                f"--min-batch={min_batch}, the loop could never submit"
+            )
+
+        def loop_description():
+            if unfinished_loop is None:
+                return f"Will start a loop with {len(task_keys)} tasks"
+            return f"Will resume loop {unfinished_loop.number()}, {len(task_keys)} tasks left"
+
+        print(
+            f"{loop_description()}, --max-queued={loop_max_queued} --margin={margin} "
+            f"--min-batch={min_batch} --sleep-interval={sleep_interval}",
+            file=sys.stderr
+        )
+
+        if args.dry_run:
+            return
+
+        if not args.yes:
+            print("start ? [y/N] ", end="", file=sys.stderr, flush=True)
+            if sys.stdin.readline().strip().lower() not in ("y", "yes"):
+                print("nothing submitted", file=sys.stderr)
+                return
+
+        self._run_in_rich(lambda: pipeline_instance.regen_tasks_with_keys(set(task_keys)), pipeline_instance)
+
+        launch_loop = unfinished_loop or LaunchLoop.create(atm, task_keys)
+
+        def submits_of(keys):
+            return atm.next_submits(
+                set_of_task_keys=set(keys),
+                sbatch_option_overrider=self.sbatch_options_overrider_func_if_option_exists()
+            )
+
+        launch_loop.run(
+            loop_max_queued, margin, min_batch, sleep_interval * 60, args.tasks_per_job,
+            count_queued_jobs=lambda: count_queued_jobs(SQUEUE_TIMEOUT_SECS),
+            submits_of=submits_of
+        )
+
 
     def array_submit_from_remote(self):
         control_dir = self._control_dir()
