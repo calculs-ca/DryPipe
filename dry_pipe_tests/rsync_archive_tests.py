@@ -1108,6 +1108,12 @@ class ImportInputsTests(RsyncArchiveTestCase):
         with self.assertRaises(subprocess.CalledProcessError):
             self.import_inputs(f"--into={self.dest}")
 
+    def test_rsync_ignore_missing_args_skips_missing_source_files(self):
+        self.write_sources()
+        (self.sandbox / "src2/d/r2/r2.mgf").unlink()
+        self.import_inputs(f"--into={self.dest}", "--rsync-ignore-missing-args")
+        self.assertEqual(self.dest_files(), {"a/b/c/shared.mgf", "d/r1/r1.mgf"})
+
     def test_rsync_into_overrides_the_cli_into(self):
         for dag_args in [[], ["--fs-generator"]]:
             with self.subTest(dag_args=dag_args):

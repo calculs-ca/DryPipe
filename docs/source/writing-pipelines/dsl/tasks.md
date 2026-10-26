@@ -90,6 +90,8 @@ One rsync is run per source and destination, the task filters (ex: `--filter`, `
 the tasks whose inputs get imported. `--into` changes the destination of the files that don't have an `into`.
 With `--fs-generator` instead of `-g`, the inputs of the tasks already created (by `run` or `prepare`) are imported
 without running the DAG generator.
+`--rsync-ignore-missing-args` skips the input files missing at the rsync source instead of failing, ex: inputs
+of tasks whose upstream tasks failed.
 
 ## outputs
 

@@ -1450,7 +1450,15 @@ class Cli:
                 default=None
             )
 
-        yield Command('import-inputs', pipeline_instance_dir, generator_optional, fs_generator, import_into, no_confirm, *all_filters(),
+        def rsync_ignore_missing_args(parser):
+            parser.add_argument(
+                '--rsync-ignore-missing-args',
+                help="pass --ignore-missing-args to rsync: skip input files missing at the rsync source instead of failing",
+                action='store_true',
+                default=False
+            )
+
+        yield Command('import-inputs', pipeline_instance_dir, generator_optional, fs_generator, import_into, no_confirm, rsync_ignore_missing_args, *all_filters(),
                       help="import the remote inputs of matching tasks, declared with dsl.file('a/b/f.mgf').rsync('my-host:/x/y/'): "
                            "one rsync is run per source and destination, with the file list passed on stdin (--files-from=-), "
                            "ex: my-host:/x/y/a/b/f.mgf is imported as <pid>/a/b/f.mgf"
@@ -2624,15 +2632,17 @@ class Cli:
         if not self.parsed_args.no_confirm and not self.query_yes_no("continue ?", default="no"):
             return
 
-        def reporting_and_dry_run_options():
+        def rsync_options():
             yield from ["-h", "--stats", "--info=progress2"]
             if self.parsed_args.dry_run:
                 yield "--dry-run"
+            if self.parsed_args.rsync_ignore_missing_args:
+                yield "--ignore-missing-args"
 
         for (source, dest), paths in sorted(paths_by_source_and_dest.items()):
             print(f"rsync {source} -> {dest}: {len(paths)} files", file=self.output, flush=True)
             subprocess.run(
-                ["rsync", "-a", *reporting_and_dry_run_options(), "--files-from=-", source, f"{dest}/"],
+                ["rsync", "-a", *rsync_options(), "--files-from=-", source, f"{dest}/"],
                 input="\n".join(sorted(paths)),
                 text=True,
                 check=True
