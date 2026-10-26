@@ -15,10 +15,11 @@ of keys, whatever wrote it: a DryPipe command, a script, or you.
 
 | option                     | commands                    | effect                                                |
 |----------------------------|-----------------------------|-------------------------------------------------------|
-| `--filter-from=FILE`       | all commands with filters   | selects the tasks of the file, repeat it for a union  |
+| `--where-key=@FILE`        | all commands that select tasks | selects the tasks of the file, `@F1,@F2` for a union, `@FILE[:100]` for a slice |
 | `+ @FILE`, `- @FILE`       | rules of a `--task-set` file | adds or removes the tasks of the file from the task set |
 
-`--filter-from` also reads the markdown files written by `analyze-logs`, see `cli analyze-logs --help`.
+`--where-key` also reads the markdown files written by `analyze-logs`, see `cli analyze-logs --help`,
+and array submissions as `@array.3` or `@array.last`, see [Selecting tasks](ng/running-pipelines/selecting-tasks.md).
 
 ## Files that are key lists
 
@@ -34,7 +35,7 @@ of keys, whatever wrote it: a DryPipe command, a script, or you.
 Examples:
 
     # status of the tasks of the 3rd array submitted
-    cli status --filter-from=.drypipe/my-array/array.3.tsv
+    cli status --task-key=my-array --where-key=@array.3
 
     # submit again the tasks of a loop
-    cli array-submit --task-key=my-array --filter-from=.drypipe/my-array/loop.2.complete.tsv
+    cli array-submit --task-key=my-array --where-key=@.drypipe/my-array/loop.2.complete.tsv

@@ -86,7 +86,7 @@ The remote input files of the tasks are imported with:
 drypipe import-inputs --pipeline-instance-dir=/x/y/z -g my_module:my_tasks
 ```
 
-One rsync is run per source and destination, the task filters (ex: `--filter`, `--filter-ready`) select
+One rsync is run per source and destination, the selection options (ex: `--where-key`, `--where-state=ready`) select
 the tasks whose inputs get imported. `--into` changes the destination of the files that don't have an `into`.
 With `--fs-generator` instead of `-g`, the inputs of the tasks already created (by `run` or `prepare`) are imported
 without running the DAG generator.
@@ -116,4 +116,4 @@ Tags can be assigned to produced output files, for bulk operations, ex:
 
 ```
 
-drypipe rsync-push --tags=keepers,for-debug --to=my-host:/a/b/my-pipeline/ --filter-completed --include-drypipe-files
+drypipe rsync-push --tags=keepers,for-debug --to=my-host:/a/b/my-pipeline/ --where-state=completed --include-drypipe-files

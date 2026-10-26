@@ -9,6 +9,11 @@ from datetime import datetime
 from logging.handlers import RotatingFileHandler
 
 
+class CliUserError(Exception):
+    """A failure caused by the user's input or environment: the message is enough, no stack trace"""
+    explainer = None
+
+
 def instance_log_file(pipeline_instance_dir):
     return os.path.join(pipeline_instance_dir, ".drypipe", "instance.log")
 

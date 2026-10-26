@@ -28,7 +28,7 @@ extensions = [
 ]
 
 templates_path = ['_templates']
-exclude_patterns = []
+exclude_patterns = [p.name for p in Path(__file__).parent.iterdir() if p.name not in {"ng", "index.rst"}]
 
 source_suffix = {
     '.rst': 'restructuredtext',
@@ -40,18 +40,10 @@ source_suffix = {
 # -- Options for HTML output -------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#options-for-html-output
 
-html_theme = 'alabaster'
+html_theme = 'furo'
 #html_theme = 'sphinx_rtd_theme'
 
 html_static_path = ['_static']
-
-html_theme_options = {
-    'fixed_sidebar': True,
-    'sidebar_collapse': False,
-#    'sidebar_maxdepth': 1,
-    # https://stackoverflow.com/questions/23211695/modifying-content-width-of-the-sphinx-theme-read-the-docs
-    'body_min_width': 1040
-}
 
 ___html_theme_options = {
     'analytics_id': 'G-XXXXXXXXXX',
@@ -69,3 +61,42 @@ ___html_theme_options = {
     'includehidden': True,
     'titles_only': False
 }
+
+def setup(app):
+    from bs4 import BeautifulSoup
+    from docutils import nodes
+    from furo.navigation import get_navigation_tree
+
+    # sphinx nests sections by order, a ### right under a # would otherwise show as a 2nd level entry
+    def anchors_of_level_3_and_deeper_markdown_headings(doctree):
+        if doctree is None or not doctree["source"].endswith(".md"):
+            return set()
+        lines = Path(doctree["source"]).read_text().splitlines()
+
+        def markdown_level(section):
+            heading = lines[section.line - 1]
+            return len(heading) - len(heading.lstrip("#"))
+
+        return {
+            f"#{id}"
+            for section in doctree.findall(nodes.section) if markdown_level(section) > 2
+            for id in section["ids"]
+        }
+
+    def without_entries(toctree_html, anchors):
+        soup = BeautifulSoup(toctree_html, "html.parser")
+        for link in soup.select("li.toctree-l2 > a"):
+            if link["href"] in anchors:
+                link.parent.decompose()
+        for empty_list in soup.select("ul:not(:has(li))"):
+            empty_list.decompose()
+        return str(soup)
+
+    def show_current_page_sections_in_sidebar(app, pagename, templatename, context, doctree):
+        if "toctree" in context:
+            toctree_html = context["toctree"](collapse=True, titles_only=False, maxdepth=2, includehidden=True)
+            toctree_html = without_entries(toctree_html, anchors_of_level_3_and_deeper_markdown_headings(doctree))
+            context["furo_navigation_tree"] = get_navigation_tree(toctree_html)
+
+    # runs after furo's own handler, which computes the default tree
+    app.connect("html-page-context", show_current_page_sections_in_sidebar, priority=600)

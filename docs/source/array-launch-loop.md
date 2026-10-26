@@ -9,11 +9,11 @@ a long time in the queue as a result.
 
 `array-submit --loop` submits the tasks in small arrays instead, each time the queue has room for them:
 
-    cli array-submit --task-key=my-array --filter-not-completed --loop --max-queued=1000
+    cli array-submit --task-key=my-array --where-state-not=completed --loop --max-queued=1000
 
 ## How it works
 
-1. When the loop starts, it selects the tasks with the `--filter-*` options, in the order of the array's tasks,
+1. When the loop starts, it selects the tasks with the `--where` options, in the order of the array's tasks,
    and saves that list. The list never changes after that, so a task that fails while the loop runs is not
    submitted again.
 2. Every `--sleep-interval` minutes, it counts your jobs in the queue on the array's slurm account, all of them,
@@ -63,7 +63,7 @@ survives the loss of your ssh session.
 
 ## Interrupted loops
 
-If the loop is killed, or your session ends, run `array-submit --loop` again, without `--filter-*` options. It
+If the loop is killed, or your session ends, run `array-submit --loop` again, without `--where` options. It
 resumes where it stopped, with the tasks it had not submitted yet:
 
     cli array-submit --task-key=my-array --loop
@@ -80,7 +80,7 @@ To start a new loop on the same array instead, abandon the interrupted one first
 
     cli array-submit --task-key=my-array --abandon-loop
 
-While a loop is unfinished, `array-submit --loop` with `--filter-*` options refuses to start a new loop, and
+While a loop is unfinished, `array-submit --loop` with `--where` options refuses to start a new loop, and
 `array-submit` without `--loop` warns that the loop will submit some tasks later.
 
 ## One loop per array

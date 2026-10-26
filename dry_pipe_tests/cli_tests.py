@@ -20,7 +20,8 @@ from pathlib import Path
 
 from dry_pipe import DryPipe, TaskConf
 from dry_pipe.array_launch_loop import LaunchLoop, LoopLock, account_of_sbatch_options
-from dry_pipe.cli import Cli, CliUsageError, CliUserError, _load_filter_from_keys, _load_keys_of_filter_file, _signature_numbers
+from dry_pipe.cli import Cli, CliUsageError, CliUserError, _signature_numbers
+from dry_pipe.task_selector import KeyLists
 from dry_pipe.core_lib import UpstreamTasksNotCompleted
 from dry_pipe.pipeline import Pipeline
 from dry_pipe.task_classifier import lazy_task_inputs_outputs
@@ -387,7 +388,7 @@ class CliTestScenario2(PipelineWithSlurmArray):
             '-k=array_parent',
             '--pipeline-instance-dir', d.sandbox_dir,
             '--generator', 'dry_pipe_tests.cli_tests:pipeline_with_slurm_array_2',
-            '--filter=t_a*'
+            '--where-key=t_a*'
         )
 
         c = create_cli(
@@ -396,7 +397,7 @@ class CliTestScenario2(PipelineWithSlurmArray):
             '-k=array_parent',
             '--pipeline-instance-dir', d.sandbox_dir,
             '--generator', 'dry_pipe_tests.cli_tests:pipeline_with_slurm_array_2',
-            '--filter=t_a*',
+            '--where-key=t_a*',
             '--sbatch-options=--mem=20 --account=x'
         )   
 
@@ -533,7 +534,7 @@ class CliArraySubmitFilterFromTests(BasePipelineTest):
 
         test_cli(
             self, 'array-submit', '--yes', f'-pid={d.sandbox_dir}', f'--generator={self.generator}', '-k=ap',
-            f'--filter-from={keys_file}', '--wait'
+            f'--where-key=@{keys_file}', '--wait'
         )
 
         tasks_by_keys = Pipeline.load_from_module_func(self.generator).create_pipeline_instance(
@@ -566,7 +567,7 @@ class CliArraySubmitConfirmationTests(BasePipelineTest):
         with unittest.mock.patch('sys.stdin', io.StringIO(answer)), unittest.mock.patch('sys.stderr', stderr):
             test_cli(
                 self, 'array-submit', f'-pid={d.sandbox_dir}', f'--generator={self.generator}', '-k=ap',
-                f'--filter-from={keys_file}', '--wait'
+                f'--where-key=@{keys_file}', '--wait'
             )
 
         tasks_by_keys = Pipeline.load_from_module_func(self.generator).create_pipeline_instance(
@@ -674,7 +675,7 @@ class CliArraySubmitMissingInputFilesTests(BasePipelineTest):
     def _loop_answering(self, answer, *extra_args):
         with unittest.mock.patch('dry_pipe.cli.count_queued_jobs', lambda account, timeout_secs: 0):
             return self._array_submit_answering(
-                answer, '--loop', '--max-queued=10', '--margin=0', '--min-batch=1', '--filter=t*', *extra_args
+                answer, '--loop', '--max-queued=10', '--margin=0', '--min-batch=1', '--where-key=t*', *extra_args
             )
 
     def test_loop_excludes_tasks_with_missing_input_files(self):
@@ -746,31 +747,25 @@ ValueError: bad | value 2
 
     def test_key_file(self):
         f = self.write("keys.tsv", "# a comment\nt1\tignored column\n\n  t2  \n  # t4 commented out\nt3\n")
-        self.assertEqual(_load_keys_of_filter_file(str(f)), {"t1", "t2", "t3"})
+        self.assertEqual(KeyLists().keys(str(f)), {"t1", "t2", "t3"})
 
     def test_whole_analysis_file(self):
         f = self.write("failed.0-3.md", self.analysis_file)
         # t99 is in a fenced tail, it's not a task of the file
-        self.assertEqual(_load_keys_of_filter_file(str(f)), {"t1", "t2", "t3"})
+        self.assertEqual(KeyLists().keys(str(f)), {"t1", "t2", "t3"})
 
     def test_signatures_of_analysis_file(self):
         f = self.write("failed.0-3.md", self.analysis_file)
-        self.assertEqual(_load_keys_of_filter_file(f"{f}:1"), {"t1", "t3"})
-        self.assertEqual(_load_keys_of_filter_file(f"{f}:2"), {"t2"})
-        self.assertEqual(_load_keys_of_filter_file(f"{f}:2, 1"), {"t1", "t2", "t3"})
-
-    def test_several_files(self):
-        md = self.write("failed.0-3.md", self.analysis_file)
-        keys = self.write("keys.tsv", "t7\nt8\n")
-        self.assertEqual(_load_filter_from_keys([f"{md}:2", f"{md}:1"]), {"t1", "t2", "t3"})
-        self.assertEqual(_load_filter_from_keys([f"{md}:2", str(keys)]), {"t2", "t7", "t8"})
+        self.assertEqual(KeyLists().keys(f"{f}:1"), {"t1", "t3"})
+        self.assertEqual(KeyLists().keys(f"{f}:2"), {"t2"})
+        self.assertEqual(KeyLists().keys(f"{f}:2, 1"), {"t1", "t2", "t3"})
 
     def test_invalid_signature_numbers(self):
         f = self.write("failed.0-3.md", self.analysis_file)
         for numbers in ["3", "0", "1,x", ""]:
             with self.subTest(numbers):
                 with self.assertRaises(Exception):
-                    _load_keys_of_filter_file(f"{f}:{numbers}")
+                    KeyLists().keys(f"{f}:{numbers}")
 
     def test_signature_numbers(self):
         self.assertEqual(_signature_numbers("1, 3,3\n", 3), {1, 3})
@@ -780,7 +775,7 @@ ValueError: bad | value 2
     def test_key_with_spaces(self):
         f = self.write("keys.tsv", "t1\nt 2\tignored column\n")
         with self.assertRaisesRegex(Exception, r"keys.tsv:2: task keys can't contain spaces, got 't 2'"):
-            _load_keys_of_filter_file(str(f))
+            KeyLists().keys(str(f))
 
     def test_analysis_file_with_keys_column(self):
         f = self.write("failed.0-3.md", self.analysis_file.replace(
@@ -789,7 +784,7 @@ ValueError: bad | value 2
             "| # | tasks | signature | keys |\n|---:|---:|---|---|\n"
             "| 1 | 2 | `ValueError: bad \\| value <n>` | t1 t3 |\n| 2 | 1 | `KeyError: <str>` | t2 |"
         ))
-        self.assertEqual(_load_keys_of_filter_file(f"{f}:2"), {"t2"})
+        self.assertEqual(KeyLists().keys(f"{f}:2"), {"t2"})
 
     def test_malformed_analysis_files(self):
         table = "| # | tasks | signature |\n|---:|---:|---|\n"
@@ -808,18 +803,18 @@ ValueError: bad | value 2
                 f = self.write("failed.0-3.md", self.analysis_file.replace(old, new))
                 for spec in [str(f), f"{f}:1"]:
                     with self.assertRaisesRegex(Exception, error):
-                        _load_keys_of_filter_file(spec)
+                        KeyLists().keys(spec)
 
     def test_missing_file(self):
         for spec in ["no-such-keys.txt", "no-such-analysis.md", "no-such-analysis.md:1"]:
             with self.subTest(spec):
-                with self.assertRaises(FileNotFoundError):
-                    _load_keys_of_filter_file(spec)
+                with self.assertRaisesRegex(CliUserError, "does not exist"):
+                    KeyLists().keys(spec)
 
 
 class CliFuncFilterTests(BasePipelineTest):
     """
-    Tests --func-filter, validated with list-keys. The pipeline is dag_simple_array
+    Tests --where-func, validated with list-keys. The pipeline is dag_simple_array
     (children t01..t11 + array parent 'ap'). func_filter_even_children selects the
     even numbered children, i.e. t02, t04, t06, t08, t10.
     """
@@ -861,7 +856,7 @@ class CliFuncFilterTests(BasePipelineTest):
         self._prepare(d)
 
         self.assertEqual(
-            self._list_keys(d, '--func-filter=dry_pipe_tests.cli_tests:func_filter_even_children()'),
+            self._list_keys(d, '--where-func=dry_pipe_tests.cli_tests:func_filter_even_children()'),
             self.expected_even_children
         )
 
@@ -872,7 +867,7 @@ class CliFuncFilterTests(BasePipelineTest):
         # bare name (no ":") is looked up in the --generator module; a bare name with no
         # parens is a zero-arg factory call (equivalent to "func_filter_even_children()")
         self.assertEqual(
-            self._list_keys(d, '--func-filter=func_filter_even_children'),
+            self._list_keys(d, '--where-func=func_filter_even_children'),
             self.expected_even_children
         )
 
@@ -880,12 +875,12 @@ class CliFuncFilterTests(BasePipelineTest):
         d = TestSandboxDir(self)
         self._prepare(d)
 
-        # glob keeps t01..t09, func-filter keeps even children -> intersection
+        # glob keeps t01..t09, --where-func keeps even children -> intersection
         self.assertEqual(
             self._list_keys(
                 d,
-                '--filter=t0*',
-                '--func-filter=func_filter_even_children()'
+                '--where-key=t0*',
+                '--where-func=func_filter_even_children()'
             ),
             ['t02', 't04', 't06', 't08']
         )
@@ -897,25 +892,25 @@ class CliFuncFilterTests(BasePipelineTest):
             f'--pipeline-instance-dir={d.sandbox_dir}',
             f'--generator={self.generator}',
             f'--state={state}',
-            f'--filter={key_glob}'
+            f'--where-key={key_glob}'
         )
 
     def test_filter_not_completed_then_func_filter(self):
         d = TestSandboxDir(self)
         self._prepare(d)
 
-        # mark two of the even children completed, so --filter-not-completed excludes them first
+        # mark two of the even children completed, so --where-state-not=completed excludes them first
         self._set_state(d, 'completed', 't02')
         self._set_state(d, 'completed', 't04')
 
-        # --filter-not-completed first selects everything except t02, t04 (the completed ones),
-        # then --func-filter keeps only the even children among those survivors.
+        # --where-state-not=completed first selects everything except t02, t04 (the completed ones),
+        # then --where-func keeps only the even children among those survivors.
         # t02 and t04 are even, but were already excluded by the not-completed filter.
         self.assertEqual(
             self._list_keys(
                 d,
-                '--filter-not-completed',
-                '--func-filter=func_filter_even_children()'
+                '--where-state-not=completed',
+                '--where-func=func_filter_even_children()'
             ),
             ['t06', 't08', 't10']
         )
@@ -926,7 +921,7 @@ class CliFuncFilterTests(BasePipelineTest):
 
         # the factory is called once with the parsed args and returns the (key, state_name, step) filter
         self.assertEqual(
-            self._list_keys(d, '--func-filter=func_filter_children_above(threshold=8)'),
+            self._list_keys(d, '--where-func=func_filter_children_above(threshold=8)'),
             ['t09', 't10', 't11']
         )
 
@@ -971,7 +966,7 @@ class CliArraySubmitRegenTests(BasePipelineTest):
             f'--pipeline-instance-dir={d.sandbox_dir}',
             f'--generator={self.generator}',
             '--task-key=ap',
-            '--filter=t0[24]'
+            '--where-key=t0[24]'
         )
 
         regenerated_keys = [
@@ -1107,13 +1102,13 @@ class CliArraySubmitLoopTests(BasePipelineTest):
     def test_new_loop_is_refused_when_one_is_unfinished(self):
         LaunchLoop.create(self.prepare(), self.all_children)
         with self.assertRaisesRegex(CliUserError, "loop 1 is unfinished"):
-            self.cli('--loop', '--max-queued=10', '--yes', '--filter=t0*')
+            self.cli('--loop', '--max-queued=10', '--yes', '--where-key=t0*')
 
     def test_dry_run_starts_no_loop(self):
         self.prepare()
         test_cli(
             self, '--dry-run', 'array-submit', f'--pipeline-instance-dir={self.sandbox_dir}',
-            f'--generator={self.generator}', '--task-key=ap', '--loop', '--max-queued=100', '--filter=t0*'
+            f'--generator={self.generator}', '--task-key=ap', '--loop', '--max-queued=100', '--where-key=t0*'
         )
         self.assertEqual(list(self.array_control_dir.glob("loop.*.tsv")), [])
 
@@ -1156,12 +1151,12 @@ class CliArraySubmitLoopTests(BasePipelineTest):
     def test_loop_requires_max_queued(self):
         self.prepare()
         with self.assertRaisesRegex(CliUsageError, "--loop requires --max-queued"):
-            self.cli('--loop', '--yes', '--filter=t0*')
+            self.cli('--loop', '--yes', '--where-key=t0*')
 
     def test_loop_that_could_never_submit_is_refused(self):
         self.prepare()
         with self.assertRaisesRegex(CliUsageError, "the loop could never submit"):
-            self.cli('--loop', '--max-queued=10', '--margin=8', '--min-batch=3', '--yes', '--filter=t0*')
+            self.cli('--loop', '--max-queued=10', '--margin=8', '--min-batch=3', '--yes', '--where-key=t0*')
 
     def dry_run_output(self, *args):
         err = io.StringIO()
@@ -1174,10 +1169,10 @@ class CliArraySubmitLoopTests(BasePipelineTest):
 
     def test_max_queued_account_replaces_the_sbatch_account(self):
         self.prepare()
-        self.assertIn("account dummy-account,", self.dry_run_output('--max-queued=100', '--filter=t0*'))
+        self.assertIn("account dummy-account,", self.dry_run_output('--max-queued=100', '--where-key=t0*'))
         self.assertIn(
             "account dummy-account_cpu,",
-            self.dry_run_output('--max-queued=100', '--filter=t0*', '--max-queued-account=dummy-account_cpu')
+            self.dry_run_output('--max-queued=100', '--where-key=t0*', '--max-queued-account=dummy-account_cpu')
         )
 
     def test_resume_uses_the_last_saved_options_unless_given_again(self):
@@ -1199,7 +1194,7 @@ class CliArraySubmitLoopTests(BasePipelineTest):
     def test_loop_options_require_loop(self):
         self.prepare()
         with self.assertRaisesRegex(CliUsageError, "--max-queued-account, --min-batch only apply with --loop"):
-            self.cli('--max-queued-account=a_cpu', '--min-batch=3', '--filter=t0*')
+            self.cli('--max-queued-account=a_cpu', '--min-batch=3', '--where-key=t0*')
 
     def test_running_loop_is_refused(self):
         self.prepare()
@@ -1220,7 +1215,7 @@ class CliArraySubmitLoopTests(BasePipelineTest):
         try:
             holder.stdout.readline()
             with self.assertRaisesRegex(CliUserError, "pid 41237 on otherhost .*\n.*ssh otherhost kill 41237"):
-                self.cli('--loop', '--max-queued=10', '--yes', '--filter=t0*')
+                self.cli('--loop', '--max-queued=10', '--yes', '--where-key=t0*')
         finally:
             holder.kill()
             holder.wait()
@@ -1276,9 +1271,9 @@ class CliStatusDbTests(BasePipelineTest):
 
         Path(d.sandbox_dir, ".drypipe", "t01", "out.log").write_text("t01 says hi\n")
 
-        self._status_db(d, '--filter=t0*', '--instance-name=z')
+        self._status_db(d, '--where-key=t0*', '--instance-name=z')
         # a second invocation overwrites the db, it doesn't append
-        self._status_db(d, '--filter=t0*', '--instance-name=z')
+        self._status_db(d, '--where-key=t0*', '--instance-name=z')
 
         self.assertEqual(self._query(d, "select * from instance_status"), [("z", "ok", None)])
 
@@ -1297,19 +1292,19 @@ class CliStatusDbTests(BasePipelineTest):
         def signatures():
             return self._query(d, "select key, log_signature from task_status order by key")
 
-        self._status_db(d, '--filter=t0[12]')
+        self._status_db(d, '--where-key=t0[12]')
         self.assertEqual(signatures(), [("t01", "KeyError: <str> at row <n>"), ("t02", "<no out.log>")])
 
-        self._status_db(d, '--filter=t01', '--log-classifier=log_classifier_merging_lookup_errors')
+        self._status_db(d, '--where-key=t01', '--log-classifier=log_classifier_merging_lookup_errors')
         self.assertEqual(signatures(), [("t01", "lookup error")])
 
         test_cli(
-            self, 'status-db', f'--pipeline-instance-dir={d.sandbox_dir}', f'--generator={self.generator}', '--filter=t01',
+            self, 'status-db', f'--pipeline-instance-dir={d.sandbox_dir}', f'--generator={self.generator}', '--where-key=t01',
             env={"DRYPIPE_LOG_CLASSIFIER": "log_classifier_merging_lookup_errors"}
         )
         self.assertEqual(signatures(), [("t01", "lookup error")])
 
-        self._status_db(d, '--tsv', '--filter=t01')
+        self._status_db(d, '--tsv', '--where-key=t01')
         [row] = self._import_tsv(
             d, "task_status",
             "create table task_status (instance_name text, key text, state text, step int, drypipe_log text, out_log text, log_signature text)"
@@ -1321,7 +1316,7 @@ class CliStatusDbTests(BasePipelineTest):
         test_cli(self, 'prepare', f'--pipeline-instance-dir={d.sandbox_dir}', f'--generator={self.generator}')
         test_cli(
             self, 'set-state', f'--pipeline-instance-dir={d.sandbox_dir}', f'--generator={self.generator}',
-            '--state=completed', '--filter=t02'
+            '--state=completed', '--where-key=t02'
         )
 
         # 60 lines of 200 chars span more than one of the 8192 bytes blocks read from the end
@@ -1334,7 +1329,7 @@ class CliStatusDbTests(BasePipelineTest):
 
         Path(d.sandbox_dir, ".drypipe", "t02", "out.log").write_text("t02 log")
 
-        self._status_db(d, '--lean', '--filter=t0[123]')
+        self._status_db(d, '--lean', '--where-key=t0[123]')
 
         task_rows = self._query(d, "select key, state, drypipe_log, out_log from task_status order by key")
         self.assertEqual([(key, state) for key, state, _, _ in task_rows], [("t01", "waiting"), ("t02", "completed"), ("t03", "waiting")])
@@ -1351,11 +1346,11 @@ class CliStatusDbTests(BasePipelineTest):
         )
 
         # without --lean, completed tasks keep their logs
-        self._status_db(d, '--filter=t02')
+        self._status_db(d, '--where-key=t02')
         self.assertEqual(self._query(d, "select out_log from task_status"), [("t02 log",)])
 
         # a classifier can be lean without --lean
-        self._status_db(d, '--filter=t0[12]', '--log-classifier=always_lean_classifier')
+        self._status_db(d, '--where-key=t0[12]', '--log-classifier=always_lean_classifier')
         self.assertEqual(
             self._query(d, "select key, drypipe_log, out_log from task_status order by key"),
             [("t01", "a\nb\nc", "".join(last_step)), ("t02", None, None)]
@@ -1440,7 +1435,7 @@ class CliStatusDbTests(BasePipelineTest):
         Path(d.sandbox_dir, ".drypipe", "t01", "out.log").write_text(nasty_log, newline="")
         Path(d.sandbox_dir, ".drypipe", "t01", "drypipe.log").write_bytes(b"before nul\x00after nul")
 
-        self._status_db(d, '--tsv', '--filter=t01')
+        self._status_db(d, '--tsv', '--where-key=t01')
 
         [(_, key, state, _, drypipe_log, out_log, _)] = self._import_tsv(
             d, "task_status",
@@ -1476,7 +1471,7 @@ class CliStatusDbTests(BasePipelineTest):
             test_cli(self, 'prepare', f'--pipeline-instance-dir={pid}', f'--generator={self.generator}')
             test_cli(
                 self, 'status-db', f'--pipeline-instance-dir={pid}', f'--generator={self.generator}',
-                '--tsv', '--filter=t01'
+                '--tsv', '--where-key=t01'
             )
             for table in ["task_status", "instance_status"]:
                 subprocess.run(
@@ -1726,23 +1721,23 @@ class CliSbatchOptionsOverrideTests(BasePipelineTest):
             self.assertNotIn(o, cmd)
 
 
-class HasFiltersTests(unittest.TestCase):
+class HasSelectionTests(unittest.TestCase):
 
-    def has_filters(self, *filter_args):
+    def has_selection(self, *selection_args):
         pid = TestSandboxDir(self).sandbox_dir
-        return Cli(['list-keys', f'--pipeline-instance-dir={pid}', '--generator=not:used', *filter_args]).has_filters()
+        return Cli(['list-keys', f'--pipeline-instance-dir={pid}', '--generator=not:used', *selection_args]).has_selection()
 
-    def test_no_filter(self):
-        self.assertFalse(self.has_filters())
+    def test_no_selection(self):
+        self.assertFalse(self.has_selection())
+        self.assertFalse(self.has_selection('--no-mask', '--explain-off'))
 
-    def test_every_filter_counts(self):
-        for filter_arg in [
-            '--filter=t*', '--py-filter={step} > 0', '--func-filter=m:f()', '--filter-completed',
-            '--filter-not-completed', '--filter-failed', '--filter-timed-out', '--filter-ready',
-            '--filter-unhealthy', '--filter-from=keys.txt'
+    def test_every_selection_option_counts(self):
+        for selection_arg in [
+            '--where=step > 0', '--where-key=t*', '--where-key-not=t*', '--where-state=failed',
+            '--where-state-not=completed', '--where-step=1', '--where-step-not=1', '--where-func=m:f()', '--limit=3'
         ]:
-            with self.subTest(filter_arg):
-                self.assertTrue(self.has_filters(filter_arg))
+            with self.subTest(selection_arg):
+                self.assertTrue(self.has_selection(selection_arg))
 
 
 class ArraySummarySubmitFiltersTests(unittest.TestCase):
@@ -1757,18 +1752,28 @@ class ArraySummarySubmitFiltersTests(unittest.TestCase):
         self.assertEqual(
             self.filters(
                 "sbatch --array=0-2",
-                "/bin/drypipe array-submit -pid=/p -k=ap --filter=t0* --filter-failed '--py-filter=lambda k, s, st: True' '--sbatch-options=--mem=2G'"
+                "/bin/drypipe array-submit -pid=/p -k=ap --where-key=t0* --where-state failed "
+                "'--where=step > 1' '--sbatch-options=--mem=2G' --limit 10"
             ),
-            "'--filter=t0*' '--py-filter=lambda k, s, st: True' --filter-failed"
+            "'--where-key=t0*' --where-state=failed '--where=step > 1' --limit=10"
         )
 
-    def test_many_filter_from(self):
+    def test_key_lists(self):
         self.assertEqual(
             self.filters(
                 "sbatch --array=0-2",
-                "/bin/drypipe array-submit -pid=/p -k=ap --filter-from=f1/failed.2-887.md:2 --filter-from=keys.txt"
+                "/bin/drypipe array-submit -pid=/p -k=ap --where-key=@f1/failed.2-887.md:2,@keys.txt"
             ),
-            "--filter-from=f1/failed.2-887.md:2 --filter-from=keys.txt"
+            "--where-key=@f1/failed.2-887.md:2,@keys.txt"
+        )
+
+    def test_filters_of_a_submit_with_former_options(self):
+        self.assertEqual(
+            self.filters(
+                "sbatch --array=0-2",
+                "/bin/drypipe array-submit -pid=/p -k=ap --filter=t0* --filter-failed '--py-filter=lambda k, s, st: True' '--sbatch-options=--mem=2G'"
+            ),
+            "'--filter=t0*' --filter-failed '--py-filter=lambda k, s, st: True'"
         )
 
     def test_job_file_without_submit_command(self):
@@ -1911,7 +1916,7 @@ class CliAnalyzeLogsTests(BasePipelineTest):
         test_cli(self, 'prepare', pid, f'--generator={self.generator}')
 
         def set_state(state, key_filter):
-            test_cli(self, 'set-state', pid, f'--generator={self.generator}', f'--state={state}', f'--filter={key_filter}')
+            test_cli(self, 'set-state', pid, f'--generator={self.generator}', f'--state={state}', f'--where-key={key_filter}')
 
         set_state('completed', 't0[1-2]')
         set_state('timed-out.1', 't03')
@@ -1933,7 +1938,7 @@ class CliAnalyzeLogsTests(BasePipelineTest):
         analysis_dir = Path(d.sandbox_dir, "analysis")
         if dag_args is None:
             dag_args = [f'--generator={self.generator}']
-        test_cli(self, 'analyze-logs', pid, *dag_args, '--filter=t0[1-8]', f'--dir={analysis_dir}', *extra_args)
+        test_cli(self, 'analyze-logs', pid, *dag_args, '--where-key=t0[1-8]', f'--dir={analysis_dir}', *extra_args)
 
         return analysis_dir
 
@@ -1962,7 +1967,7 @@ class CliAnalyzeLogsTests(BasePipelineTest):
         )
 
     def test_filters_narrow_the_unhealthy_tasks(self):
-        analysis_dir = self._analyze_logs('--filter-failed')
+        analysis_dir = self._analyze_logs('--where-state=failed')
 
         self.assertEqual(sorted(f.name for f in analysis_dir.iterdir()), ['failed.2-5.md'])
 
@@ -1972,7 +1977,7 @@ class CliAnalyzeLogsTests(BasePipelineTest):
 
         self.assertEqual(
             sorted(Cli.invoke_and_iterate_lines(
-                'list-keys', pid, f'--generator={self.generator}', '--filter=t0[1-8]', '--filter-unhealthy',
+                'list-keys', pid, f'--generator={self.generator}', '--where-key=t0[1-8]', '--where-state=unhealthy',
                 test_mode=True
             )),
             ['t03', 't04', 't05', 't06', 't07', 't08']
@@ -2113,7 +2118,7 @@ class CliAnalyzeLogsTests(BasePipelineTest):
         self.assertEqual(
             sorted(Cli.invoke_and_iterate_lines(
                 'list-keys', f'--pipeline-instance-dir={analysis_dir.parent}', f'--generator={self.generator}',
-                f'--filter-from={keys_file}', test_mode=True
+                f'--where-key=@{keys_file}', test_mode=True
             )),
             ['t04', 't05', 't06']
         )
@@ -2129,7 +2134,7 @@ class CliAnalyzeLogsTests(BasePipelineTest):
     def _list_keys_filtered_from(self, analysis_dir, filter_from):
         return sorted(Cli.invoke_and_iterate_lines(
             'list-keys', f'--pipeline-instance-dir={analysis_dir.parent}', f'--generator={self.generator}',
-            f'--filter-from={filter_from}', test_mode=True
+            f'--where-key=@{filter_from}', test_mode=True
         ))
 
     def test_filter_from_analysis_file(self):
@@ -2144,16 +2149,28 @@ class CliAnalyzeLogsTests(BasePipelineTest):
             self._list_keys_filtered_from(analysis_dir, f"{md}:4")
 
 
-    def test_repeated_filter_from_is_a_union(self):
+    def test_key_lists_separated_by_commas_are_a_union(self):
         analysis_dir = self._analyze_logs()
         md = Path(analysis_dir, 'failed.2-5.md')
 
         self.assertEqual(
             sorted(Cli.invoke_and_iterate_lines(
                 'list-keys', f'--pipeline-instance-dir={analysis_dir.parent}', f'--generator={self.generator}',
-                f'--filter-from={md}:2', f'--filter-from={md}:3', test_mode=True
+                f'--where-key=@{md}:2,@{md}:3', test_mode=True
             )),
             ['t07', 't08']
+        )
+
+    def test_repeated_where_key_is_an_intersection(self):
+        analysis_dir = self._analyze_logs()
+        md = Path(analysis_dir, 'failed.2-5.md')
+
+        self.assertEqual(
+            list(Cli.invoke_and_iterate_lines(
+                'list-keys', f'--pipeline-instance-dir={analysis_dir.parent}', f'--generator={self.generator}',
+                f'--where-key=@{md}:2', f'--where-key=@{md}:3', test_mode=True
+            )),
+            []
         )
 
     def test_filter_from_intersects_with_other_filters(self):
@@ -2163,7 +2180,7 @@ class CliAnalyzeLogsTests(BasePipelineTest):
         self.assertEqual(
             sorted(Cli.invoke_and_iterate_lines(
                 'list-keys', f'--pipeline-instance-dir={analysis_dir.parent}', f'--generator={self.generator}',
-                f'--filter-from={md}', '--filter=t0[2-5]', test_mode=True
+                f'--where-key=@{md}', '--where-key=t0[2-5]', test_mode=True
             )),
             # the file has t04..t08, the glob t02..t05
             ['t04', 't05']

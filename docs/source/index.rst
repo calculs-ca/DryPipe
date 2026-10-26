@@ -1,31 +1,23 @@
-***********************************
-Welcome to DryPipe's documentation
-***********************************
-
-.. include:: ../../README.md
-   :parser: myst_parser.sphinx_
+*******
+DryPipe
+*******
 
 .. toctree::
-   getting-started
+
+   ng/intro
+   ng/is-drypipe-for-you
+   ng/attended-vs-autonomous
+   ng/writing-my-first-pipeline
 
 .. toctree::
-   :caption: The DryPipe DSL
+   :caption: Writing pipelines
 
-   writing-pipelines/dsl/tasks
-   writing-pipelines/dsl/dag
-   writing-pipelines/dsl/dag-generators
-   writing-pipelines/dsl/parallel-tasks
-   writing-pipelines/dsl/producer-consumer
-   writing-pipelines/dsl/variable-dependencies
-   writing-pipelines/dsl/python-functions
+   ng/writing-pipelines/task-universe-generator
+   ng/writing-pipelines/tasks
 
 .. toctree::
-   writing-pipelines/dynamic-dags
-   writing-pipelines/composition
-   directory-structure
-   task-launch
+   :caption: Running pipelines
+
+   ng/running-pipelines/selecting-tasks
    array-launch-loop
    key-lists
-   runtime-config
-   cli-usage
-   definitions

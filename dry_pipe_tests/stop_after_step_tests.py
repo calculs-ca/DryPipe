@@ -180,10 +180,10 @@ class StopAfterStepWithArraySubmitTest(StopAfterStepBaseTest):
             self.assertEqual(self._out_file_content(d.sandbox_dir, f"t{i}"), "s0\ns1\ns2\n")
 
     def _keys_selected_for_launch(self, sandbox_dir, filter_expr, stop_after_step=None):
-        """The task keys the launch commands would select for the given --filter and
+        """The task keys the launch commands would select for the given --where-key and
         --stop-after-step. This only exercises the read-only filter_key_state_step()
         selection method, it does NOT invoke the command, so nothing is submitted."""
-        args = ['sbatch', f'-pid={sandbox_dir}', f'--generator={_generator}', f'--filter={filter_expr}']
+        args = ['sbatch', f'-pid={sandbox_dir}', f'--generator={_generator}', f'--where-key={filter_expr}']
         if stop_after_step is not None:
             args.append(f'--stop-after-step={stop_after_step}')
         cli = _create_cli(self, *args)

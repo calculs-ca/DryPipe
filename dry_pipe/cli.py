@@ -29,7 +29,7 @@ from pathlib import Path
 
 from dry_pipe import PortablePopen, DryPipe, TaskConf
 from dry_pipe.array_launch_loop import LaunchLoop, LoopIsRunning, LoopLock, account_of_sbatch_options, count_queued_jobs
-from dry_pipe.core_lib import func_from_mod_func, is_inside_slurm_job, create_instance_logger
+from dry_pipe.core_lib import CliUserError, func_from_mod_func, is_inside_slurm_job, create_instance_logger
 from dry_pipe.frozen_dag_generator import FrozenDAGGenerator
 from dry_pipe.task_classifier import TaskClassifier, TaskClassifyContext
 from dry_pipe.pipeline_instance import Monitor, PipelineInstance
@@ -41,17 +41,16 @@ from dry_pipe.reports import timers_for_tasks
 from dry_pipe.state_machine import StateFileTracker
 from dry_pipe.service import PipelineRunner
 from dry_pipe.task_lib import submit_local_array, upload_task_inputs_rsync
+from dry_pipe.task_selector import (
+    NotAnAnalyzeLogsFile, TaskSelector, add_selection_options,
+    _signatures_of_analysis_file, _keys_and_signature_numbers_of_analysis_file, _signature_numbers
+)
 
 
 logger = logging.getLogger(__name__)
 
 # squeue can block for a long time when slurmctld is backed up, don't let array-summary hang on it
 SQUEUE_TIMEOUT_SECS = 30
-
-
-class CliUserError(Exception):
-    """A failure caused by the user's input or environment: the message is enough, no stack trace"""
-    explainer = None
 
 
 class CliUsageError(CliUserError):
@@ -62,17 +61,6 @@ class InvalidTaskSet(CliUserError):
     explainer = (
         "The task set file (--task-set, DRYPIPE_TASK_SET, or <pipeline-instance-dir>/drypipe-task-set.rules) "
         "has one rule per line: '- <glob>', '+ <glob>', '- @<file>' or '+ @<file>', see --task-set in --help"
-    )
-
-
-class NotAnAnalyzeLogsFile(CliUserError):
-    explainer = "Expected a markdown file written by 'drypipe analyze-logs'"
-
-
-class InvalidFuncFilter(CliUserError):
-    explainer = (
-        "--func-filter takes \"module:factory(args...)\", where args are python literals, "
-        "and factory returns a filter function(key, state_name, step) -> bool, see --func-filter in --help"
     )
 
 
@@ -267,132 +255,6 @@ class TaskSet:
     def __contains__(self, key):
         """the last matching rule wins, keys matched by no rule are in the task set"""
         return next((is_added for is_added, matches, _ in reversed(self.rules) if matches(key)), True)
-
-
-def _signatures_of_analysis_file(path, lines):
-    """
-    (task count, signature cell) of each row of the error signatures table of an analyze-logs file,
-    in signature number order, raises when the table is malformed
-    """
-    separator_of_header = {
-        "| # | tasks | signature |": "|---:|---:|---|",
-        "| # | tasks | signature | keys |": "|---:|---:|---|---|",
-    }
-
-    header_index = next((i for i, line in enumerate(lines) if line in separator_of_header), None)
-    if header_index is None:
-        raise NotAnAnalyzeLogsFile(f"{path}: not an analyze-logs file, it has no error signatures table")
-
-    separator = separator_of_header[lines[header_index]]
-    if lines[header_index + 1:header_index + 2] != [separator]:
-        raise NotAnAnalyzeLogsFile(f"{path}:{header_index + 2}: not an analyze-logs file, expected {separator}")
-
-    rows = itertools.takewhile(lambda l: l.startswith("|"), lines[header_index + 2:])
-    for number, row in enumerate(rows, start=1):
-        cells = re.fullmatch(rf"\| {number} \| (\d+) \| (`.*`) \|(?: [^|]* \|)?", row)
-        if cells is None:
-            raise NotAnAnalyzeLogsFile(
-                f"{path}:{header_index + 2 + number}: not an analyze-logs file, "
-                f"expected | {number} | <task count> | `<signature>` |"
-            )
-        yield int(cells.group(1)), cells.group(2)
-
-
-def _keys_and_signature_numbers_of_analysis_file(path, lines):
-    """
-    from the "### i. <key> (signature <n>)" headings of an analyze-logs file, skipping the fenced tails,
-    raises when a heading is malformed
-    """
-    fence = None
-    for line_number, line in enumerate(lines, start=1):
-        if fence is not None:
-            if line == fence:
-                fence = None
-        elif line.startswith("```"):
-            fence = re.match(r"`+", line).group()
-        elif line.startswith("### "):
-            heading = re.fullmatch(r"### \d+\. (\S+) \(signature (\d+)\)", line)
-            if heading is None:
-                raise NotAnAnalyzeLogsFile(
-                    f"{path}:{line_number}: not an analyze-logs file, expected ### <i>. <task-key> (signature <n>)"
-                )
-            yield heading.group(1), int(heading.group(2))
-
-
-def _signature_numbers(text, signature_count):
-    """parses "1,3" into {1, 3}, the numbers must be in 1..signature_count"""
-    try:
-        numbers = {int(n) for n in text.split(",")}
-    except ValueError:
-        raise CliUserError(f"expected comma separated signature numbers, got '{text.strip()}'")
-    invalid = sorted(n for n in numbers if not 1 <= n <= signature_count)
-    if invalid:
-        raise CliUserError(f"no signature numbered {invalid}, valid numbers are 1 to {signature_count}")
-    return numbers
-
-
-def _load_filter_from_keys(specs):
-    """the union of the keys of the files of each --filter-from"""
-    return set().union(*(_load_keys_of_filter_file(spec) for spec in specs))
-
-
-def _load_keys_of_filter_file(spec):
-    """
-    an analyze-logs file: "failed.2-5.md" for all its tasks, "failed.2-5.md:1,3" for the tasks of signatures 1 and 3,
-    else a file of keys (see _load_task_keys)
-    """
-    analysis_file = re.fullmatch(r"(.+\.md)(?::(.*))?", spec)
-    if analysis_file is None:
-        return _load_task_keys(spec)
-
-    path, numbers_text = analysis_file.groups()
-    lines = Path(path).read_text().splitlines()
-    signatures = list(_signatures_of_analysis_file(path, lines))
-    keys_and_numbers = _keys_and_signature_numbers_of_analysis_file(path, lines)
-    if numbers_text is None:
-        return {key for key, _ in keys_and_numbers}
-
-    numbers = _signature_numbers(numbers_text, len(signatures))
-    return {key for key, number in keys_and_numbers if number in numbers}
-
-
-def _parse_func_filter_spec(spec):
-    """
-    Parses a --func-filter value into (module_func_reference, args, kwargs).
-
-    Accepts a bare reference ("a.b.c:f" or "f") or a call form ("a.b.c:f('z', threshold=3)").
-    The reference part is returned verbatim (the ':' and '.' make it invalid python, so it is not
-    parsed); the call arguments are parsed as python literals (ast.literal_eval, no code executed).
-    """
-    paren = spec.find("(")
-    if paren == -1:
-        return spec.strip(), [], {}
-
-    if not spec.rstrip().endswith(")"):
-        raise InvalidFuncFilter(
-            f"--func-filter '{spec}' is malformed, expected 'module:func' or \"module:func(args...)\""
-        )
-
-    reference = spec[:paren].strip()
-    call_source = spec[paren:].strip()
-
-    try:
-        call_node = ast.parse(f"__f__{call_source}", mode="eval").body
-    except SyntaxError:
-        raise InvalidFuncFilter(f"--func-filter '{spec}' has an invalid argument list")
-
-    if not isinstance(call_node, ast.Call):
-        raise InvalidFuncFilter(f"--func-filter '{spec}' has an invalid argument list")
-
-    try:
-        args = [ast.literal_eval(a) for a in call_node.args]
-        kwargs = {kw.arg: ast.literal_eval(kw.value) for kw in call_node.keywords}
-    except ValueError:
-        raise InvalidFuncFilter(
-            f"--func-filter '{spec}' arguments must be python literals (str, int, ...), not expressions"
-        )
-
-    return reference, args, kwargs
 
 
 class Cli:
@@ -603,11 +465,6 @@ class Cli:
             pipeline_instance_dir(parser)
             parser.add_argument('--task-key', '-k', required=False, default=None)
 
-        def limit(parser):
-            parser.add_argument(
-                '--limit', type=int, help='limit selected tasks to N', metavar='N'
-            )
-
         def by_runner(parser):
             parser.add_argument("--by-runner", dest="by_runner", action="store_true")
             parser.set_defaults(by_runner=False)
@@ -648,133 +505,6 @@ class Cli:
 
         def from_remote(parser):
             parser.add_argument("--from-remote", dest="from_remote", action="store_true")
-
-        def filter(parser):
-            parser.add_argument(
-                '--filter', '--key-filter',
-                help='''
-                glob expression applied to task keys, ex: "t_a*".
-
-                HOW FILTERS COMBINE
-                Filters come in three independent groups. A task is INCLUDED only when it passes ALL of the
-                filters that are set (logical AND); it is EXCLUDED as soon as it fails any one of them.
-                A group that is not set matches everything (it never excludes on its own).
-
-                  1. key       : --filter / --key-filter   (glob on the task key), --filter-from (file of keys)
-                  2. state/step: --py-filter, --filter-completed, --filter-not-completed, --filter-failed
-                  3. function  : --func-filter              (a python function returning a boolean)
-
-                Within group 2 the options are mutually exclusive: if several are given, exactly one wins,
-                in this precedence order: --filter-completed > --filter-not-completed > --filter-failed > --py-filter.
-
-                So --filter and --func-filter (and one option from group 2) INTERSECT: e.g.
-                    --filter=t_a* --filter-failed --func-filter=mod:f
-                selects the tasks whose key matches t_a*, AND are failed, AND for which f(...) returns True.
-
-                With no filter set, all tasks are selected. Filters can be tested with "low consequence"
-                commands such as list-keys or summary before more consequential ones such as array-submit.
-                ''',
-                default='*'
-            )
-
-        def filter_from(parser):
-            parser.add_argument(
-                '--filter-from',
-                help="file of task keys, one per line (first column of a tsv), lines starting with # are ignored, "
-                     "ex: written by extract-keys. "
-                     "Or a markdown file written by analyze-logs: --filter-from=failed.2-5.md selects all its tasks, "
-                     "--filter-from=failed.2-5.md:1,3 the tasks of its signatures 1 and 3. "
-                     "Can be repeated to select the union of the tasks of several files: "
-                     "--filter-from=failed.2-5.md:1 --filter-from=failed.3-7.md",
-                action='append',
-                default=None
-            )
-
-        def py_filter(parser):
-            parser.add_argument(
-                '--py-filter',
-                help='''
-                python boolean expression with {state} or {step} variables available, ex:                                 
-                   "{step} > 3",                    
-                   "{step} in [1,4]" 
-                   "{step} == 2 and {state} in ['failed', 'timed-out']"                                      
-                    {step} will be replaced by step number, then will be evaluated as a python boolean expression.
-                    
-                Note: a --py-filter can be tested with "low consequence" commands such as list-keys or summary, 
-                before more consequential commands such as array-submit                                 
-                '''
-            )
-
-        def func_filter(parser):
-            parser.add_argument(
-                '--func-filter',
-                help='''
-                a factory function imported from a module on the PYTHONPATH, using the "module:function"
-                object-reference format (as in setuptools entry points / gunicorn), ex: a.b.c:f meaning
-                "from a.b.c import f". As a shortcut, a bare function name (no module) is looked up in the
-                --generator module.
-
-                The referenced function is a FACTORY: it is invoked (with a call syntax, arguments are python
-                literals) and must RETURN the filter function, which is then called with (key, state_name, step)
-                for each task and returns a boolean indicating whether the task is selected, ex:
-
-                   --func-filter="a.b.c:make_filter()"                # zero-arg factory
-                   --func-filter="a.b.c:make_filter(threshold=3)"     # with arguments
-
-                   def make_filter(threshold=0):
-                       def f(key, state_name, step):
-                           return step > threshold
-                       return f
-                '''
-            )
-
-        def filter_not_completed(parser):
-            parser.add_argument(
-                '--filter-not-completed',
-                help='filters all incomplete tasks',
-                action='store_true',
-                default=False
-            )
-        
-        def filter_completed(parser):
-            parser.add_argument(
-                '--filter-completed',
-                help='filters all incomplete tasks',
-                action='store_true',
-                default=False
-            )            
-        def filter_timed_out(parser):
-            parser.add_argument(
-                '--filter-timed-out',
-                help='filters all timed out tasks',
-                action='store_true',
-                default=False
-            )            
-
-        def filter_ready(parser):
-            parser.add_argument(
-                '--filter-ready',
-                help='filters all ready tasks',
-                action='store_true',
-                default=False
-            )            
-
-        def filter_failed(parser):
-            parser.add_argument(
-                '--filter-failed',
-                help='filters failed tasks',
-                action='store_true',
-                default=False
-            )
-
-        def filter_unhealthy(parser):
-            parser.add_argument(
-                '--filter-unhealthy',
-                help='filters tasks that ended without completing: failed, timed-out, killed or crashed',
-                action='store_true',
-                default=False
-            )
-            
 
         def grep_expr(parser):
             parser.add_argument(
@@ -844,7 +574,7 @@ class Cli:
                 default=False,
                 help="read the tasks from the pipeline instance's .drypipe/ dir instead of running --generator: "
                      "no DAG code runs, only tasks already created (by run or prepare) are seen. "
-                     "Functions given to options like --func-filter must be in module:function format"
+                     "Functions given to options like --where-func must be in module:function format"
             )
 
         def at_step(parser):
@@ -965,37 +695,32 @@ class Cli:
                     except Exception as e:
                         raise Exception(f"arg {a.__name__}  on command {name} failed with exception {e}")
 
-        def all_filters():
-            return [filter, filter_from, py_filter, func_filter, filter_completed, filter_not_completed, 
-                    filter_failed, filter_unhealthy, filter_timed_out, filter_ready,
-                    limit]
-
-        # argparse dests of the filter options, their functions are named after them
-        self.filter_dests = [f.__name__ for f in all_filters()]
+        def task_selection(parser):
+            add_selection_options(parser)
 
         yield Command('run', pipeline_instance_dir, generator, until, restart_failed, reset_failed, sleep_schedule,
                       help="generate tasks and run the pipeline")
 
-        yield Command('rewind', pipeline_instance_dir, generator, at_step, *all_filters(),
-                      help="transition all selected tasks (--filter and --py-filter) to step X sepcified by --at-step=X")
+        yield Command('rewind', pipeline_instance_dir, generator, at_step, task_selection,
+                      help="transition all selected tasks (see --where options) to step X specified by --at-step=X")
         
-        yield Command('set-state', pipeline_instance_dir, generator, state, *all_filters(),
-                      help="transition all selected tasks (--filter and --py-filter) to state S sepcified by --state")        
+        yield Command('set-state', pipeline_instance_dir, generator, state, task_selection,
+                      help="transition all selected tasks (see --where options) to state S specified by --state")        
 
-        yield Command('list-keys', pipeline_instance_dir, generator, *all_filters(),
+        yield Command('list-keys', pipeline_instance_dir, generator, task_selection,
                       help="list keys in the pipeline instance that can possibly generated by the DAG")
 
-        yield Command('list', pipeline_instance_dir, generator, *all_filters(),
+        yield Command('list', pipeline_instance_dir, generator, task_selection,
                       help="list keys, states, and step in the pipeline instance that can possibly generated by the DAG")
 
 
-        yield Command('status', pipeline_instance_dir, *all_filters(), generator_optional,
+        yield Command('status', pipeline_instance_dir, task_selection, generator_optional,
                       help="list the states of tasks that exist so far in the pipeline instance")
         
-        yield Command('summary', pipeline_instance_dir, *all_filters(), generator_optional,
+        yield Command('summary', pipeline_instance_dir, task_selection, generator_optional,
                       help="last aggregate counts of (state, step)")
 
-        yield Command('prepare', pipeline_instance_dir, generator, until, sleep_schedule, *all_filters(),
+        yield Command('prepare', pipeline_instance_dir, generator, until, sleep_schedule, task_selection,
                       help="generate tasks, WITHOUT running the pipeline")
 
         yield Command('service', pipeline_instances_dir, config_generator, sleep_schedule, log_conf, exit_on_parent_death,
@@ -1067,7 +792,7 @@ class Cli:
             )
 
         yield Command(
-            'status-db', pipeline_instance_dir_optional, generator_optional, tsv, instance_name, empty_db, lean, log_classifier, *all_filters(),
+            'status-db', pipeline_instance_dir_optional, generator_optional, tsv, instance_name, empty_db, lean, log_classifier, task_selection,
             help="""
                 creates an sqlite3 database with tables : 
 
@@ -1087,7 +812,7 @@ class Cli:
                     error text
                 );
 
-                task_status contains a row for each task (accepted by the filter if filters are specified),
+                task_status contains a row for each task (selected by the --where options if given),
                 instance_name is the folder name of --pid OR value given by argument --instance-name
 
                 (key, state, step) is what would be returned by the "status" command.
@@ -1128,8 +853,8 @@ class Cli:
                 default=False
             )
 
-        yield Command('times', task_key_optional, include_steps, generator_optional, *all_filters(),
-                      help="execute time for all tasks, or all tasks matching filter expression")
+        yield Command('times', task_key_optional, include_steps, generator_optional, task_selection,
+                      help="execute time for all tasks, or for the tasks selected by the --where options")
         
         def stop_after_step(parser):
             parser.add_argument(
@@ -1165,8 +890,8 @@ class Cli:
         yield Command('upload-drypipe-for-remote-instance', task_key)
         yield Command('upload-task-inputs', task_key)
 
-        yield Command('sbatch', task_key_optional, wait, regen, generator_optional, sbatch_options, reset, at_step, stop_after_step, *all_filters(),
-                      help="launch task (specified by --task-key, or by combination of --filter --py-filter) with sbatch")
+        yield Command('sbatch', task_key_optional, wait, regen, generator_optional, sbatch_options, reset, at_step, stop_after_step, task_selection,
+                      help="launch task (specified by --task-key, or selected by the --where options) with sbatch")
 
         yield Command('sbatch-gen', task_key, regen, generator_optional, sbatch_options, reset, stop_after_step,
                       help="print sbatch command for launching task, without invoking it")
@@ -1205,7 +930,7 @@ class Cli:
                 action='store_true',
                 default=False,
                 help="submit the selected tasks in small arrays, each time the queue has room for them, "
-                     "without --filter-* options: resume the unfinished loop"
+                     "without --where options: resume the unfinished loop"
             )
             parser.add_argument(
                 '--max-queued',
@@ -1251,7 +976,7 @@ class Cli:
 
         yield Command('array-submit',
                       task_key, regen, generator_optional, tail, wait, include_all_incompleted_tasks,
-                      sbatch_options, reset, tasks_per_job, slurm_max_jobs, stop_after_step, yes, loop, *all_filters(),
+                      sbatch_options, reset, tasks_per_job, slurm_max_jobs, stop_after_step, yes, loop, task_selection,
                       help="submit array, after a confirmation (see --yes)")
 
         yield Command('array-upload', task_key, help="upload array task to remote location")
@@ -1265,13 +990,13 @@ class Cli:
         yield Command('array-squeue', task_key,
                       help="dump squeue's output for each job id submitted by an array task")
 
-        yield Command('array-summary', task_key, generator_optional, *all_filters(),
+        yield Command('array-summary', task_key, generator_optional, task_selection,
                       help="running and queued task counts of each submitted array job, followed "
                            "by summary (state and step counts) of the array task's children")
 
-        yield Command('reset', task_key_optional, generator, *all_filters(),)
+        yield Command('reset', task_key_optional, generator, task_selection)
 
-        yield Command( 'grep-logs', pipeline_instance_dir, grep_expr, generator, *all_filters(), help="applies fgrep on out.log files of matching tasks")
+        yield Command( 'grep-logs', pipeline_instance_dir, grep_expr, generator, task_selection, help="applies fgrep on out.log files of matching tasks")
 
         def tail_n(parser):
             parser.add_argument(
@@ -1281,7 +1006,7 @@ class Cli:
                 default=50,
             )
 
-        yield Command('tail-logs', tail_n, generator, pipeline_instance_dir, *all_filters(),
+        yield Command('tail-logs', tail_n, generator, pipeline_instance_dir, task_selection,
                       help="applies tail on out.log files of matching tasks")
 
         def analyze_logs_dir(parser):
@@ -1305,15 +1030,15 @@ class Cli:
                 '--all-tasks',
                 action='store_true',
                 default=False,
-                help="by default, only tasks that ended without completing are analyzed, as if --filter-unhealthy "
-                     "was given (failed, timed-out, killed, crashed). --all-tasks analyzes all tasks that match the filters"
+                help="by default, only tasks that ended without completing are analyzed, as if --where-state unhealthy "
+                     "was given (failed, timed-out, killed, crashed). --all-tasks analyzes all the selected tasks"
             )
 
-        yield Command('analyze-logs', generator_optional, fs_generator, pipeline_instance_dir, analyze_logs_dir, log_classifier, full, all_tasks, *all_filters(),
+        yield Command('analyze-logs', generator_optional, fs_generator, pipeline_instance_dir, analyze_logs_dir, log_classifier, full, all_tasks, task_selection,
                       help="writes one markdown file per (state, step) of matching tasks, named <state>.<step>-<N>.md "
                            "where N is the number of tasks in the file (ex: failed.3-12.md), <state>-<N>.md "
                            "when the task has no step. Only tasks that ended without completing are analyzed, as if "
-                           "--filter-unhealthy was given, other filters narrow the selection further, see --all-tasks. Each file starts with a table that groups its tasks by error "
+                           "--where-state unhealthy was given, other --where options narrow the selection further, see --all-tasks. Each file starts with a table that groups its tasks by error "
                            "signature, followed by the last step of each task's out.log. The signature of a task is its last "
                            "error line in the last step of out.log, with variable parts (paths, numbers, quoted strings, etc) masked, "
                            "see dry_pipe/task_classifier.py and --log-classifier")
@@ -1332,7 +1057,7 @@ class Cli:
         yield Command('extract-keys', analysis_file, dest,
                       help="lists the error signatures of a file written by analyze-logs, asks which ones to select "
                            "(ex: 1,3), and outputs the keys of the tasks having a selected signature. The keys can be "
-                           "used with --filter-from, ex: array-submit --filter-from=keys.txt")
+                           "used as a key list, ex: array-submit --where-key @keys.txt")
 
         def tags(parser):
             parser.add_argument(
@@ -1414,7 +1139,7 @@ class Cli:
                 required=False
             )
 
-        yield Command('rsync-push', pipeline_instance_dir, generator, tags, rsync_to, include_drypipe_files, exhaustive, no_confirm, info_progress2, chown, *all_filters(),
+        yield Command('rsync-push', pipeline_instance_dir, generator, tags, rsync_to, include_drypipe_files, exhaustive, no_confirm, info_progress2, chown, task_selection,
                       help="rsync output files having at least one of the --tags, of matching tasks, to --to")
 
         def rsync_from(parser):
@@ -1436,7 +1161,7 @@ class Cli:
                      "cannot be combined with --tags, --include-drypipe-files or --exhaustive"
             )
 
-        yield Command('rsync-pull', pipeline_instance_dir, generator, tags, rsync_from, include_drypipe_files, exhaustive, state_files_only, no_confirm, info_progress2, *all_filters(),
+        yield Command('rsync-pull', pipeline_instance_dir, generator, tags, rsync_from, include_drypipe_files, exhaustive, state_files_only, no_confirm, info_progress2, task_selection,
                       help="rsync output files having at least one of the --tags, of matching tasks, from --from"
                       " note: unless --include-drypipe-files or --state-files-only option, only output (task produces) files get rsynced."
                 )
@@ -1458,7 +1183,7 @@ class Cli:
                 default=False
             )
 
-        yield Command('import-inputs', pipeline_instance_dir, generator_optional, fs_generator, import_into, no_confirm, rsync_ignore_missing_args, *all_filters(),
+        yield Command('import-inputs', pipeline_instance_dir, generator_optional, fs_generator, import_into, no_confirm, rsync_ignore_missing_args, task_selection,
                       help="import the remote inputs of matching tasks, declared with dsl.file('a/b/f.mgf').rsync('my-host:/x/y/'): "
                            "one rsync is run per source and destination, with the file list passed on stdin (--files-from=-), "
                            "ex: my-host:/x/y/a/b/f.mgf is imported as <pid>/a/b/f.mgf"
@@ -1483,10 +1208,10 @@ class Cli:
             )
 
         yield Command('archive', pipeline_instance_dir, generator, tags, exclude_tags, include_drypipe_files, exhaustive,
-                      archive_name, archive_command, no_confirm, *all_filters(),
+                      archive_name, archive_command, no_confirm, task_selection,
                       help="archive output files having at least one of the --tags (or none of the --exclude-tags), of matching tasks, with --archive-command")
 
-        yield Command('purge-outputs', pipeline_instance_dir, generator, tags, exclude_tags, no_confirm, *all_filters(),
+        yield Command('purge-outputs', pipeline_instance_dir, generator, tags, exclude_tags, no_confirm, task_selection,
                       help="deletes output files having at least one of the --tags (or none of the --exclude-tags), of matching tasks, warning: purging files can break some pipelines")
 
 
@@ -1931,7 +1656,7 @@ class Cli:
                 file=sys.stderr
             )
 
-        if not self.has_filters():
+        if not self.has_selection():
             self.array_task_manager.invoke_sacct()
             is_restart = len(self.array_task_manager.arrays_submitted_sacct_info) > 0
         else:
@@ -1950,7 +1675,7 @@ class Cli:
         launch_count = 0
 
         def set_of_task_keys_if_has_filter():
-            if not self.has_filters():
+            if not self.has_selection():
                 return None
 
             def g():
@@ -2139,14 +1864,14 @@ class Cli:
 
         def task_keys_to_submit():
             if unfinished_loop is not None:
-                if self.has_filters():
+                if self.has_selection():
                     raise CliUserError(
-                        f"loop {unfinished_loop.number()} is unfinished, resume it with --loop without --filter-* "
+                        f"loop {unfinished_loop.number()} is unfinished, resume it with --loop without --where options "
                         f"options, or abandon it with --abandon-loop"
                     )
                 return unfinished_loop.remaining_keys()
-            if not self.has_filters():
-                raise CliUserError("the array has no unfinished loop to resume, select the tasks of a new loop with --filter-* options")
+            if not self.has_selection():
+                raise CliUserError("the array has no unfinished loop to resume, select the tasks of a new loop with --where options")
             return [key for key, _, _, _ in self.filter_key_state_step(atm.children_task_keys())]
 
         task_keys = task_keys_to_submit()
@@ -2302,7 +2027,7 @@ class Cli:
                 instance_logger=self.instance_logger
             )
 
-        if self.has_filters():
+        if self.has_selection():
             for key, _, _, _ in self.filter_key_state_step():
                 print(f"will submit {key}")
                 submit_one(key)
@@ -2490,24 +2215,19 @@ class Cli:
         if len(lines) < 2 or lines[1] == "":
             return ""
 
+        recorded_args = shlex.split(lines[1])[1:]
         try:
-            submit_args = self.parser.parse_args(shlex.split(lines[1])[1:])
+            submit_args = self.parser.parse_args(recorded_args)
         except SystemExit:
-            return "unparsable submit command"
-
-        subparser = self.subparsers.choices[submit_args.command]
+            # submitted by a drypipe version with other selection options, show them as recorded
+            former_options = [a for a in recorded_args if a.startswith(("--filter", "--py-filter", "--func-filter", "--limit"))]
+            return shlex.join(former_options) if len(former_options) > 0 else "unparsable submit command"
 
         def given_filters():
-            for dest in self.filter_dests:
-                value = getattr(submit_args, dest, None)
-                if value != subparser.get_default(dest):
-                    option = "--" + dest.replace("_", "-")
-                    if value is True:
-                        yield option
-                    elif isinstance(value, list):
-                        yield from (f"{option}={v}" for v in value)
-                    else:
-                        yield f"{option}={value}"
+            for option, value in getattr(submit_args, "where_conditions", []):
+                yield f"{option}={value}"
+            if getattr(submit_args, "limit", None) is not None:
+                yield f"--limit={submit_args.limit}"
 
         return shlex.join(given_filters())
 
@@ -2546,7 +2266,7 @@ class Cli:
 
     def times(self):
 
-        # --task-key restricts the universe the filters (--filter, --py-filter, --func-filter, ...)
+        # --task-key restricts the universe the --where options
         # are applied to, so that this command selects tasks the same way status, summary,
         # tail-logs, etc do
         if self.parsed_args.task_key is not None:
@@ -3144,97 +2864,24 @@ class Cli:
             )
             do_regen()
 
-    def create_filter_chain(self):
+    def task_selector(self):
+        """the selection of the --where options, see dry_pipe.task_selector"""
 
-        def tautology(key, step, state_name):
-            return True
+        def generator_module():
+            generator = getattr(self.parsed_args, "generator", None)
+            if generator is None or self._uses_fs_generator():
+                return None
+            return generator.split(":")[0]
 
-        def create_glob_filter():
-            if self.parsed_args.filter == "*":
-                return tautology
-
-            def f(key, state_name, step):
-                return fnmatch.fnmatch(key, self.parsed_args.filter)
-
-            return f
-
-        def create_py_filter():
-
-            if self.parsed_args.filter_completed:
-                return lambda key, state_name, step: state_name == 'completed'
-
-            if self.parsed_args.filter_timed_out:
-                return lambda key, state_name, step: state_name == 'timed-out'
-
-            if self.parsed_args.filter_ready:
-                return lambda key, state_name, step: state_name == 'ready'
-            
-            if self.parsed_args.filter_not_completed:
-                return lambda key, state_name, step: state_name != 'completed'
-            
-            if self.parsed_args.filter_failed:
-                return lambda key, state_name, step: state_name.startswith("failed")
-
-            if self.parsed_args.filter_unhealthy:
-                return lambda key, state_name, step: self._is_unhealthy(state_name)
-
-            if self.parsed_args.py_filter is None:
-                return tautology
-
-            expr = self.parsed_args.py_filter
-
-            def f(key, state_name, step):
-                resolved_expr = expr.format(**{"step": step, "state_name": f"'{state_name}'", "key": f"'{key}'"})
-                try:
-                    return eval(resolved_expr)
-                except SyntaxError:
-                    print(f"--py-filter '{expr}' has a syntax error")
-                    sys.exit(1)
-            return f
-
-        def create_func_filter():
-            if self.parsed_args.func_filter is None:
-                return tautology
-
-            spec = self.parsed_args.func_filter
-            reference, call_args, call_kwargs = _parse_func_filter_spec(spec)
-
-            factory = func_from_mod_func(self._resolve_against_generator_module(reference, "--func-filter"))
-
-            # the referenced function is a factory: it receives the --func-filter args and returns the filter
-            try:
-                inspect.signature(factory).bind(*call_args, **call_kwargs)
-            except TypeError as e:
-                raise InvalidFuncFilter(f"--func-filter '{spec}': arguments don't match {reference}: {e}")
-
-            filter_func = factory(*call_args, **call_kwargs)
-            if not callable(filter_func):
-                raise InvalidFuncFilter(
-                    f"--func-filter '{spec}': {reference} must return a filter function(key, state_name, step), "
-                    f"got a {type(filter_func).__name__}"
-                )
-
-            def f(key, state_name, step):
-                return filter_func(key, state_name, step)
-
-            return f
-
-        def create_key_file_filter():
-            if self.parsed_args.filter_from is None:
-                return tautology
-            keys = _load_filter_from_keys(self.parsed_args.filter_from)
-            return lambda key, state_name, step: key in keys
-
-        def g():
-            yield create_glob_filter()
-            yield create_key_file_filter()
-            yield create_py_filter()
-            yield create_func_filter()
-
-        return list(g())
-
+        return TaskSelector.from_args(
+            self.parsed_args,
+            self.parsed_args.pipeline_instance_dir,
+            getattr(self.parsed_args, "task_key", None),
+            generator_module()
+        )
 
     def filter_tasks(self, key_universe=None):
+        """the (task, state_file) selected by the --where options, the selection is explained on stderr"""
 
         def dag_from_args():
             if self._uses_fs_generator():
@@ -3243,27 +2890,27 @@ class Cli:
             pipeline_instance.prepare_instance_dir()
             return pipeline_instance
 
-        dag = dag_from_args()
-
-        filter_chain = self.create_filter_chain()
-
         stop_after_step = getattr(self.parsed_args, "stop_after_step", None)
 
-        def accept(key, state, step):
-            if stop_after_step is not None and step is not None and step > stop_after_step:
-                return False
-            for f in filter_chain:
-                if not f(key, state, step):
-                    return False
-            return True
+        def within_stop_after_step(state_file):
+            _, _, step = state_file.key_state_step()
+            return stop_after_step is None or step is None or step <= stop_after_step
 
-        accepted = (
+        tasks = [
             (task, state_file)
-            for task, state_file in dag.iterate_key_state_steps(key_universe)
-            if accept(*state_file.key_state_step())
-        )
+            for task, state_file in dag_from_args().iterate_key_state_steps(key_universe)
+            if within_stop_after_step(state_file)
+        ]
 
-        yield from itertools.islice(accepted, self.parsed_args.limit)
+        selector = self.task_selector()
+        selected = selector.select(tasks, key_state_step=lambda task_and_state_file: task_and_state_file[1].key_state_step())
+
+        if selector.has_stages() and not self.parsed_args.explain_off:
+            print("\n".join(selector.explain()), file=sys.stderr)
+
+        selector.offer_to_save_left_out_keys(f"drypipe {shlex.join(self.args)}")
+
+        return selected
 
     def _resolve_against_generator_module(self, reference, option_name):
         """a bare function name (no module, i.e. no ":") is looked up in the --generator module"""
@@ -3292,36 +2939,9 @@ class Cli:
             s = "" if step is None else f"{step}"
             print(f"{key}\t{state}\t{step}")
 
-    def has_filters(self):
-        if self.parsed_args.py_filter is not None or self.parsed_args.filter != "*":
-            return True
-        if self.parsed_args.func_filter is not None:
-            return True
-        if self.parsed_args.filter_from is not None:
-            return True
-        if self.parsed_args.filter_completed:
-            return True
-        
-        if self.parsed_args.filter_not_completed:
-            return True
-        
-        if self.parsed_args.filter_failed:
-            return True
-
-        if self.parsed_args.filter_timed_out:
-            return True
-
-        if self.parsed_args.filter_ready:
-            return True
-
-        if self.parsed_args.filter_unhealthy:
-            return True
-
-        if self.parsed_args.limit is not None:
-            return True
-
-        return False
-
+    def has_selection(self):
+        """true when --where options or --limit are given, the mask doesn't count"""
+        return len(self.parsed_args.where_conditions) > 0 or self.parsed_args.limit is not None
 
     def list_keys(self):
         for key, _, _, _ in self.filter_key_state_step():
