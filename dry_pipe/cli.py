@@ -27,13 +27,13 @@ from io import StringIO
 from os import environ
 from pathlib import Path
 
-from dry_pipe import PortablePopen, DryPipe
+from dry_pipe import PortablePopen, DryPipe, TaskConf
 from dry_pipe.array_launch_loop import LaunchLoop, LoopIsRunning, LoopLock, account_of_sbatch_options, count_queued_jobs
 from dry_pipe.core_lib import func_from_mod_func, is_inside_slurm_job, create_instance_logger
 from dry_pipe.frozen_dag_generator import FrozenDAGGenerator
 from dry_pipe.task_classifier import TaskClassifier, TaskClassifyContext
 from dry_pipe.pipeline_instance import Monitor, PipelineInstance
-from dry_pipe.task_process import TaskPackExchausted, TaskProcess, TaskFailedException
+from dry_pipe.task_process import TaskPackExchausted, TaskProcess, TaskFailedException, resolve_inputs_outputs
 from dry_pipe.slurm_array_task import SlurmArrayParentTask
 from dry_pipe.slurm_arrays import SbatchRejected
 from dry_pipe.slurm_codes import SlurmJobStateCodes
@@ -1961,12 +1961,26 @@ class Cli:
 
         self._run_in_rich(regen_selected_children, pipeline_instance)
 
+        sbatch_option_overrider = self.sbatch_options_overrider_func_if_option_exists()
+
         submits = self.array_task_manager.next_submits(
             restart_failed=is_restart,
             include_all_incompleted=self.parsed_args.include_all_incompleted_tasks,
             set_of_task_keys=set_of_task_keys,
-            sbatch_option_overrider=self.sbatch_options_overrider_func_if_option_exists()
+            sbatch_option_overrider=sbatch_option_overrider
         )
+
+        submitted_task_keys = {task_key for submit in submits for task_key in submit.task_keys}
+        task_keys = self._task_keys_with_missing_input_files_choice(submitted_task_keys)
+
+        if task_keys is None:
+            print("nothing submitted", file=sys.stderr)
+            return
+
+        if len(task_keys) < len(submitted_task_keys):
+            submits = self.array_task_manager.next_submits(
+                set_of_task_keys=set(task_keys), sbatch_option_overrider=sbatch_option_overrider
+            )
 
         def is_confirmed():
             """each submit writes its task keys in an array.<n>.tsv file, and submits it as one slurm array"""
@@ -1995,6 +2009,47 @@ class Cli:
             except SbatchRejected as e:
                 raise ArraySubmitRejected(f"sbatch rejected the array submission:\n{e}")
             launch_count += len(submit.task_keys)
+
+    def _task_keys_with_missing_input_files_choice(self, task_keys):
+        """
+        task_keys without those excluded by the choice, None when the choice is to exit,
+        --yes and --dry-run choose the default: exclude
+        """
+
+        def has_missing_input_file(task_key):
+            control_dir = self.array_task_manager.task_control_dir_of(task_key)
+            task_conf = TaskConf.from_json_file(control_dir)
+            task_inputs, _ = resolve_inputs_outputs(task_conf, control_dir, False, logger)
+            return any(i.is_file() and not os.path.exists(i.resolved_value) for i in task_inputs.values())
+
+        def choice():
+            if self.parsed_args.yes or self.parsed_args.dry_run:
+                print("they are excluded from the array", file=sys.stderr)
+                return "1"
+            print("  1) exclude them from the array (default)", file=sys.stderr)
+            print("  2) submit them anyway", file=sys.stderr)
+            print("  3) exit", file=sys.stderr)
+            print("choice ? [1/2/3] ", end="", file=sys.stderr, flush=True)
+            return sys.stdin.readline().strip() or "1"
+
+        task_keys_with_missing_input_files = {k for k in task_keys if has_missing_input_file(k)}
+
+        if len(task_keys_with_missing_input_files) == 0:
+            return task_keys
+
+        print(
+            f"warning: {len(task_keys_with_missing_input_files)} tasks have missing input files, "
+            f"they will most likely crash",
+            file=sys.stderr
+        )
+
+        c = choice()
+        if c == "1":
+            return [k for k in task_keys if k not in task_keys_with_missing_input_files]
+        elif c == "2":
+            return task_keys
+        else:
+            return None
 
     def _saved_loop_options(self):
         """the options saved in the loop file, {option: (dest, type)}, the selection is saved as the loop's keys"""
@@ -2088,6 +2143,17 @@ class Cli:
 
         task_keys = task_keys_to_submit()
 
+        self._run_in_rich(lambda: pipeline_instance.regen_tasks_with_keys(set(task_keys)), pipeline_instance)
+
+        if unfinished_loop is None:
+            task_keys = self._task_keys_with_missing_input_files_choice(task_keys)
+            if task_keys is None:
+                print("nothing submitted", file=sys.stderr)
+                return
+            if len(task_keys) == 0:
+                print("warning: no tasks to submit", file=sys.stderr)
+                return
+
         sbatch_option_overrider = self.sbatch_options_overrider_func_if_option_exists()
 
         def account():
@@ -2138,8 +2204,6 @@ class Cli:
             if sys.stdin.readline().strip().lower() not in ("y", "yes"):
                 print("nothing submitted", file=sys.stderr)
                 return
-
-        self._run_in_rich(lambda: pipeline_instance.regen_tasks_with_keys(set(task_keys)), pipeline_instance)
 
         launch_loop = unfinished_loop or LaunchLoop.create(atm, task_keys)
         launch_loop.append_options(loop_options)

@@ -31,7 +31,7 @@ from dry_pipe_tests.pipeline_tests_with_slurm_mockup import PipelineWithSlurmArr
 from dry_pipe.slurm_arrays import ArrayTaskManager
 from dry_pipe_tests.test_utils import TestSandboxDir
 from dry_pipe_tests.pipeline_tests_with_slurm_arrays import PipelineWithSlurmArrayForRealSlurmTest, \
-    PipelineWithSlurmArrayForRestarts, dag_simple_array
+    PipelineWithSlurmArrayForRestarts, dag_simple_array, tc_ar
 
 
 def simple_array_pipeline():
@@ -595,6 +595,110 @@ class CliArraySubmitConfirmationTests(BasePipelineTest):
                 self.assertIn("nothing submitted", prompt)
                 self.assertEqual(completed_children, [])
                 self.assertEqual(array_files, [])
+
+
+def dag_array_with_input_files(dsl):
+    children = [
+        dsl.task(
+            key=f"t{i}", is_slurm_array_child=True, task_conf=tc_ar()
+        ).inputs(
+            f=dsl.file(f"inputs/{i}.txt")
+        ).calls("""
+            #!/usr/bin/env bash
+            cat $f
+        """)()
+        for i in range(1, 4)
+    ]
+
+    yield from children
+
+    yield dsl.task(key="ap", task_conf=tc_ar()).slurm_array_parent(children_tasks=children)()
+
+
+def array_with_input_files_pipeline():
+    return DryPipe.create_pipeline(dag_array_with_input_files)
+
+
+class CliArraySubmitMissingInputFilesTests(BasePipelineTest):
+    """only t1 of t1, t2, t3 has its input file"""
+
+    generator = 'dry_pipe_tests.cli_tests:array_with_input_files_pipeline'
+
+    def test_run_pipeline(self):
+        pass
+
+    def _array_submit_answering(self, answer, *extra_args):
+        """returns (stderr, task keys of the submitted array files)"""
+        d = TestSandboxDir(self, other_func=inspect.stack()[1].function)
+        d.delete_sandbox()
+        test_cli(self, 'prepare', f'--pipeline-instance-dir={d.sandbox_dir}', f'--generator={self.generator}')
+
+        Path(d.sandbox_dir, "inputs").mkdir()
+        Path(d.sandbox_dir, "inputs", "1.txt").write_text("1")
+
+        stderr = io.StringIO()
+        with unittest.mock.patch('sys.stdin', io.StringIO(answer)), unittest.mock.patch('sys.stderr', stderr):
+            test_cli(
+                self, 'array-submit', f'-pid={d.sandbox_dir}', f'--generator={self.generator}', '-k=ap', *extra_args
+            )
+
+        array_files = sorted(Path(d.sandbox_dir, ".drypipe", "ap").glob("array.*.tsv"))
+
+        return stderr.getvalue(), [f.read_text().split() for f in array_files]
+
+    def test_excludes_tasks_with_missing_input_files(self):
+        stderr, submitted = self._array_submit_answering("1\ny\n")
+
+        self.assertIn("warning: 2 tasks have missing input files", stderr)
+        self.assertEqual(submitted, [['t1']])
+
+    def test_submits_tasks_with_missing_input_files_anyway(self):
+        stderr, submitted = self._array_submit_answering("2\ny\n")
+
+        self.assertIn("warning: 2 tasks have missing input files", stderr)
+        self.assertEqual(submitted, [['t1', 't2', 't3']])
+
+    def test_exits(self):
+        stderr, submitted = self._array_submit_answering("3\n")
+
+        self.assertIn("nothing submitted", stderr)
+        self.assertEqual(submitted, [])
+
+    def test_excludes_without_choices_with_yes(self):
+        stderr, submitted = self._array_submit_answering("", "--yes")
+
+        self.assertIn("warning: 2 tasks have missing input files", stderr)
+        self.assertNotIn("choice ?", stderr)
+        self.assertEqual(submitted, [['t1']])
+
+    def _loop_answering(self, answer, *extra_args):
+        with unittest.mock.patch('dry_pipe.cli.count_queued_jobs', lambda account, timeout_secs: 0):
+            return self._array_submit_answering(
+                answer, '--loop', '--max-queued=10', '--margin=0', '--min-batch=1', '--filter=t*', *extra_args
+            )
+
+    def test_loop_excludes_tasks_with_missing_input_files(self):
+        stderr, submitted = self._loop_answering("1\ny\n")
+
+        self.assertIn("warning: 2 tasks have missing input files", stderr)
+        self.assertEqual(submitted, [['t1']])
+
+    def test_loop_submits_tasks_with_missing_input_files_anyway(self):
+        stderr, submitted = self._loop_answering("2\ny\n")
+
+        self.assertEqual(submitted, [['t1', 't2', 't3']])
+
+    def test_loop_exits(self):
+        stderr, submitted = self._loop_answering("3\n")
+
+        self.assertIn("nothing submitted", stderr)
+        self.assertEqual(submitted, [])
+
+    def test_loop_excludes_without_choices_with_yes(self):
+        stderr, submitted = self._loop_answering("", "--yes")
+
+        self.assertNotIn("choice ?", stderr)
+        self.assertEqual(submitted, [['t1']])
 
 
 class FilterFromTests(unittest.TestCase):

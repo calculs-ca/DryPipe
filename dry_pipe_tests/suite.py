@@ -13,7 +13,7 @@ from dry_pipe_tests import test_core_lib
 from dry_pipe_tests import test_reports
 from dry_pipe_tests import test_task_timers
 from dry_pipe_tests.cli_tests import CliArrayTests1, CliTestsPipelineWithSlurmArray, CliTestScenario2, CliArraySubmitRegenTests, \
-    CliFuncFilterTests, CliArraySubmitLoopTests
+    CliFuncFilterTests, CliArraySubmitLoopTests, CliArraySubmitMissingInputFilesTests, CliArraySubmitConfirmationTests
 from dry_pipe_tests.dsl_tests import TaskChangeTrackingTests
 from dry_pipe_tests.pipeline_tests_with_slurm_arrays import PipelineWithSlurmArray2StepsWith2Sbatch
 from dry_pipe_tests.pipeline_tests_with_slurm_mockup import all_low_level_tests_with_mockup_slurm
@@ -41,6 +41,8 @@ def local_array_tests():
         CliTestScenario2,
         CliArraySubmitRegenTests,
         CliArraySubmitLoopTests,
+        CliArraySubmitMissingInputFilesTests,
+        CliArraySubmitConfirmationTests,
         pipeline_tests_with_slurm_arrays.all_tests
     ]
 
