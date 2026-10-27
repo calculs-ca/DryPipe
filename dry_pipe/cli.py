@@ -2852,9 +2852,9 @@ class Cli:
     def _print_ignored_tasks_summary(self):
         if self.task_set is not None:
             unmatched_keys = sorted(self.task_set.keys_of_files - self.yielded_task_keys)
-            examples = f" (ex: {', '.join(repr(k) for k in unmatched_keys[:5])})" if unmatched_keys else ""
-            print(f"ignored tasks: {len(self.yielded_ignored_task_keys)} (from {self.task_set_file})", file=self.output)
-            print(f"keys of task set files not yielded by the generator: {len(unmatched_keys)}{examples}", file=self.output)
+            #examples = f" (ex: {', '.join(repr(k) for k in unmatched_keys[:5])})" if unmatched_keys else ""
+            print(f"ignored tasks: {len(self.yielded_ignored_task_keys)}", file=self.output)
+            print(f"keys of task set files not yielded by the generator: {len(unmatched_keys)}", file=self.output)
 
     def garbage_collect(self):
 
