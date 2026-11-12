@@ -42,7 +42,7 @@ from dry_pipe.state_machine import StateFileTracker
 from dry_pipe.service import PipelineRunner
 from dry_pipe.task_lib import submit_local_array, upload_task_inputs_rsync
 from dry_pipe.task_selector import (
-    NotAnAnalyzeLogsFile, TaskSelector, add_selection_options,
+    NotAnAnalyzeLogsFile, TaskSelector, KeyLists, add_selection_options, key_lists_of_where_key,
     _signatures_of_analysis_file, _keys_and_signature_numbers_of_analysis_file, _signature_numbers
 )
 
@@ -1601,6 +1601,8 @@ class Cli:
 
     def array_submit(self):
 
+        self._apply_sbatch_options_of_key_lists()
+
         if self.parsed_args.loop:
             self._apply_saved_loop_options()
 
@@ -1783,6 +1785,30 @@ class Cli:
             return task_keys
         else:
             return None
+
+    def _apply_sbatch_options_of_key_lists(self):
+        """the '# --sbatch-options=...' line of a --where-key key list applies as if given on the command line"""
+        key_lists = KeyLists()
+        given = [
+            (key_list, sbatch_options)
+            for option, value in self.parsed_args.where_conditions if option == "--where-key"
+            for key_list in key_lists_of_where_key(value)
+            for sbatch_options in key_lists.sbatch_options(key_list)
+        ]
+        if len(given) == 0:
+            return
+
+        def given_as_text():
+            return ", ".join(f"@{key_list}: {sbatch_options!r}" for key_list, sbatch_options in given)
+
+        if len({sbatch_options for _, sbatch_options in given}) > 1:
+            raise CliUsageError(f"key lists give different --sbatch-options: {given_as_text()}")
+        if getattr(self.parsed_args, "sbatch_options_is_explicit", False):
+            raise CliUsageError(f"--sbatch-options is given, and also by key list {given_as_text()}")
+
+        key_list, sbatch_options = given[0]
+        print(f"--sbatch-options={sbatch_options!r} from @{key_list}", file=sys.stderr)
+        self.parsed_args.sbatch_options = sbatch_options
 
     def _saved_loop_options(self):
         """the options saved in the loop file, {option: (dest, type)}, the selection is saved as the loop's keys"""

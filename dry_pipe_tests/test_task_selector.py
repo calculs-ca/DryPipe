@@ -244,6 +244,41 @@ class TaskSelectorTests(unittest.TestCase):
         self.assertIsNone(selector.offer_to_save_left_out_keys("cmd", self.dir, never_asked))
 
 
+class SbatchOptionsOfKeyListTests(unittest.TestCase):
+
+    def setUp(self):
+        self.dir = Path(tempfile.mkdtemp())
+
+    def sbatch_options(self, text, key_list="keys.tsv"):
+        (self.dir / "keys.tsv").write_text(text)
+        return KeyLists(base_dir=self.dir).sbatch_options(key_list)
+
+    def test_directive_with_spaces_and_quotes(self):
+        self.assertEqual(
+            self.sbatch_options("#   --sbatch-options='--mem=40G --time=1:00:00'\nt1\n"),
+            ["--mem=40G --time=1:00:00"]
+        )
+
+    def test_directive_of_a_sliced_key_list(self):
+        self.assertEqual(self.sbatch_options("# --sbatch-options=--mem=40G\nt1\n", "keys.tsv[:1]"), ["--mem=40G"])
+
+    def test_other_comments_are_ignored(self):
+        self.assertEqual(self.sbatch_options("# drypipe list --where-state failed\n# --where-key x\nt1\n"), [])
+
+    def test_directive_does_not_change_the_keys(self):
+        (self.dir / "keys.tsv").write_text("# --sbatch-options=--mem=40G\nt1\n")
+        self.assertEqual(KeyLists(base_dir=self.dir).keys("keys.tsv"), frozenset(["t1"]))
+
+    def test_malformed_directive_is_an_error(self):
+        for text in ["# --sbatch-options '--mem=40G'\n", "# --sbatch-options='--mem=40G\n", "# --sbatch-options=a b\n"]:
+            with self.subTest(text=text), self.assertRaises(InvalidSelection):
+                self.sbatch_options(text)
+
+    def test_reports_and_arrays_have_none(self):
+        self.assertEqual(KeyLists(base_dir=self.dir).sbatch_options("failed.3-1.md:1"), [])
+        self.assertEqual(KeyLists(base_dir=self.dir).sbatch_options("array.last"), [])
+
+
 class ArgparseTests(unittest.TestCase):
 
     def test_conditions_keep_command_line_order(self):

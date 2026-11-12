@@ -4,6 +4,7 @@ import fnmatch
 import inspect
 import itertools
 import re
+import shlex
 import sys
 from pathlib import Path
 
@@ -189,6 +190,10 @@ class _Key(str):
         return fnmatch.fnmatch(self, pattern)
 
 
+def _is_log_report(source):
+    return source.endswith(".md") or ".md:" in source
+
+
 class KeyLists:
     """
     the @ key lists of a --where expression, without their '@':
@@ -251,13 +256,42 @@ class KeyLists:
         if source.startswith("array."):
             submission = source[len("array."):]
             keys = self.array(-1 if submission == "last" else number(submission))
-        elif source.endswith(".md") or ".md:" in source:
+        elif _is_log_report(source):
             report, _, signatures = source.rpartition(".md")
             keys = self.log_report(report + ".md", signatures[1:] if signatures != "" else None)
         else:
             keys = self.key_file(source)
 
         return frozenset(keys[keys_slice])
+
+    def sbatch_options(self, key_list):
+        """the values of the '# --sbatch-options=...' lines of a key file, none for other key lists"""
+        source = key_list.partition("[")[0]
+        if source.startswith("array.") or _is_log_report(source):
+            return []
+        file = self.base_dir / source
+        if not file.exists():
+            raise InvalidSelection(f"key list {file} does not exist")
+
+        def comment_of(line):
+            return line.strip()[1:].strip()
+
+        def value_of(line_number, comment):
+            try:
+                args = shlex.split(comment)
+            except ValueError as e:
+                raise InvalidSelection(f"{file}:{line_number}: {e}")
+            if len(args) != 1 or not args[0].startswith("--sbatch-options="):
+                raise InvalidSelection(
+                    f"{file}:{line_number}: expected '# --sbatch-options=\"...\"', got '{comment}'"
+                )
+            return args[0][len("--sbatch-options="):]
+
+        with open(file) as f:
+            return [
+                value_of(line_number, comment_of(line)) for line_number, line in enumerate(f, start=1)
+                if line.strip().startswith("#") and comment_of(line).startswith("--sbatch-options")
+            ]
 
     def key_file(self, path):
         """the first column of each line, # starts a comment line"""
@@ -350,19 +384,25 @@ def _in_or_equals(variable, values, negated):
     return f"{variable} {'not in' if negated else 'in'} ({listed})"
 
 
+def _items_of_where_key(value):
+    """the comma separated items, an analyze-logs report's signature numbers stay with it: @failed.3-423.md:1,3"""
+    items = []
+    for part in value.split(","):
+        if len(items) > 0 and part[:1].isdigit() and ".md:" in items[-1]:
+            items[-1] += "," + part
+        else:
+            items.append(part)
+    return items
+
+
+def key_lists_of_where_key(value):
+    """the key lists of a --where-key value, without their @"""
+    return [item.strip()[1:] for item in _items_of_where_key(value) if item.strip().startswith("@")]
+
+
 def _rewrite_where_key(option, value, negated):
 
-    def items_of(value):
-        """the comma separated items, an analyze-logs report's signature numbers stay with it: @failed.3-423.md:1,3"""
-        items = []
-        for part in value.split(","):
-            if len(items) > 0 and part[:1].isdigit() and ".md:" in items[-1]:
-                items[-1] += "," + part
-            else:
-                items.append(part)
-        return items
-
-    items = items_of(value)
+    items = _items_of_where_key(value)
 
     def condition_of(item, negated=False):
         if item.startswith("@"):

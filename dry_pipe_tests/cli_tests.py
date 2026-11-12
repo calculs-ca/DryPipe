@@ -1720,6 +1720,39 @@ class CliSbatchOptionsOverrideTests(BasePipelineTest):
         for o in SBATCH_OVERRIDE_ORIGINAL_OPTIONS:
             self.assertNotIn(o, cmd)
 
+    # ---- '# --sbatch-options=...' line of a --where-key key list ---------
+
+    def _array_submit_dry_run(self, d, keys_text, *args):
+        """stdout and stderr of a dry run array-submit of the keys of a key list"""
+        keys_file = Path(d.sandbox_dir, "keys.tsv")
+        keys_file.write_text(keys_text)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
+            test_cli(
+                self, '--dry-run', 'array-submit', f'--pipeline-instance-dir={d.sandbox_dir}',
+                f'--generator={self.generator}', '--task-key=ap', f'--where-key=@{keys_file}', *args
+            )
+        return out.getvalue()
+
+    def test_array_sbatch_options_of_key_list(self):
+        d = TestSandboxDir(self)
+        self._prepare(d)
+
+        output = self._array_submit_dry_run(d, "#  --sbatch-options='--mem=20G --partition=gpu'\nc1\nc2\n")
+        [sbatch_command] = [line for line in output.splitlines() if "inhibited command: sbatch" in line]
+
+        self.assertIn("--mem=20G", sbatch_command)
+        self.assertIn("--partition=gpu", sbatch_command)
+        self.assertNotIn("--mem=10G", sbatch_command)
+        self.assertIn("--cpus-per-task=4", sbatch_command)
+
+    def test_array_sbatch_options_of_key_list_and_of_command_line(self):
+        d = TestSandboxDir(self)
+        self._prepare(d)
+
+        with self.assertRaises(CliUsageError):
+            self._array_submit_dry_run(d, "# --sbatch-options=--mem=20G\nc1\n", '--sbatch-options=--mem=30G')
+
 
 class HasSelectionTests(unittest.TestCase):
 
