@@ -2327,12 +2327,13 @@ class Cli:
 
         self._rsync_selected_files(
             f"{self.parsed_args.pipeline_instance_dir}/", self.parsed_args.rsync_to, f"to: {self.parsed_args.rsync_to}",
-            list(chown_option())
+            ("output files to copy", "output files not copied"), list(chown_option())
         )
 
     def rsync_pull(self):
         self._rsync_selected_files(
-            self.parsed_args.rsync_from, f"{self.parsed_args.pipeline_instance_dir}/", f"from: {self.parsed_args.rsync_from}"
+            self.parsed_args.rsync_from, f"{self.parsed_args.pipeline_instance_dir}/", f"from: {self.parsed_args.rsync_from}",
+            ("output files to copy", "output files not copied")
         )
 
     def import_inputs(self):
@@ -2403,7 +2404,9 @@ class Cli:
             # hard links instead of copies, the staging dir being on the same file system as the pipeline instance
             link_dest = f"--link-dest={pid}/"
 
-            if not self._rsync_selected_files(f"{pid}/", f"{staging_dir}/", f"archive: {archive_file}", [link_dest]):
+            if not self._rsync_selected_files(f"{pid}/", f"{staging_dir}/", f"archive: {archive_file}",
+                ("output files to archive", "output files not archived"), [link_dest]
+            ):
                 return
 
             command = self.parsed_args.archive_command.replace("{archive}", shlex.quote(str(archive_file)))
@@ -2416,7 +2419,7 @@ class Cli:
 
         print(f"created {archive_file}", file=self.output)
 
-    def _rsync_selected_files(self, source, dest, transfer_description, extra_rsync_args=()):
+    def _rsync_selected_files(self, source, dest, transfer_description, summary_headings, extra_rsync_args=()):
 
         def ensure_rsync_version_at_least(minimal_version):
             out = subprocess.run(["rsync", "--version"], capture_output=True, text=True, check=True).stdout
@@ -2449,7 +2452,7 @@ class Cli:
         if state_files_only:
             print(f"state files of {len(tasks_and_file_outputs)} tasks", file=self.output)
         else:
-            self._print_selected_file_outputs_summary(tasks_and_file_outputs)
+            self._print_file_outputs_summary(tasks_and_file_outputs, *summary_headings)
         if include_drypipe_files != "none":
             print(f"drypipe files ({include_drypipe_files}) of {len(tasks_and_file_outputs)} tasks", file=self.output)
         if exhaustive:
@@ -2521,7 +2524,7 @@ class Cli:
 
         tasks_and_file_outputs = self._tasks_and_selected_file_outputs()
 
-        self._print_selected_file_outputs_summary(tasks_and_file_outputs)
+        self._print_file_outputs_summary(tasks_and_file_outputs, "output files to delete", "output files kept")
         self._print_ignored_tasks_summary()
 
         if self._selected_tags() == (None, None):
@@ -2530,7 +2533,11 @@ class Cli:
                 file=self.output
             )
 
-        if not self.parsed_args.no_confirm and not self.query_yes_no("delete them ?", default="no"):
+        deleted_candidates_count = sum(len(file_outputs) for _, file_outputs in tasks_and_file_outputs)
+
+        if not self.parsed_args.no_confirm and not self.query_yes_no(
+            f"delete {deleted_candidates_count} output files ?", default="no"
+        ):
             return
 
         def existing_output_files():
@@ -2573,27 +2580,34 @@ class Cli:
             for task, _ in self.filter_tasks()
         ]
 
-    def _print_selected_file_outputs_summary(self, tasks_and_file_outputs):
+    def _print_file_outputs_summary(self, tasks_and_file_outputs, selected_heading, unselected_heading):
 
-        tags, excluded_tags = self._selected_tags()
+        tags, _ = self._selected_tags()
 
-        file_count_per_tag = collections.Counter(
-            tag
-            for _, file_outputs in tasks_and_file_outputs
-            for o in file_outputs
-            for tag in (o.tags or ["(untagged)"])
-        )
+        def selected_file_outputs():
+            for _, file_outputs in tasks_and_file_outputs:
+                yield from file_outputs
 
-        # requested tags are all shown, a 0 count reveals a misspelled tag
-        shown_tags = sorted(file_count_per_tag) if tags is None else sorted(tags)
+        def unselected_file_outputs():
+            for task, file_outputs in tasks_and_file_outputs:
+                for o in task.outputs.file_outputs_selected_by_tags():
+                    if o not in file_outputs:
+                        yield o
+
+        def print_section(heading, file_outputs, shown_tags=None):
+            file_outputs = list(file_outputs)
+            file_count_per_tag = collections.Counter(
+                tag for o in file_outputs for tag in (o.tags or ["(untagged)"])
+            )
+            print(f"{heading}: {len(file_outputs)}", file=self.output)
+            for tag in sorted(file_count_per_tag if shown_tags is None else shown_tags):
+                print(f"  {tag}: {file_count_per_tag[tag]}", file=self.output)
 
         print(f"tasks: {len(tasks_and_file_outputs)}", file=self.output)
-        if excluded_tags is not None:
-            print(f"excluded tags: {', '.join(sorted(excluded_tags))}", file=self.output)
-        print("output files per tag (a file with many tags is counted for each):", file=self.output)
-        for tag in shown_tags:
-            print(f"  {tag}: {file_count_per_tag[tag]}", file=self.output)
-        print(f"total output files: {sum(len(file_outputs) for _, file_outputs in tasks_and_file_outputs)}", file=self.output)
+        # requested tags are all shown, a 0 count reveals a misspelled tag
+        print_section(selected_heading, selected_file_outputs(), tags)
+        print_section(unselected_heading, unselected_file_outputs())
+        print("(a file with many tags is counted once per tag)", file=self.output)
 
     def _print_ignored_tasks_summary(self):
         if self.task_set is not None:

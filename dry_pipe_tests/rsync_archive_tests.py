@@ -265,7 +265,7 @@ class RsyncSelectionTests(RsyncArchiveTestCase):
         self.assertEqual(self.dest_files(), output_paths(KEYS, keepers, heavy))
         self.assertIn("  keepers: 12\n", out)
         self.assertIn("  heavy: 12\n", out)
-        self.assertIn("total output files: 18\n", out)
+        self.assertIn("output files to copy: 18\n", out)
 
     def test_file_contents_are_copied(self):
         self.prepare()
@@ -435,7 +435,8 @@ class RsyncSummaryTests(RsyncArchiveTestCase):
         self.assertIn("tasks: 6\n", out)
         self.assertIn("  keepers: 12\n", out)
         self.assertIn("  kepers: 0\n", out)
-        self.assertIn("total output files: 12\n", out)
+        self.assertIn("output files to copy: 12\n", out)
+        self.assertIn("output files not copied: 12\n", out)
         self.assertEqual(len(self.dest_output_files()), 12)
 
     def test_summary_without_tags_shows_untagged(self):
@@ -446,7 +447,8 @@ class RsyncSummaryTests(RsyncArchiveTestCase):
         self.assertIn("  keepers: 12\n", out)
         self.assertIn("  heavy: 12\n", out)
         self.assertIn("  for-debug: 6\n", out)
-        self.assertIn("total output files: 24\n", out)
+        self.assertIn("output files to copy: 24\n", out)
+        self.assertIn("output files not copied: 0\n", out)
 
     def test_summary_mentions_drypipe_files(self):
         self.prepare()
@@ -877,8 +879,8 @@ class ArchiveTests(RsyncArchiveTestCase):
         out = self.archive("--exclude-tags=heavy,for-dbug", "--where-key=t01")
         self.extract()
         self.assertEqual(self.dest_files(), {"output/t01/t01_report.txt", "output/t01/plain.tsv"})
-        self.assertIn("excluded tags: for-dbug, heavy\n", out)
-        self.assertIn("total output files: 2\n", out)
+        self.assertIn("output files to archive: 2\n", out)
+        self.assertIn("output files not archived: 2\n", out)
 
     def test_exclude_tags_cannot_be_combined_with_tags_or_exhaustive(self):
         self.prepare()
@@ -948,7 +950,8 @@ class PurgeOutputsTests(RsyncArchiveTestCase):
         self.complete(KEYS)
         with mock.patch("builtins.input", return_value=""):
             out = self.purge(confirm=True)
-        self.assertIn("total output files: 24\n", out)
+        self.assertIn("output files to delete: 24\n", out)
+        self.assertIn("output files kept: 0\n", out)
         self.assertEqual(self.output_files(), output_paths(KEYS, all_outputs))
 
     def test_warns_only_when_no_tag_spec_selects_all_outputs(self):
