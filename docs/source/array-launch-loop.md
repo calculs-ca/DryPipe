@@ -33,13 +33,19 @@ Each array the loop submits is a normal array submit, it shows up in `array-sque
 |------------------------|----------------------------------------------|-----------------------------------------------------------------------------|
 | `--loop`               |                                              | submit in small arrays, as the queue frees up                               |
 | `--max-queued=N`       | required                                     | maximum number of your jobs in the queue on the account, ex: your `MaxSubmitJobs` limit |
+| `--max-queued-account=A` | the account the arrays are submitted with | the account whose jobs count against `--max-queued`, see below |
 | `--margin=N`           | 10                                           | free slots left unused, for jobs submitted by other means while the loop runs |
 | `--min-batch=N`        | 10% of `--max-queued`                        | smallest array the loop submits                                             |
 | `--sleep-interval=M`   | 5                                            | minutes between two checks of the queue                                     |
 | `--abandon-loop`       |                                              | abandon an interrupted loop, see below                                      |
 
-Your limit is shown by `sacctmgr show assoc user=$USER format=MaxSubmitJobs`, ask your cluster's support
-if it shows none.
+Your limit is shown by `sacctmgr show assoc user=$USER format=Account%30,MaxSubmitJobs`, ask your cluster's
+support if it shows none.
+
+Some clusters add a suffix to the account a job is submitted with, ex: a job submitted with
+`--account=rrg-abc` runs on account `rrg-abc_cpu`. The loop then counts no jobs on `rrg-abc`, and sbatch
+rejects its arrays. Give the account your jobs actually run on, as shown by
+`squeue -u $USER -h -o %a | sort | uniq -c`, with `--max-queued-account=rrg-abc_cpu`.
 
 A small `--min-batch` keeps the queue full, but submits many small arrays. A larger one submits fewer, bigger
 arrays.
@@ -58,7 +64,17 @@ survives the loss of your ssh session.
 ## Interrupted loops
 
 If the loop is killed, or your session ends, run `array-submit --loop` again, without `--filter-*` options. It
-resumes where it stopped, with the tasks it had not submitted yet.
+resumes where it stopped, with the tasks it had not submitted yet:
+
+    cli array-submit --task-key=my-array --loop
+
+The loop saves its options in its loop file, each time it is started or resumed, and a resumed loop uses the
+last ones saved. An option given again replaces the saved one, ex: resume with a larger batch:
+
+    cli array-submit --task-key=my-array --loop --min-batch=300
+
+The saved options are `--max-queued`, `--max-queued-account`, `--margin`, `--min-batch`, `--sleep-interval`,
+`--sbatch-options`, `--tasks-per-job`, `--stop-after-step` and `--slurm-max-jobs`.
 
 To start a new loop on the same array instead, abandon the interrupted one first:
 
