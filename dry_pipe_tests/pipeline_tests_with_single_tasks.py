@@ -461,6 +461,16 @@ class PipelineWith3StepsCrash3(PipelineWith3StepsCrash1):
         self.assertEqual(self.output_as_string(tasks_by_keys), "s1\ns2\n")
 
 
+class PipelineWith3StepsCrash2NoRenameAfterFail(PipelineWith3StepsCrash2):
+
+    def validate(self, tasks_by_keys):
+        three_phase_task = tasks_by_keys["three_phase_task"]
+        self.assertEqual("state.failed.1", three_phase_task.state_name())
+
+        drypipe_log = Path(self.pipeline_instance_dir, ".drypipe", "three_phase_task", "drypipe.log")
+        self.assertNotIn("FileNotFoundError", drypipe_log.read_text())
+
+
 @DryPipe.python_call()
 def step2_in_python(out_file):
 
