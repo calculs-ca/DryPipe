@@ -40,6 +40,7 @@ from dry_pipe.slurm_codes import SlurmJobStateCodes
 from dry_pipe.reports import timers_for_tasks
 from dry_pipe.state_machine import StateFileTracker
 from dry_pipe.env_overrides import InvalidEnv, parse_env_option
+from dry_pipe.feedback import CliFeedback, focal
 from dry_pipe.service import PipelineRunner
 from dry_pipe.task_lib import submit_local_array, upload_task_inputs_rsync
 from dry_pipe.task_selector import (
@@ -312,11 +313,12 @@ class Cli:
             if line != "":
                 yield line
 
-    def __init__(self, args, env=None, test_mode=False, output=sys.stdout, logger=None, parse_args=True):
+    def __init__(self, args, env=None, test_mode=False, output=sys.stdout, feedback_stream=None, logger=None, parse_args=True):
 
         self.raw_command_line = " ".join(args)
         self.args = _cleanup_args(args)
         self.output = output
+        self.feedback = CliFeedback(feedback_stream)
 
         self._has_implicit_generator = False
         self._has_implicit_control_dir = False
@@ -441,7 +443,7 @@ class Cli:
     def invoke(self):
 
         if self.parsed_args.dry_run:
-            print(f"DRY RUN {self.parsed_args.command}")
+            self.feedback.dry_run(self.parsed_args.command)
 
         if self.parsed_args.v or self._tail():
             self.logger = self.create_logger(logging.INFO)
@@ -1393,22 +1395,8 @@ class Cli:
             )
             return pipeline_instance
 
-        self._run_in_rich(f, pipeline_instance)
-
-    def install_rich(self):
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "rich==14.3.3"])
-
-    def _is_rich_installed(self):
-        try:
-            from rich.console import Console
-            return True
-        except ModuleNotFoundError:
-
-            if self.query_yes_no("This function requires the Rich library, do you want to install it in the current virtual environment ?"):
-                self.install_rich()
-                return True
-            else:
-                return False
+        pipeline_instance.catch_exception = False
+        f()
 
     def confirm_pid_from_env_var_is_current_dir(self):
         pid = getattr(self.parsed_args, 'pipeline_instance_dir', None)
@@ -1416,52 +1404,10 @@ class Cli:
             return True
         if Path(pid).resolve() == Path.cwd().resolve():
             return True
-        print(
-            f"warning: DRYPIPE_PIPELINE_INSTANCE_DIR={pid} is not the current dir ({Path.cwd()})",
-            file=sys.stderr
-        )
+        self.feedback.warn(f"DRYPIPE_PIPELINE_INSTANCE_DIR={pid} is not the current dir ({Path.cwd()})")
         if getattr(self.parsed_args, 'no_confirm', False) or not sys.stdin.isatty():
             return True
-        return self.query_yes_no("continue ?", default="no")
-
-    def query_yes_no(self, question, default="yes"):
-        valid = {"yes": True, "y": True, "ye": True, "no": False, "n": False}
-        if default is None:
-            prompt = " [y/n] "
-        elif default == "yes":
-            prompt = " [Y/n] "
-        elif default == "no":
-            prompt = " [y/N] "
-        else:
-            raise ValueError("invalid default answer: '%s'" % default)
-
-        while True:
-            sys.stdout.write(question + prompt)
-            choice = input().lower()
-            if default is not None and choice == "":
-                return valid[default]
-            elif choice in valid:
-                return valid[choice]
-            else:
-                sys.stdout.write("Please respond with 'yes' or 'no' " "(or 'y' or 'n').\n")
-
-    def _run_in_rich(self, f, pipeline_instance):
-        if self._is_rich_installed():
-            from rich.console import Console
-            console = Console()
-            try:
-                pipeline_instance.catch_exception = False
-                f()
-            except Exception:
-                suppress_list = [
-                    "state_machine",
-                    "pipeline_instance",
-                    "pipeline",
-                    "cli"
-                ]
-                console.print_exception(show_locals=True, suppress=[f"dry_pipe/{f}" for f in suppress_list], max_frames=0, extra_lines=5)
-        else:
-            f()
+        return self.feedback.confirm("continue ?")
 
     def call(self):
         call(self.parsed_args.module_function)
@@ -1475,7 +1421,7 @@ class Cli:
             pipeline_instance.prepare_instance_dir()
             pipeline_instance.regen_matching_tasks()
 
-        self._run_in_rich(f, pipeline_instance)
+        f()
 
 
     def service(self):
@@ -1667,7 +1613,7 @@ class Cli:
 
         if self.parsed_args.reset:
             if self.parsed_args.dry_run:
-                print(f"--reset has no effect with --dry-run")
+                self.feedback.warn("--reset has no effect with --dry-run")
             else:
                 pass
 
@@ -1677,7 +1623,7 @@ class Cli:
             pipeline_instance.prepare_instance_dir()
             pipeline_instance.regen_task(self.parsed_args.task_key)
 
-        self._run_in_rich(regen_array_task, pipeline_instance)
+        regen_array_task()
 
         self.task_process = TaskProcess(
             self._control_dir(),
@@ -1706,10 +1652,9 @@ class Cli:
 
         unfinished_loop = LaunchLoop.unfinished(self.array_task_manager)
         if unfinished_loop is not None:
-            print(
-                f"warning: loop {unfinished_loop.number()} is unfinished, "
-                f"it will submit {len(unfinished_loop.remaining_keys())} more tasks when resumed",
-                file=sys.stderr
+            self.feedback.warn(
+                f"loop {unfinished_loop.number()} is unfinished, "
+                f"it will submit {focal(len(unfinished_loop.remaining_keys()))} more tasks when resumed"
             )
 
         if not self.has_selection():
@@ -1748,7 +1693,7 @@ class Cli:
             else:
                 pipeline_instance.regen_tasks_with_keys(set_of_task_keys)
 
-        self._run_in_rich(regen_selected_children, pipeline_instance)
+        regen_selected_children()
 
         sbatch_option_overrider = self.sbatch_options_overrider_func_if_option_exists()
 
@@ -1763,7 +1708,7 @@ class Cli:
         task_keys = self._task_keys_with_missing_input_files_choice(submitted_task_keys)
 
         if task_keys is None:
-            print("nothing submitted", file=sys.stderr)
+            self.feedback.info("nothing submitted")
             return
 
         if len(task_keys) < len(submitted_task_keys):
@@ -1774,21 +1719,20 @@ class Cli:
         def is_confirmed():
             """each submit writes its task keys in an array.<n>.tsv file, and submits it as one slurm array"""
             for submit in submits:
-                print(f"Will submit slurm array with {len(submit.task_keys)} tasks, sbatch options:", file=sys.stderr)
+                self.feedback.info(f"Will submit slurm array with {focal(len(submit.task_keys))} tasks, sbatch options:")
                 for o in submit.sbatch_options:
-                    print(f"  {o}", file=sys.stderr)
+                    self.feedback.info(f"  {o}")
             for name, value in self.task_process.env_overrides.items():
-                print(f"--env {name}={value}", file=sys.stderr)
-            print("submit ? [y/N] ", end="", file=sys.stderr, flush=True)
-            return sys.stdin.readline().strip().lower() in ("y", "yes")
+                self.feedback.info(f"--env {name}={value}")
+            return self.feedback.confirm("submit ?")
 
         if len(submits) == 0:
-            print("warning: no tasks to submit, the array is empty", file=sys.stderr)
+            self.feedback.warn("no tasks to submit, the array is empty")
             return
 
         needs_confirmation = not self.parsed_args.yes and not self.parsed_args.dry_run
         if needs_confirmation and not is_confirmed():
-            print("nothing submitted", file=sys.stderr)
+            self.feedback.info("nothing submitted")
             return
 
         if is_restart:
@@ -1815,23 +1759,21 @@ class Cli:
 
         def choice():
             if self.parsed_args.yes or self.parsed_args.dry_run:
-                print("they are excluded from the array", file=sys.stderr)
+                self.feedback.info("they are excluded from the array")
                 return "1"
-            print("  1) exclude them from the array (default)", file=sys.stderr)
-            print("  2) submit them anyway", file=sys.stderr)
-            print("  3) exit", file=sys.stderr)
-            print("choice ? [1/2/3] ", end="", file=sys.stderr, flush=True)
-            return sys.stdin.readline().strip() or "1"
+            self.feedback.info("  1) exclude them from the array (default)")
+            self.feedback.info("  2) submit them anyway")
+            self.feedback.info("  3) exit")
+            return self.feedback.ask("choice ? [1/2/3] ") or "1"
 
         task_keys_with_missing_input_files = {k for k in task_keys if has_missing_input_file(k)}
 
         if len(task_keys_with_missing_input_files) == 0:
             return task_keys
 
-        print(
-            f"warning: {len(task_keys_with_missing_input_files)} tasks have missing input files, "
-            f"they will most likely crash",
-            file=sys.stderr
+        self.feedback.warn(
+            f"{focal(len(task_keys_with_missing_input_files))} tasks have missing input files, "
+            f"they will most likely crash"
         )
 
         c = choice()
@@ -1865,7 +1807,7 @@ class Cli:
                 raise CliUsageError(f"{option} is given, and also by key list {given_as_text()}")
 
             key_list, value = given[0]
-            print(f"{option}={value!r} from @{key_list}", file=sys.stderr)
+            self.feedback.context(f"{option}={value!r} from @{key_list}")
             setattr(self.parsed_args, dest, value)
 
         apply("--sbatch-options", "sbatch_options", getattr(self.parsed_args, "sbatch_options_is_explicit", False))
@@ -1944,10 +1886,10 @@ class Cli:
             if unfinished_loop is None:
                 raise CliUserError("the array has no unfinished loop")
             if args.dry_run:
-                print(f"DRY RUN: loop {unfinished_loop.number()} not abandoned", file=sys.stderr)
+                self.feedback.dry_run(f"loop {unfinished_loop.number()} not abandoned")
                 return
             unfinished_loop.abandon()
-            print(f"loop {unfinished_loop.number()} abandoned, {unfinished_loop.path}", file=sys.stderr)
+            self.feedback.done(f"loop {unfinished_loop.number()} abandoned, {unfinished_loop.path}")
             return
 
         def task_keys_to_submit():
@@ -1964,15 +1906,15 @@ class Cli:
 
         task_keys = task_keys_to_submit()
 
-        self._run_in_rich(lambda: pipeline_instance.regen_tasks_with_keys(set(task_keys)), pipeline_instance)
+        pipeline_instance.regen_tasks_with_keys(set(task_keys))
 
         if unfinished_loop is None:
             task_keys = self._task_keys_with_missing_input_files_choice(task_keys)
             if task_keys is None:
-                print("nothing submitted", file=sys.stderr)
+                self.feedback.info("nothing submitted")
                 return
             if len(task_keys) == 0:
-                print("warning: no tasks to submit", file=sys.stderr)
+                self.feedback.warn("no tasks to submit")
                 return
 
         sbatch_option_overrider = self.sbatch_options_overrider_func_if_option_exists()
@@ -2005,25 +1947,23 @@ class Cli:
 
         def loop_description():
             if unfinished_loop is None:
-                return f"Will start a loop with {len(task_keys)} tasks"
-            return f"Will resume loop {unfinished_loop.number()}, {len(task_keys)} tasks left"
+                return f"Will start a loop with {focal(len(task_keys))} tasks"
+            return f"Will resume loop {unfinished_loop.number()}, {focal(len(task_keys))} tasks left"
 
         loop_options = list(self._loop_options_to_save())
 
-        print(
+        self.feedback.info(
             f"{loop_description()}, account {loop_account}, --max-queued={loop_max_queued} --margin={margin} "
-            f"--min-batch={min_batch} --sleep-interval={sleep_interval}",
-            file=sys.stderr
+            f"--min-batch={min_batch} --sleep-interval={sleep_interval}"
         )
-        print(f"options saved in the loop file: {shlex.join(loop_options)}", file=sys.stderr)
+        self.feedback.context(f"options saved in the loop file: {shlex.join(loop_options)}")
 
         if args.dry_run:
             return
 
         if not args.yes:
-            print("start ? [y/N] ", end="", file=sys.stderr, flush=True)
-            if sys.stdin.readline().strip().lower() not in ("y", "yes"):
-                print("nothing submitted", file=sys.stderr)
+            if not self.feedback.confirm("start ?"):
+                self.feedback.info("nothing submitted")
                 return
 
         launch_loop = unfinished_loop or LaunchLoop.create(atm, task_keys)
@@ -2118,7 +2058,7 @@ class Cli:
 
         if self.has_selection():
             for key, _, _, _ in self.filter_key_state_step():
-                print(f"will submit {key}")
+                self.feedback.info(f"will submit {key}")
                 submit_one(key)
         else:
             submit_one(self.parsed_args.task_key)
@@ -2194,7 +2134,7 @@ class Cli:
         """
         if shutil.which("squeue") is not None:
             return True
-        print("squeue is not installed on this machine", file=self.output)
+        self.feedback.warn("squeue is not installed on this machine")
         return False
 
     def array_squeue(self):
@@ -2435,9 +2375,9 @@ class Cli:
 
         ensure_no_file_imported_from_many_sources()
 
-        print("input files per rsync source -> destination:", file=self.output)
+        self.feedback.info("input files per rsync source -> destination:")
         for (source, dest), paths in sorted(paths_by_source_and_dest.items()):
-            print(f"  {source} -> {dest}: {len(paths)}", file=self.output)
+            self.feedback.info(f"  {source} -> {dest}: {len(paths)}")
         self._print_ignored_tasks_summary()
 
         if not self.parsed_args.no_confirm and not self.query_yes_no("continue ?", default="no"):
@@ -2451,7 +2391,7 @@ class Cli:
                 yield "--ignore-missing-args"
 
         for (source, dest), paths in sorted(paths_by_source_and_dest.items()):
-            print(f"rsync {source} -> {dest}: {len(paths)} files", file=self.output, flush=True)
+            self.feedback.info(f"rsync {source} -> {dest}: {focal(len(paths))} files")
             subprocess.run(
                 ["rsync", "-a", *rsync_options(), "--files-from=-", source, f"{dest}/"],
                 input="\n".join(sorted(paths)),
@@ -2476,12 +2416,12 @@ class Cli:
             command = self.parsed_args.archive_command.replace("{archive}", shlex.quote(str(archive_file)))
 
             if self.parsed_args.dry_run:
-                print(f"DRY RUN {command}", file=self.output)
+                self.feedback.dry_run(command)
                 return
 
             subprocess.run(command, shell=True, cwd=staging_dir, check=True)
 
-        print(f"created {archive_file}", file=self.output)
+        self.feedback.done(f"created {archive_file}")
 
     def _rsync_selected_files(self, source, dest, transfer_description, summary_headings, extra_rsync_args=()):
 
@@ -2514,15 +2454,15 @@ class Cli:
         tasks_and_file_outputs = self._tasks_and_selected_file_outputs()
 
         if state_files_only:
-            print(f"state files of {len(tasks_and_file_outputs)} tasks", file=self.output)
+            self.feedback.info(f"state files of {len(tasks_and_file_outputs)} tasks")
         else:
             self._print_file_outputs_summary(tasks_and_file_outputs, *summary_headings)
         if include_drypipe_files != "none":
-            print(f"drypipe files ({include_drypipe_files}) of {len(tasks_and_file_outputs)} tasks", file=self.output)
+            self.feedback.info(f"drypipe files ({include_drypipe_files}) of {len(tasks_and_file_outputs)} tasks")
         if exhaustive:
-            print(f"exhaustive: all files of {len(tasks_and_file_outputs)} tasks", file=self.output)
+            self.feedback.info(f"exhaustive: all files of {len(tasks_and_file_outputs)} tasks")
         self._print_ignored_tasks_summary()
-        print(transfer_description, file=self.output)
+        self.feedback.info(transfer_description)
 
         if not self.parsed_args.no_confirm and not self.query_yes_no("continue ?", default="no"):
             return False
@@ -2592,15 +2532,14 @@ class Cli:
         self._print_ignored_tasks_summary()
 
         if self._selected_tags() == (None, None):
-            print(
-                "warning: neither --tags nor --exclude-tags given, ALL output files of matching tasks will be deleted",
-                file=self.output
+            self.feedback.danger(
+                "neither --tags nor --exclude-tags given, ALL output files of matching tasks will be deleted"
             )
 
         deleted_candidates_count = sum(len(file_outputs) for _, file_outputs in tasks_and_file_outputs)
 
-        if not self.parsed_args.no_confirm and not self.query_yes_no(
-            f"delete {deleted_candidates_count} output files ?", default="no"
+        if not self.parsed_args.no_confirm and not self.feedback.confirm(
+            f"delete {focal(deleted_candidates_count)} output files ?", dangerous=True
         ):
             return
 
@@ -2613,7 +2552,7 @@ class Cli:
 
         if self.parsed_args.dry_run:
             for f in existing_output_files():
-                print(f"DRY RUN rm {f}", file=self.output)
+                self.feedback.dry_run(f"rm {f}")
             return
 
         deleted_count = 0
@@ -2621,7 +2560,7 @@ class Cli:
             f.unlink()
             deleted_count += 1
 
-        print(f"deleted {deleted_count} output files", file=self.output)
+        self.feedback.done(f"deleted {deleted_count} output files")
 
     def _selected_tags(self):
 
@@ -2663,22 +2602,22 @@ class Cli:
             file_count_per_tag = collections.Counter(
                 tag for o in file_outputs for tag in (o.tags or ["(untagged)"])
             )
-            print(f"{heading}: {len(file_outputs)}", file=self.output)
+            self.feedback.info(f"{heading}: {len(file_outputs)}")
             for tag in sorted(file_count_per_tag if shown_tags is None else shown_tags):
-                print(f"  {tag}: {file_count_per_tag[tag]}", file=self.output)
+                self.feedback.info(f"  {tag}: {file_count_per_tag[tag]}")
 
-        print(f"tasks: {len(tasks_and_file_outputs)}", file=self.output)
+        self.feedback.info(f"tasks: {len(tasks_and_file_outputs)}")
         # requested tags are all shown, a 0 count reveals a misspelled tag
         print_section(selected_heading, selected_file_outputs(), tags)
         print_section(unselected_heading, unselected_file_outputs())
-        print("(a file with many tags is counted once per tag)", file=self.output)
+        self.feedback.info("(a file with many tags is counted once per tag)")
 
     def _print_ignored_tasks_summary(self):
         if self.task_set is not None:
             unmatched_keys = sorted(self.task_set.keys_of_files - self.yielded_task_keys)
             #examples = f" (ex: {', '.join(repr(k) for k in unmatched_keys[:5])})" if unmatched_keys else ""
-            print(f"ignored tasks: {len(self.yielded_ignored_task_keys)}", file=self.output)
-            print(f"keys of task set files not yielded by the generator: {len(unmatched_keys)}", file=self.output)
+            self.feedback.info(f"ignored tasks: {len(self.yielded_ignored_task_keys)}")
+            self.feedback.info(f"keys of task set files not yielded by the generator: {len(unmatched_keys)}")
 
     def garbage_collect(self):
 
@@ -2731,13 +2670,14 @@ class Cli:
     def _delete_dirs_after_confirmation(self, dirs, description):
 
         for d in dirs:
-            print(d, file=self.output)
-        print(f"{len(dirs)} directories of {description}", file=self.output)
-
+            self.feedback.info(d)
         if len(dirs) == 0:
+            self.feedback.info(f"0 directories of {description}")
             return
 
-        if not self.parsed_args.no_confirm and not self.query_yes_no("delete them ?", default="no"):
+        self.feedback.danger(f"{focal(len(dirs))} directories of {description}")
+
+        if not self.parsed_args.no_confirm and not self.feedback.confirm("delete them ?", dangerous=True):
             return
 
         for d in dirs:
@@ -2800,11 +2740,11 @@ class Cli:
     def _log_classifier(self):
         spec = self.parsed_args.log_classifier
         if spec is None:
-            print("log classifier: default TaskClassifier (no --log-classifier or DRYPIPE_LOG_CLASSIFIER)")
+            self.feedback.context("log classifier: default TaskClassifier (no --log-classifier or DRYPIPE_LOG_CLASSIFIER)")
             return TaskClassifier().compile()
 
         mod_func = self._resolve_against_generator_module(spec, "--log-classifier")
-        print(f"log classifier: {mod_func}")
+        self.feedback.context(f"log classifier: {mod_func}")
         customize = func_from_mod_func(mod_func)
         classifier = customize(TaskClassifier())
         missing_methods = [
@@ -2867,9 +2807,8 @@ class Cli:
 
         def ask_selected_numbers(table):
             for number, (count, signature_cell) in enumerate(table, start=1):
-                print(f"{number:4}  {count:6}  {signature_cell}", file=sys.stderr)
-            print("signatures to extract (ex: 1,3): ", end="", file=sys.stderr, flush=True)
-            return _signature_numbers(sys.stdin.readline(), len(table))
+                self.feedback.info(f"{focal(f'{number:4}')}  {count:6}  {signature_cell}")
+            return _signature_numbers(self.feedback.ask("signatures to extract (ex: 1,3): "), len(table))
 
         selected = ask_selected_numbers(list(_signatures_of_analysis_file(path, lines)))
         # a list: a malformed file must fail before a partial list of keys is written
@@ -2941,7 +2880,7 @@ class Cli:
         ]                
         for d in dirz:
             if self.parsed_args.dry_run:
-                print(f"DRY RUN rm -Rf {d}")
+                self.feedback.dry_run(f"rm -Rf {d}")
             else:
                 shutil.rmtree(d, ignore_errors=True)
 
@@ -3009,8 +2948,14 @@ class Cli:
         selector = self.task_selector()
         selected = selector.select(tasks, key_state_step=lambda task_and_state_file: task_and_state_file[1].key_state_step())
 
+        def explain_selection():
+            *narrowing, selected = selector.explain()
+            for line in narrowing:
+                self.feedback.context(line)
+            self.feedback.info(focal(selected))
+
         if selector.has_stages() and not self.parsed_args.explain_off:
-            print("\n".join(selector.explain()), file=sys.stderr)
+            explain_selection()
 
         selector.offer_to_save_left_out_keys(f"drypipe {shlex.join(self.args)}")
 
@@ -3040,8 +2985,7 @@ class Cli:
 
     def list(self):
         for key, state, step, sf in self.filter_key_state_step():
-            s = "" if step is None else f"{step}"
-            print(f"{key}\t{state}\t{step}")
+            print(f"{key}\t{state}\t{step}", file=self.output)
 
     def has_selection(self):
         """true when --where options or --limit are given, the mask doesn't count"""
@@ -3224,11 +3168,11 @@ class Cli:
 
     def instance_info(self):
         pid = os.environ.get("DRYPIPE_PIPELINE_INSTANCE_DIR")
-        print(f"DRYPIPE_PIPELINE_INSTANCE_DIR={pid}")
+        print(f"DRYPIPE_PIPELINE_INSTANCE_DIR={pid}", file=self.output)
         gen = os.environ.get("DRYPIPE_PIPELINE_GENERATOR")
 
         def dump_gen():
-            print(f"DRYPIPE_PIPELINE_GENERATOR={gen}")
+            print(f"DRYPIPE_PIPELINE_GENERATOR={gen}", file=self.output)
 
         conf = Path(pid, ".drypipe", "conf.json")
         if conf.exists():
@@ -3237,11 +3181,11 @@ class Cli:
                 gen = conf.get("__generator")
                 dump_gen()
                 __pipeline_code_dir = conf.get("__pipeline_code_dir")
-                print(f"$__pipeline_code_dir={__pipeline_code_dir}")
+                print(f"$__pipeline_code_dir={__pipeline_code_dir}", file=self.output)
 
     def status(self):
         for key, state, step, _ in self.filter_key_state_step():
-            print(f"{key}\t{state}\t{step}")
+            print(f"{key}\t{state}\t{step}", file=self.output)
             
 
     def summary(self):
@@ -3361,12 +3305,12 @@ def handle_script_lib_main():
     except CliUsageError as e:
         command_parser = cli.subparsers.choices[cli.parsed_args.command]
         command_parser.print_usage(sys.stderr)
-        print(f"{command_parser.prog}: error: {e}", file=sys.stderr)
+        CliFeedback().error(f"{command_parser.prog}: {e}")
         sys.exit(2)
     except CliUserError as e:
-        print(f"error: {e}", file=sys.stderr)
+        CliFeedback().error(e)
         if e.explainer:
-            print(e.explainer, file=sys.stderr)
+            CliFeedback().info(e.explainer)
         sys.exit(1)
     except Exception as e:
         logging.exception(e)

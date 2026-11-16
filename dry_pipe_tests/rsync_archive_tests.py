@@ -174,7 +174,8 @@ class RsyncArchiveTestCase(unittest.TestCase):
                 *args
             ],
             test_mode=True,
-            output=out
+            output=out,
+            feedback_stream=out
         ).invoke()
         return out.getvalue()
 
@@ -715,10 +716,7 @@ class RsyncIgnoredTasksTests(RsyncArchiveTestCase):
 class RsyncRoundTripTests(RsyncArchiveTestCase):
 
     def list_tasks(self, pid):
-        out = StringIO()
-        with contextlib.redirect_stdout(out):
-            self.cli("list", pid=pid)
-        return sorted(out.getvalue().splitlines())
+        return sorted(self.cli("list", pid=pid).splitlines())
 
     def test_dest_lists_the_same_keys_and_states_as_source(self):
         self.prepare()

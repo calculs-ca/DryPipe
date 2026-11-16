@@ -59,7 +59,8 @@ class GarbageCollectTests(unittest.TestCase):
             ],
             env=env,
             test_mode=True,
-            output=out
+            output=out,
+            feedback_stream=out
         ).invoke()
         return out.getvalue()
 
