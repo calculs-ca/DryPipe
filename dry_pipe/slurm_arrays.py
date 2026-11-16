@@ -12,6 +12,7 @@ from pathlib import Path
 
 from dry_pipe import PortablePopen, TaskConf
 from dry_pipe.slurm_codes import SlurmJobStateLongCodes, SlurmJobStateCodes, SlurmTime
+from dry_pipe.env_overrides import encode_env_overrides
 from dry_pipe.state_file_tracker import StateFileTracker
 
 def dedent_lines(txt):
@@ -299,9 +300,9 @@ class SlurmArrayBatchSubmit:
         else:
             job_id = None
             if self.array_task_manager.for_dry_run:
-                print(f"DRY RUN inhibited command: {' '.join(self.sbatch_command)}")
+                print(f"DRY RUN inhibited command: {shlex.join(self.sbatch_command)}")
             else:
-                self.array_task_manager.logger().info("sbatch command: %s", " ".join(self.sbatch_command))
+                self.array_task_manager.logger().info("sbatch command: %s", shlex.join(self.sbatch_command))
                 try:
                     with PortablePopen(self.sbatch_command) as p:
                         out, err = p.communicate()
@@ -551,6 +552,8 @@ class ArrayTaskManager:
                     yield f"DRYPIPE_TASKS_PER_JOB={self.task_process.tasks_per_job}"
                 if self.task_process.stop_after_step is not None:
                     yield f"DRYPIPE_STOP_AFTER_STEP={self.task_process.stop_after_step}"
+                if len(self.task_process.env_overrides) > 0:
+                    yield f"DRYPIPE_ENV_OVERRIDES={encode_env_overrides(self.task_process.env_overrides)}"
 
             yield "--export={0}".format(",".join(gen_env()))
 
@@ -799,7 +802,7 @@ class ArrayTaskManager:
                         submitted_by = shlex.join(sys.argv)
                         self.logger().info("array job id: %s, submitted by: %s", job_id, submitted_by)
                         with open(self.i_th_submitted_array_file(next_array_number, job_id), "w") as f:
-                            print(" ".join(command_args), file=f)
+                            print(shlex.join(command_args), file=f)
                             print(submitted_by, file=f)
 
                 yield SlurmArrayBatchSubmit(

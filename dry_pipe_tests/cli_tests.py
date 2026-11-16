@@ -8,6 +8,7 @@ import json
 import math
 import os.path
 import re
+import shlex
 import shutil
 import signal
 import sqlite3
@@ -1186,6 +1187,12 @@ class CliArraySubmitLoopTests(BasePipelineTest):
         self.assertIn("options saved in the loop file: --max-queued=100 --margin=7 '--sbatch-options=--mem=1G --time=1:00'", out)
         self.assertEqual(launch_loop.remaining_keys(), self.all_children)
 
+    def test_resume_uses_the_saved_env(self):
+        launch_loop = LaunchLoop.create(self.prepare(), self.all_children)
+        launch_loop.append_options(["--max-queued=50", "--env=JVM_MEM=12g JVM_STACK=8m"])
+
+        self.assertIn("options saved in the loop file: --max-queued=50 '--env=JVM_MEM=12g JVM_STACK=8m'", self.dry_run_output())
+
     def test_account_of_sbatch_options(self):
         self.assertEqual(account_of_sbatch_options(["--account=a1", "--time=1:00", "-A", "a2"]), "a2")
         self.assertEqual(account_of_sbatch_options(["--account", "a1", "--time=1:00"]), "a1")
@@ -1525,6 +1532,21 @@ def dag_sbatch_override(dsl):
         echo solo
     """)()
 
+    # env of a task, exercised with --env overrides
+    yield dsl.task(
+        key="jvm",
+        task_conf=TaskConf(
+            executer_type="slurm",
+            extra_env={"JVM_MEM": "8g", "JAVA_OPTS": "-Xmx${JVM_MEM}"},
+            command_before_task="export JVM_STACK=1m"
+        )
+    ).inputs(
+        JVM_THREADS="2"
+    ).calls("""
+        #!/usr/bin/env bash
+        echo jvm
+    """)()
+
     # slurm array children, exercised by ArrayTaskManager.next_submits()
     for i in [1, 2, 3]:
         yield dsl.task(
@@ -1752,6 +1774,118 @@ class CliSbatchOptionsOverrideTests(BasePipelineTest):
 
         with self.assertRaises(CliUsageError):
             self._array_submit_dry_run(d, "# --sbatch-options=--mem=20G\nc1\n", '--sbatch-options=--mem=30G')
+
+    # ---- --env ------------------------------------------------------------
+
+    def exported_vars(self, sbatch_command):
+        [export] = [o for o in sbatch_command if o.startswith("--export=")]
+        return export[len("--export="):].split(",")
+
+    def _sbatch_gen(self, d, *args):
+        c = create_cli(
+            self, 'sbatch-gen', f'--pipeline-instance-dir={d.sandbox_dir}', f'--generator={self.generator}',
+            '--task-key=solo', *args
+        )
+        c.output = io.StringIO()
+        c.invoke()
+        return shlex.split(c.output.getvalue())
+
+    def _array_submit_dry_run_command(self, d, keys_text, *args):
+        output = self._array_submit_dry_run(d, keys_text, *args)
+        [sbatch_command] = [line for line in output.splitlines() if "inhibited command: sbatch" in line]
+        return shlex.split(sbatch_command.partition("inhibited command: ")[2])
+
+    def test_solo_env_is_exported(self):
+        d = TestSandboxDir(self)
+        self._prepare(d)
+
+        cmd = self._sbatch_gen(d, "--env=JVM_MEM=12g JAVA_OPTS='-Xmx1g -Xss4m'", '--sbatch-options=--mem=20G')
+
+        exported = self.exported_vars(cmd)
+        self.assertIn("DRYPIPE_ENV_OVERRIDES=JVM_MEM=12g|JAVA_OPTS=-Xmx1g -Xss4m", exported)
+        self.assertTrue(any(v.startswith("DRYPIPE_TASK_CONTROL_DIR=") for v in exported))
+        self.assertIn("--mem=20G", cmd)
+
+    def test_no_env_no_overrides(self):
+        d = TestSandboxDir(self)
+        self._prepare(d)
+
+        self.assertFalse(any(v.startswith("DRYPIPE_ENV_OVERRIDES") for v in self.exported_vars(self._sbatch_gen(d))))
+
+    def test_array_env_is_exported(self):
+        d = TestSandboxDir(self)
+        self._prepare(d)
+
+        cmd = self._array_submit_dry_run_command(d, "c1\nc2\n", '--env=JVM_MEM=12g')
+
+        exported = self.exported_vars(cmd)
+        self.assertIn("DRYPIPE_ENV_OVERRIDES=JVM_MEM=12g", exported)
+        self.assertTrue(any(v.startswith("DRYPIPE_TASK_KEY_FILE_BASENAME=") for v in exported))
+
+    def test_env_of_key_list(self):
+        d = TestSandboxDir(self)
+        self._prepare(d)
+
+        cmd = self._array_submit_dry_run_command(
+            d, "# --sbatch-options=--mem=20G\n# --env='JVM_MEM=12g JVM_STACK=8m'\nc1\nc2\n"
+        )
+
+        self.assertIn("DRYPIPE_ENV_OVERRIDES=JVM_MEM=12g|JVM_STACK=8m", self.exported_vars(cmd))
+        self.assertIn("--mem=20G", cmd)
+
+    def test_env_of_key_list_and_of_command_line(self):
+        d = TestSandboxDir(self)
+        self._prepare(d)
+
+        with self.assertRaises(CliUsageError):
+            self._array_submit_dry_run(d, "# --env=JVM_MEM=12g\nc1\n", '--env=JVM_MEM=16g')
+
+    def test_invalid_env(self):
+        d = TestSandboxDir(self)
+        self._prepare(d)
+
+        for env in ["JVM_MEM", "1X=2", "--mem=2G", "X=a,b", "X=a|b", "X='a"]:
+            with self.subTest(env=env), self.assertRaises(CliUsageError):
+                self._sbatch_gen(d, f"--env={env}")
+
+    def _jvm_task_process(self, d, env_overrides):
+        job_env = {"DRYPIPE_ENV_OVERRIDES": env_overrides}
+        with unittest.mock.patch.dict(os.environ, job_env):
+            return TaskProcess(Path(d.sandbox_dir, ".drypipe", "jvm").__str__(), no_logger=True)
+
+    def test_env_overrides_extra_env_and_is_seen_by_its_expansion(self):
+        d = TestSandboxDir(self)
+        self._prepare(d)
+
+        env = self._jvm_task_process(d, "JVM_MEM=12g").env
+
+        self.assertEqual(env["JVM_MEM"], "12g")
+        self.assertEqual(env["JAVA_OPTS"], "-Xmx12g")
+
+    def test_extra_env_without_overrides(self):
+        d = TestSandboxDir(self)
+        self._prepare(d)
+
+        env = self._jvm_task_process(d, "").env
+
+        self.assertEqual(env["JVM_MEM"], "8g")
+        self.assertEqual(env["JAVA_OPTS"], "-Xmx8g")
+        self.assertEqual(env["JVM_THREADS"], "2")
+
+    def test_env_overrides_inputs(self):
+        d = TestSandboxDir(self)
+        self._prepare(d)
+
+        self.assertEqual(self._jvm_task_process(d, "JVM_THREADS=8").env["JVM_THREADS"], "8")
+
+    def test_env_overrides_the_env_of_command_before_task(self):
+        d = TestSandboxDir(self)
+        self._prepare(d)
+
+        task_process = self._jvm_task_process(d, "JVM_STACK=8m")
+        task_process.exec_cmd_before_launch_if_applies()
+
+        self.assertEqual(task_process.env["JVM_STACK"], "8m")
 
 
 class HasSelectionTests(unittest.TestCase):

@@ -39,6 +39,7 @@ from dry_pipe.slurm_arrays import SbatchRejected
 from dry_pipe.slurm_codes import SlurmJobStateCodes
 from dry_pipe.reports import timers_for_tasks
 from dry_pipe.state_machine import StateFileTracker
+from dry_pipe.env_overrides import InvalidEnv, parse_env_option
 from dry_pipe.service import PipelineRunner
 from dry_pipe.task_lib import submit_local_array, upload_task_inputs_rsync
 from dry_pipe.task_selector import (
@@ -255,6 +256,39 @@ class TaskSet:
     def __contains__(self, key):
         """the last matching rule wins, keys matched by no rule are in the task set"""
         return next((is_added for is_added, matches, _ in reversed(self.rules) if matches(key)), True)
+
+
+def print_table(rows, output):
+    """
+    prints rows (lists of strings, the first one being the header), tab separated, or
+    aligned in columns when the output is a terminal: aligned is what reads well in a
+    shell, tab separated is what cut, awk, and the tests can parse
+    """
+
+    if len(rows) == 0:
+        return
+
+    if not output.isatty():
+        for row in rows:
+            print("\t".join(row), file=output)
+        return
+
+    column_count = max([len(row) for row in rows])
+
+    def cells_of_column(i):
+        return [row[i] for row in rows if i < len(row)]
+
+    widths = [max([len(c) for c in cells_of_column(i)]) for i in range(column_count)]
+
+    # numbers read better right aligned, ex: 1000 lining up under 999, labels left aligned.
+    # the choice is per cell, NOT per column, so that a count keeps its alignment in a
+    # column where another row has text, ex: "inactive"
+    for row in rows:
+        line = "  ".join([
+            cell.rjust(widths[i]) if cell.isdigit() else cell.ljust(widths[i])
+            for i, cell in enumerate(row)
+        ])
+        print(line.rstrip(), file=output)
 
 
 class Cli:
@@ -501,6 +535,16 @@ class Cli:
                 action=EnvDefault,
                 envvar="DRYPIPE_SBATCH_OPTIONS",
                 env=self.env
+            )
+
+        def env_overrides(parser):
+            parser.add_argument(
+                '--env',
+                dest="env_overrides",
+                type=str,
+                help="""space separated NAME=VALUE env vars, exported to the slurm job, ex: --env='JVM_MEM=12g JVM_STACK=8m',
+                they override all other env vars of the task (task_conf extra_env, inputs, etc)""",
+                required=False
             )
 
         def from_remote(parser):
@@ -890,10 +934,10 @@ class Cli:
         yield Command('upload-drypipe-for-remote-instance', task_key)
         yield Command('upload-task-inputs', task_key)
 
-        yield Command('sbatch', task_key_optional, wait, regen, generator_optional, sbatch_options, reset, at_step, stop_after_step, task_selection,
+        yield Command('sbatch', task_key_optional, wait, regen, generator_optional, sbatch_options, env_overrides, reset, at_step, stop_after_step, task_selection,
                       help="launch task (specified by --task-key, or selected by the --where options) with sbatch")
 
-        yield Command('sbatch-gen', task_key, regen, generator_optional, sbatch_options, reset, stop_after_step,
+        yield Command('sbatch-gen', task_key, regen, generator_optional, sbatch_options, env_overrides, reset, stop_after_step,
                       help="print sbatch command for launching task, without invoking it")
 
         yield Command('dump-env', task_key, help="dump all environment variables of specified task")
@@ -976,7 +1020,7 @@ class Cli:
 
         yield Command('array-submit',
                       task_key, regen, generator_optional, tail, wait, include_all_incompleted_tasks,
-                      sbatch_options, reset, tasks_per_job, slurm_max_jobs, stop_after_step, yes, loop, task_selection,
+                      sbatch_options, env_overrides, reset, tasks_per_job, slurm_max_jobs, stop_after_step, yes, loop, task_selection,
                       help="submit array, after a confirmation (see --yes)")
 
         yield Command('array-upload', task_key, help="upload array task to remote location")
@@ -1599,9 +1643,18 @@ class Cli:
             return func
                 
 
+
+    def env_overrides_of_option(self):
+        if self.parsed_args.env_overrides is None:
+            return {}
+        try:
+            return parse_env_option(self.parsed_args.env_overrides)
+        except InvalidEnv as e:
+            raise CliUsageError(str(e))
+
     def array_submit(self):
 
-        self._apply_sbatch_options_of_key_lists()
+        self._apply_option_lines_of_key_lists()
 
         if self.parsed_args.loop:
             self._apply_saved_loop_options()
@@ -1636,7 +1689,8 @@ class Cli:
             cli_tail_logger=cli_tail_logger,
             for_dry_run=self.parsed_args.dry_run,
             tasks_per_job=self.parsed_args.tasks_per_job,
-            stop_after_step=self.parsed_args.stop_after_step
+            stop_after_step=self.parsed_args.stop_after_step,
+            env_overrides=self.env_overrides_of_option()
         )        
 
         if not self.task_process.is_slurm_array_parent():
@@ -1723,6 +1777,8 @@ class Cli:
                 print(f"Will submit slurm array with {len(submit.task_keys)} tasks, sbatch options:", file=sys.stderr)
                 for o in submit.sbatch_options:
                     print(f"  {o}", file=sys.stderr)
+            for name, value in self.task_process.env_overrides.items():
+                print(f"--env {name}={value}", file=sys.stderr)
             print("submit ? [y/N] ", end="", file=sys.stderr, flush=True)
             return sys.stdin.readline().strip().lower() in ("y", "yes")
 
@@ -1786,29 +1842,34 @@ class Cli:
         else:
             return None
 
-    def _apply_sbatch_options_of_key_lists(self):
-        """the '# --sbatch-options=...' line of a --where-key key list applies as if given on the command line"""
+    def _apply_option_lines_of_key_lists(self):
+        """the '# --sbatch-options=...' and '# --env=...' lines of a --where-key key list apply as if given on the command line"""
         key_lists = KeyLists()
-        given = [
-            (key_list, sbatch_options)
-            for option, value in self.parsed_args.where_conditions if option == "--where-key"
-            for key_list in key_lists_of_where_key(value)
-            for sbatch_options in key_lists.sbatch_options(key_list)
-        ]
-        if len(given) == 0:
-            return
 
-        def given_as_text():
-            return ", ".join(f"@{key_list}: {sbatch_options!r}" for key_list, sbatch_options in given)
+        def apply(option, dest, is_explicit):
+            given = [
+                (key_list, value)
+                for where_option, where_value in self.parsed_args.where_conditions if where_option == "--where-key"
+                for key_list in key_lists_of_where_key(where_value)
+                for value in key_lists.option_lines(key_list, option)
+            ]
+            if len(given) == 0:
+                return
 
-        if len({sbatch_options for _, sbatch_options in given}) > 1:
-            raise CliUsageError(f"key lists give different --sbatch-options: {given_as_text()}")
-        if getattr(self.parsed_args, "sbatch_options_is_explicit", False):
-            raise CliUsageError(f"--sbatch-options is given, and also by key list {given_as_text()}")
+            def given_as_text():
+                return ", ".join(f"@{key_list}: {value!r}" for key_list, value in given)
 
-        key_list, sbatch_options = given[0]
-        print(f"--sbatch-options={sbatch_options!r} from @{key_list}", file=sys.stderr)
-        self.parsed_args.sbatch_options = sbatch_options
+            if len({value for _, value in given}) > 1:
+                raise CliUsageError(f"key lists give different {option}: {given_as_text()}")
+            if is_explicit:
+                raise CliUsageError(f"{option} is given, and also by key list {given_as_text()}")
+
+            key_list, value = given[0]
+            print(f"{option}={value!r} from @{key_list}", file=sys.stderr)
+            setattr(self.parsed_args, dest, value)
+
+        apply("--sbatch-options", "sbatch_options", getattr(self.parsed_args, "sbatch_options_is_explicit", False))
+        apply("--env", "env_overrides", self.parsed_args.env_overrides is not None)
 
     def _saved_loop_options(self):
         """the options saved in the loop file, {option: (dest, type)}, the selection is saved as the loop's keys"""
@@ -1819,6 +1880,7 @@ class Cli:
             "--min-batch": ("min_batch", int),
             "--sleep-interval": ("sleep_interval", float),
             "--sbatch-options": ("sbatch_options", str),
+            "--env": ("env_overrides", str),
             "--tasks-per-job": ("tasks_per_job", int),
             "--stop-after-step": ("stop_after_step", int),
             "--slurm-max-jobs": ("slurm_max_jobs", int)
@@ -2040,7 +2102,8 @@ class Cli:
 
             self.task_process = TaskProcess(
                 control_dir, wait_for_completion=self._wait(), no_logger=True,
-                stop_after_step=self.parsed_args.stop_after_step
+                stop_after_step=self.parsed_args.stop_after_step,
+                env_overrides=self.env_overrides_of_option()
             )
 
             if self.parsed_args.at_step is not None:
@@ -2064,9 +2127,10 @@ class Cli:
     def sbatch_gen(self):
         self._maybe_regen_task()
         self.task_process = TaskProcess(
-            self._control_dir(), stop_after_step=self.parsed_args.stop_after_step
+            self._control_dir(), stop_after_step=self.parsed_args.stop_after_step,
+            env_overrides=self.env_overrides_of_option()
         )
-        print(" ".join(self.task_process.sbatch_cmd_lines(self.sbatch_options_overrider_func_if_option_exists())), file=self.output)
+        print(shlex.join(self.task_process.sbatch_cmd_lines(self.sbatch_options_overrider_func_if_option_exists())), file=self.output)
 
     def dump_env(self):
         task_process = TaskProcess(self._control_dir(), no_logger=True)
@@ -3184,36 +3248,7 @@ class Cli:
         self._dump_state_step_counts()
 
     def _print_table(self, rows):
-        """
-        prints rows (lists of strings, the first one being the header), tab separated, or
-        aligned in columns when the output is a terminal: aligned is what reads well in a
-        shell, tab separated is what cut, awk, and the tests can parse
-        """
-
-        if len(rows) == 0:
-            return
-
-        if not self.output.isatty():
-            for row in rows:
-                print("\t".join(row), file=self.output)
-            return
-
-        column_count = max([len(row) for row in rows])
-
-        def cells_of_column(i):
-            return [row[i] for row in rows if i < len(row)]
-
-        widths = [max([len(c) for c in cells_of_column(i)]) for i in range(column_count)]
-
-        # numbers read better right aligned, ex: 1000 lining up under 999, labels left aligned.
-        # the choice is per cell, NOT per column, so that a count keeps its alignment in a
-        # column where another row has text, ex: "inactive"
-        for row in rows:
-            line = "  ".join([
-                cell.rjust(widths[i]) if cell.isdigit() else cell.ljust(widths[i])
-                for i, cell in enumerate(row)
-            ])
-            print(line.rstrip(), file=self.output)
+        print_table(rows, self.output)
 
     def _dump_state_step_counts(self, key_universe=None):
 

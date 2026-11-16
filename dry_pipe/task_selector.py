@@ -264,8 +264,8 @@ class KeyLists:
 
         return frozenset(keys[keys_slice])
 
-    def sbatch_options(self, key_list):
-        """the values of the '# --sbatch-options=...' lines of a key file, none for other key lists"""
+    def option_lines(self, key_list, option):
+        """the values of the '# <option>=...' lines of a key file, ex: '# --env=...', none for other key lists"""
         source = key_list.partition("[")[0]
         if source.startswith("array.") or _is_log_report(source):
             return []
@@ -281,16 +281,16 @@ class KeyLists:
                 args = shlex.split(comment)
             except ValueError as e:
                 raise InvalidSelection(f"{file}:{line_number}: {e}")
-            if len(args) != 1 or not args[0].startswith("--sbatch-options="):
+            if len(args) != 1 or not args[0].startswith(f"{option}="):
                 raise InvalidSelection(
-                    f"{file}:{line_number}: expected '# --sbatch-options=\"...\"', got '{comment}'"
+                    f"{file}:{line_number}: expected '# {option}=\"...\"', got '{comment}'"
                 )
-            return args[0][len("--sbatch-options="):]
+            return args[0][len(f"{option}="):]
 
         with open(file) as f:
             return [
                 value_of(line_number, comment_of(line)) for line_number, line in enumerate(f, start=1)
-                if line.strip().startswith("#") and comment_of(line).startswith("--sbatch-options")
+                if line.strip().startswith("#") and comment_of(line).startswith(option)
             ]
 
     def key_file(self, path):

@@ -251,7 +251,7 @@ class SbatchOptionsOfKeyListTests(unittest.TestCase):
 
     def sbatch_options(self, text, key_list="keys.tsv"):
         (self.dir / "keys.tsv").write_text(text)
-        return KeyLists(base_dir=self.dir).sbatch_options(key_list)
+        return KeyLists(base_dir=self.dir).option_lines(key_list, "--sbatch-options")
 
     def test_directive_with_spaces_and_quotes(self):
         self.assertEqual(
@@ -274,9 +274,15 @@ class SbatchOptionsOfKeyListTests(unittest.TestCase):
             with self.subTest(text=text), self.assertRaises(InvalidSelection):
                 self.sbatch_options(text)
 
+    def test_env_lines_apart_from_sbatch_options_lines(self):
+        (self.dir / "keys.tsv").write_text("# --sbatch-options=--mem=40G\n# --env='JVM_MEM=12g JVM_STACK=8m'\nt1\n")
+        key_lists = KeyLists(base_dir=self.dir)
+        self.assertEqual(key_lists.option_lines("keys.tsv", "--env"), ["JVM_MEM=12g JVM_STACK=8m"])
+        self.assertEqual(key_lists.option_lines("keys.tsv", "--sbatch-options"), ["--mem=40G"])
+
     def test_reports_and_arrays_have_none(self):
-        self.assertEqual(KeyLists(base_dir=self.dir).sbatch_options("failed.3-1.md:1"), [])
-        self.assertEqual(KeyLists(base_dir=self.dir).sbatch_options("array.last"), [])
+        self.assertEqual(KeyLists(base_dir=self.dir).option_lines("failed.3-1.md:1", "--sbatch-options"), [])
+        self.assertEqual(KeyLists(base_dir=self.dir).option_lines("array.last", "--sbatch-options"), [])
 
 
 class ArgparseTests(unittest.TestCase):

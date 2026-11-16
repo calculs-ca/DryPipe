@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import shutil
+import shlex
 import signal
 import subprocess
 import sys
@@ -20,6 +21,7 @@ from dry_pipe.core_lib import UpstreamTasksNotCompleted, PortablePopen, func_fro
     FileCreationDefaultModes, expandvars_from_dict, TimeLogger, step_banner
 
 from dry_pipe.task import TaskOutput, TaskInputs, TaskOutputs, TaskInput
+from dry_pipe.env_overrides import encode_env_overrides, decode_env_overrides
 
 APPTAINER_COMMAND = "apptainer"
 
@@ -165,7 +167,8 @@ class TaskProcess:
             cli_tail_logger=None,
             tasks_per_job=None,
             packed_array_index=None,
-            stop_after_step=None
+            stop_after_step=None,
+            env_overrides=None
 
     ):
 
@@ -177,6 +180,11 @@ class TaskProcess:
         self.packed_array_index = packed_array_index
         self.tasks_per_job = tasks_per_job
         self.stop_after_step = stop_after_step
+        # the --env vars, given by the cli, or found in the env of a slurm job, they override all other env vars
+        if env_overrides is None:
+            self.env_overrides = decode_env_overrides(os.environ.get("DRYPIPE_ENV_OVERRIDES", ""))
+        else:
+            self.env_overrides = env_overrides
 
         self.cli_tail_logger = cli_tail_logger
 
@@ -274,6 +282,8 @@ class TaskProcess:
                     v = expandvars_from_dict(i.value, self.env)
                     i.resolved_value = v
                     self.env[i.name] = v
+
+            self.env.update(self.env_overrides)
 
 
             self.task_logger.debug(f"normal TaskProcess constructor end")
@@ -571,7 +581,8 @@ class TaskProcess:
             ** file_outputs_by_name,
             ** self._local_copy_adjusted_file_env_vars(),
             ** var_outputs_by_name,
-            ** python_call.fixed_args
+            ** python_call.fixed_args,
+            ** self.env_overrides
         }
 
         def get_arg(k):
@@ -775,11 +786,14 @@ class TaskProcess:
             for _, k, f in self.outputs.iterate_file_task_outputs(self.task_output_dir):
                 yield k, f
 
-        env_in_dict = dict(_iter_env())
+        # the overrides are there before the expansion of extra_env, ex: "-Xmx${JVM_MEM}" sees the --env JVM_MEM
+        env_in_dict = {**dict(_iter_env()), **self.env_overrides}
 
         extra_env = self.task_conf.extra_env
         if extra_env is not None:
             for k, v0 in extra_env.items():
+                if k in self.env_overrides:
+                    continue
                 v1 = os.path.expandvars(v0)
                 # os.path.expandvars will leave missing vars unchanged, expandvars_from_dict will do it:
                 v2 = expandvars_from_dict(v1, env_in_dict)
@@ -942,6 +956,8 @@ class TaskProcess:
                 self.task_logger.debug("env var %s override %s  -> %s: ", k, v0, v1)
 
                 self.env[k] = v
+
+            self.env.update(self.env_overrides)
 
     @classmethod
     def read_task_state_from(cls, control_dir, state_file=None, non_existant_ok=False):
@@ -1519,6 +1535,8 @@ class TaskProcess:
                 yield "ARRAY_SPAWN=True"
             if self.stop_after_step is not None:
                 yield f"DRYPIPE_STOP_AFTER_STEP={self.stop_after_step}"
+            if len(self.env_overrides) > 0:
+                yield f"DRYPIPE_ENV_OVERRIDES={encode_env_overrides(self.env_overrides)}"
 
         yield "--export={0}".format(",".join(job_env()))
         yield "--signal=B:USR1@50"
@@ -1541,7 +1559,7 @@ class TaskProcess:
 
         cmd = list(self.sbatch_cmd_lines(sbatch_option_overrider))
 
-        (instance_logger or self.task_logger).info("sbatch command: %s", " ".join(cmd))
+        (instance_logger or self.task_logger).info("sbatch command: %s", shlex.join(cmd))
 
         p = PortablePopen(
             cmd,
