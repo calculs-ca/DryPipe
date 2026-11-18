@@ -2392,7 +2392,7 @@ class Cli:
             self.feedback.info(f"  {source} -> {dest}: {len(paths)}")
         self._print_ignored_tasks_summary()
 
-        if not self.parsed_args.no_confirm and not self.query_yes_no("continue ?", default="no"):
+        if not self.parsed_args.no_confirm and not self.feedback.confirm("continue ?"):
             return
 
         def rsync_options():
@@ -2476,7 +2476,7 @@ class Cli:
         self._print_ignored_tasks_summary()
         self.feedback.info(transfer_description)
 
-        if not self.parsed_args.no_confirm and not self.query_yes_no("continue ?", default="no"):
+        if not self.parsed_args.no_confirm and not self.feedback.confirm("continue ?"):
             return False
 
         def control_dirs():
