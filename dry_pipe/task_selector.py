@@ -573,14 +573,30 @@ class Limit:
         return ["--limit", str(self.n)]
 
 
+class StopAfterStep:
+    """tasks already past the step have nothing to run, tasks without a step are kept"""
+
+    def __init__(self, step):
+        self.step = step
+
+    def filter(self, rows):
+        return [row for row in rows if row[2] is None or row[2] <= self.step]
+
+    def explain(self):
+        return ["--stop-after-step", f"step <= {self.step}"]
+
+
 class TaskSelector:
 
-    def __init__(self, conditions=(), limit=None, mask=None, key_lists=None, generator_module=None):
+    def __init__(
+        self, conditions=(), limit=None, mask=None, key_lists=None, generator_module=None, stop_after_step=None
+    ):
         key_lists = key_lists or KeyLists()
         self.mask = mask
         self.conditions = [
             Condition.parse(option, value, key_lists, generator_module) for option, value in conditions
         ]
+        self.stop_after_step = None if stop_after_step is None else StopAfterStep(stop_after_step)
         self.limit = None if limit is None else Limit(limit)
         self.counts = []
 
@@ -598,13 +614,16 @@ class TaskSelector:
             parsed_args.limit,
             mask(),
             KeyLists(pipeline_instance_dir, array_task_key),
-            generator_module
+            generator_module,
+            getattr(parsed_args, "stop_after_step", None)
         )
 
     def stages(self):
         if self.mask is not None:
             yield self.mask
         yield from self.conditions
+        if self.stop_after_step is not None:
+            yield self.stop_after_step
         if self.limit is not None:
             yield self.limit
 

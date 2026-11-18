@@ -48,8 +48,10 @@ class TaskSelectorTests(unittest.TestCase):
     def setUp(self):
         self.dir = Path(tempfile.mkdtemp())
 
-    def selector(self, *conditions, limit=None, mask=None):
-        return TaskSelector(conditions, limit, mask, KeyLists(self.dir, "the-array", base_dir=self.dir))
+    def selector(self, *conditions, limit=None, mask=None, stop_after_step=None):
+        return TaskSelector(
+            conditions, limit, mask, KeyLists(self.dir, "the-array", base_dir=self.dir), stop_after_step=stop_after_step
+        )
 
     def file(self, name, text):
         f = self.dir / name
@@ -176,6 +178,20 @@ class TaskSelectorTests(unittest.TestCase):
         selector = self.selector(("--where-state", "failed"), limit=2)
         self.assertEqual(keys_of(selector), ["trim-S2", "quant-S1"])
 
+    def test_stop_after_step_keeps_tasks_without_step(self):
+        self.assertEqual(keys_of(self.selector(stop_after_step=2)), ["trim-S1", "trim-S3", "quant-S1", "quant-S2"])
+
+    def test_limit_is_applied_after_stop_after_step(self):
+        selector = self.selector(("--where-state", "failed"), stop_after_step=2, limit=1)
+        self.assertEqual(keys_of(selector), ["quant-S1"])
+        selector.select(TASKS)
+        self.assertEqual(selector.explain(), [
+            "generator                             6",
+            "--where-state      state == 'failed'  3  (-3)",
+            "--stop-after-step  step <= 2          1  (-2)",
+            "--limit            1                  1   (0)",
+        ])
+
     def test_mask(self):
         self.file("high-ram.tsv", "quant-S1\nquant-S2\nquant-S7\n")
         mask_file = self.file(Mask.file_name, "- @high-ram.tsv\n+ quant-S2  # keep this one\n")
@@ -279,6 +295,10 @@ class SbatchOptionsOfKeyListTests(unittest.TestCase):
         key_lists = KeyLists(base_dir=self.dir)
         self.assertEqual(key_lists.option_lines("keys.tsv", "--env"), ["JVM_MEM=12g JVM_STACK=8m"])
         self.assertEqual(key_lists.option_lines("keys.tsv", "--sbatch-options"), ["--mem=40G"])
+
+    def test_stop_after_step_line(self):
+        (self.dir / "keys.tsv").write_text("# --stop-after-step=0\n# --env=JVM_MEM=12g\nt1\n")
+        self.assertEqual(KeyLists(base_dir=self.dir).option_lines("keys.tsv", "--stop-after-step"), ["0"])
 
     def test_reports_and_arrays_have_none(self):
         self.assertEqual(KeyLists(base_dir=self.dir).option_lines("failed.3-1.md:1", "--sbatch-options"), [])

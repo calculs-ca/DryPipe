@@ -164,6 +164,10 @@ how many tasks remain, and how many it removed:
 
 A stage that removes all remaining tasks is where to look when a selection is empty.
 
+With `--stop-after-step`, tasks already past the step are left out, before `--limit`:
+
+    --stop-after-step  step <= 0                                   12    (-5)
+
 The `mask` line is shown when a mask file exists, with `--no-mask` it reads:
 
     mask           disabled (--no-mask)                         1203     (0)

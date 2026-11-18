@@ -40,6 +40,33 @@ the task above gets `-Xmx56g`.
 
 Values can't contain `,` or `|`.
 
+## --stop-after-step
+
+The tasks stop after step N (zero based), tasks already past it are left out of the selection.
+
+It runs a pipeline in phases, each one with the resources it needs, ex: step 0 converts the inputs, the next steps are heavy:
+
+    # phase-1.tsv
+    # --stop-after-step=0
+    # --sbatch-options="--mem=4G --time=1:00:00"
+    sample-S17
+    ...
+
+    # phase-2.tsv
+    # --sbatch-options="--mem=64G --time=12:00:00"
+    sample-S17
+    ...
+
+Submitting `phase-1.tsv` again submits only the tasks that haven't completed step 0.
+
+## --tasks-per-job
+
+Each slurm job runs N tasks, one after the other, useful for short tasks.
+The `--time` of `--sbatch-options` is per task, the time limit of a job is N times longer:
+
+    # --tasks-per-job=10
+    # --sbatch-options="--time=0:30:00"        each job gets 05:00:00
+
 ## Rules
 
 + only `array-submit` reads the header lines

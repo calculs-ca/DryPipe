@@ -19,5 +19,6 @@ DryPipe
    :caption: Running pipelines
 
    ng/running-pipelines/selecting-tasks
+   ng/running-pipelines/launch-groups
    array-launch-loop
    key-lists

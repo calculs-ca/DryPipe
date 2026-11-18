@@ -1775,6 +1775,46 @@ class CliSbatchOptionsOverrideTests(BasePipelineTest):
         with self.assertRaises(CliUsageError):
             self._array_submit_dry_run(d, "# --sbatch-options=--mem=20G\nc1\n", '--sbatch-options=--mem=30G')
 
+    def test_stop_after_step_of_key_list(self):
+        d = TestSandboxDir(self)
+        self._prepare(d)
+
+        output = self._array_submit_dry_run(d, "# --stop-after-step=0\nc1\nc2\n")
+        [sbatch_command] = [line for line in output.splitlines() if "inhibited command: sbatch" in line]
+
+        self.assertIn("DRYPIPE_STOP_AFTER_STEP=0", sbatch_command)
+        self.assertIn("--stop-after-step  step <= 0", output)
+
+    def test_stop_after_step_of_key_list_and_of_command_line(self):
+        d = TestSandboxDir(self)
+        self._prepare(d)
+
+        with self.assertRaises(CliUsageError):
+            self._array_submit_dry_run(d, "# --stop-after-step=0\nc1\n", '--stop-after-step=1')
+
+    def test_stop_after_step_of_key_list_is_an_integer(self):
+        d = TestSandboxDir(self)
+        self._prepare(d)
+
+        with self.assertRaises(CliUsageError):
+            self._array_submit_dry_run(d, "# --stop-after-step=zero\nc1\n")
+
+    def test_tasks_per_job_of_key_list(self):
+        d = TestSandboxDir(self)
+        self._prepare(d)
+
+        cmd = self._array_submit_dry_run_command(d, "# --tasks-per-job=2\nc1\nc2\n")
+
+        self.assertIn("DRYPIPE_TASKS_PER_JOB=2", self.exported_vars(cmd))
+        self.assertIn("--time=02:00:00", cmd)
+
+    def test_tasks_per_job_of_key_list_and_of_command_line(self):
+        d = TestSandboxDir(self)
+        self._prepare(d)
+
+        with self.assertRaises(CliUsageError):
+            self._array_submit_dry_run(d, "# --tasks-per-job=2\nc1\n", '--tasks-per-job=3')
+
     # ---- --env ------------------------------------------------------------
 
     def exported_vars(self, sbatch_command):

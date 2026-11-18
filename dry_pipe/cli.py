@@ -1785,10 +1785,13 @@ class Cli:
             return None
 
     def _apply_option_lines_of_key_lists(self):
-        """the '# --sbatch-options=...' and '# --env=...' lines of a --where-key key list apply as if given on the command line"""
+        """
+        the '# --sbatch-options=...', '# --env=...', '# --stop-after-step=...' and '# --tasks-per-job=...' lines
+        of a --where-key key list apply as if given on the command line
+        """
         key_lists = KeyLists()
 
-        def apply(option, dest, is_explicit):
+        def apply(option, dest, is_explicit, option_type=str):
             given = [
                 (key_list, value)
                 for where_option, where_value in self.parsed_args.where_conditions if where_option == "--where-key"
@@ -1807,11 +1810,20 @@ class Cli:
                 raise CliUsageError(f"{option} is given, and also by key list {given_as_text()}")
 
             key_list, value = given[0]
+            try:
+                typed_value = option_type(value)
+            except ValueError:
+                raise CliUsageError(f"@{key_list}: {option} must be an integer, got {value!r}")
             self.feedback.context(f"{option}={value!r} from @{key_list}")
-            setattr(self.parsed_args, dest, value)
+            setattr(self.parsed_args, dest, typed_value)
 
         apply("--sbatch-options", "sbatch_options", getattr(self.parsed_args, "sbatch_options_is_explicit", False))
         apply("--env", "env_overrides", self.parsed_args.env_overrides is not None)
+        apply(
+            "--stop-after-step", "stop_after_step",
+            getattr(self.parsed_args, "stop_after_step_is_explicit", False), int
+        )
+        apply("--tasks-per-job", "tasks_per_job", self.parsed_args.tasks_per_job is not None, int)
 
     def _saved_loop_options(self):
         """the options saved in the loop file, {option: (dest, type)}, the selection is saved as the loop's keys"""
@@ -2933,17 +2945,7 @@ class Cli:
             pipeline_instance.prepare_instance_dir()
             return pipeline_instance
 
-        stop_after_step = getattr(self.parsed_args, "stop_after_step", None)
-
-        def within_stop_after_step(state_file):
-            _, _, step = state_file.key_state_step()
-            return stop_after_step is None or step is None or step <= stop_after_step
-
-        tasks = [
-            (task, state_file)
-            for task, state_file in dag_from_args().iterate_key_state_steps(key_universe)
-            if within_stop_after_step(state_file)
-        ]
+        tasks = dag_from_args().iterate_key_state_steps(key_universe)
 
         selector = self.task_selector()
         selected = selector.select(tasks, key_state_step=lambda task_and_state_file: task_and_state_file[1].key_state_step())
