@@ -29,6 +29,7 @@ from pathlib import Path
 
 from dry_pipe import PortablePopen, DryPipe, TaskConf
 from dry_pipe.array_launch_loop import LaunchLoop, LoopIsRunning, LoopLock, account_of_sbatch_options, count_queued_jobs
+from dry_pipe import cli_completion
 from dry_pipe.core_lib import CliUserError, func_from_mod_func, is_inside_slurm_job, create_instance_logger
 from dry_pipe.frozen_dag_generator import FrozenDAGGenerator
 from dry_pipe.task_classifier import TaskClassifier, TaskClassifyContext
@@ -1273,6 +1274,12 @@ class Cli:
 
         yield Command('call', module_function, task_key)
 
+        def shell(parser):
+            parser.add_argument('shell', choices=['bash'])
+
+        yield Command('completion', shell,
+                      help='prints the shell completion script, ex: add eval "$(drypipe completion bash)" to ~/.bashrc')
+
 
     def _task_set_file(self):
         explicit_file = self.parsed_args.task_set
@@ -1411,6 +1418,9 @@ class Cli:
 
     def call(self):
         call(self.parsed_args.module_function)
+
+    def completion(self):
+        print(cli_completion.BASH_SCRIPT, file=self.output, end="")
 
 
     def prepare(self):
@@ -3297,6 +3307,13 @@ def enforce_primary_group():
     )
 
 def handle_script_lib_main():
+    if sys.argv[1:2] == ["__complete"]:
+        default_wordbreaks = " \t\n\"'><=;|&(:"
+        completions = cli_completion.completions(
+            cli_argument_parser(), sys.argv[2], os.environ.get("COMP_WORDBREAKS", default_wordbreaks)
+        )
+        print("\n".join(completions))
+        return
     try:
         setup_file_creation_mask()
         enforce_primary_group()
