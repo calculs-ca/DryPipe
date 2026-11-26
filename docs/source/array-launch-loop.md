@@ -32,7 +32,7 @@ Each array the loop submits is a normal array submit, it shows up in `array-sque
 | option                 | default                                      | description                                                                 |
 |------------------------|----------------------------------------------|-----------------------------------------------------------------------------|
 | `--loop`               |                                              | submit in small arrays, as the queue frees up                               |
-| `--max-queued=N`       | required                                     | maximum number of your jobs in the queue on the account, ex: your `MaxSubmitJobs` limit |
+| `--max-queued=N`       | 1000                                         | maximum number of your jobs in the queue on the account, ex: your `MaxSubmitJobs` limit |
 | `--max-queued-account=A` | the account the arrays are submitted with | the account whose jobs count against `--max-queued`, see below |
 | `--margin=N`           | 10                                           | free slots left unused, for jobs submitted by other means while the loop runs |
 | `--min-batch=N`        | 10% of `--max-queued`                        | smallest array the loop submits                                             |

@@ -1149,10 +1149,9 @@ class CliArraySubmitLoopTests(BasePipelineTest):
         self.assertIsNone(LaunchLoop.unfinished(atm))
         self.assertEqual(LaunchLoop.create(atm, self.all_children).number(), 2)
 
-    def test_loop_requires_max_queued(self):
+    def test_max_queued_defaults_to_1000(self):
         self.prepare()
-        with self.assertRaisesRegex(CliUsageError, "--loop requires --max-queued"):
-            self.cli('--loop', '--yes', '--where-key=t0*')
+        self.assertIn("--max-queued=1000 --margin=10 --min-batch=100", self.dry_run_output('--where-key=t0*'))
 
     def test_loop_that_could_never_submit_is_refused(self):
         self.prepare()

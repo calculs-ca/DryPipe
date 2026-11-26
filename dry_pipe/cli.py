@@ -984,7 +984,7 @@ class Cli:
                 type=int,
                 default=None,
                 metavar='N',
-                help="with --loop, required, maximum number of your jobs in the queue, ex: your MaxSubmitJobs limit"
+                help="with --loop, maximum number of your jobs in the queue, ex: your MaxSubmitJobs limit, default: 1000"
             )
             parser.add_argument(
                 '--max-queued-account',
@@ -1882,8 +1882,6 @@ class Cli:
                 raise CliUsageError(f"{', '.join(given)} only apply with --loop")
         elif args.wait or self._tail():
             raise CliUsageError("--loop can't be combined with --wait, --tail or --tail-all")
-        elif args.max_queued is None:
-            raise CliUsageError("--loop requires --max-queued")
 
     def _array_submit_loop(self, pipeline_instance):
         lock = LoopLock(self.array_task_manager.array_task_control_dir())
@@ -1956,7 +1954,7 @@ class Cli:
             return account
 
         loop_account = account()
-        loop_max_queued = args.max_queued
+        loop_max_queued = 1000 if args.max_queued is None else args.max_queued
         margin = 10 if args.margin is None else args.margin
         min_batch = max(1, loop_max_queued // 10) if args.min_batch is None else args.min_batch
         sleep_interval = 5 if args.sleep_interval is None else args.sleep_interval
