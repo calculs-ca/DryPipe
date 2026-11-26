@@ -3,7 +3,8 @@ import os
 import unittest
 import unittest.mock
 
-from dry_pipe.feedback import CliFeedback, focal
+from dry_pipe.cli import print_table
+from dry_pipe.feedback import CliFeedback, focal, done
 
 
 class TerminalStream(io.StringIO):
@@ -60,6 +61,28 @@ class CliFeedbackTests(unittest.TestCase):
                 self.assertEqual(prompt, f"delete them ? {'[Y/n]' if default else '[y/N]'} ")
 
 
+class PrintTableTests(unittest.TestCase):
+
+    rows = [["state", "count"], ["completed", "3"], ["ready", "12"]]
+
+    @staticmethod
+    def style_of_completed(column_index, cell):
+        return done if cell == "completed" else None
+
+    def test_cells_are_styled_after_alignment(self):
+        out = TerminalStream()
+        with unittest.mock.patch.dict(os.environ, {"TERM": "xterm"}):
+            os.environ.pop("NO_COLOR", None)
+            print_table(self.rows, out, self.style_of_completed)
+        self.assertEqual(out.getvalue(), "state      count\n\033[32mcompleted\033[39m      3\nready         12\n")
+
+    def test_cells_are_not_styled_when_not_a_terminal(self):
+        out = io.StringIO()
+        print_table(self.rows, out, self.style_of_completed)
+        self.assertEqual(out.getvalue(), "state\tcount\ncompleted\t3\nready\t12\n")
+
+
 all_tests = [
-    CliFeedbackTests
+    CliFeedbackTests,
+    PrintTableTests
 ]

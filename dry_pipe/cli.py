@@ -41,12 +41,13 @@ from dry_pipe.slurm_codes import SlurmJobStateCodes
 from dry_pipe.reports import timers_for_tasks
 from dry_pipe.state_machine import StateFileTracker
 from dry_pipe.env_overrides import InvalidEnv, parse_env_option
+from dry_pipe import feedback
 from dry_pipe.feedback import CliFeedback, focal
 from dry_pipe.service import PipelineRunner
 from dry_pipe.task_lib import submit_local_array, upload_task_inputs_rsync
 from dry_pipe.task_selector import (
     NotAnAnalyzeLogsFile, TaskSelector, KeyLists, add_selection_options, key_lists_of_where_key,
-    _signatures_of_analysis_file, _keys_and_signature_numbers_of_analysis_file, _signature_numbers
+    _signatures_of_analysis_file, STATE_GROUPS, _keys_and_signature_numbers_of_analysis_file, _signature_numbers
 )
 
 
@@ -260,11 +261,12 @@ class TaskSet:
         return next((is_added for is_added, matches, _ in reversed(self.rules) if matches(key)), True)
 
 
-def print_table(rows, output):
+def print_table(rows, output, style_of_cell=lambda column_index, cell: None):
     """
     prints rows (lists of strings, the first one being the header), tab separated, or
     aligned in columns when the output is a terminal: aligned is what reads well in a
-    shell, tab separated is what cut, awk, and the tests can parse
+    shell, tab separated is what cut, awk, and the tests can parse.
+    On a color terminal, a cell is styled by style_of_cell, when it returns a style
     """
 
     if len(rows) == 0:
@@ -285,11 +287,17 @@ def print_table(rows, output):
     # numbers read better right aligned, ex: 1000 lining up under 999, labels left aligned.
     # the choice is per cell, NOT per column, so that a count keeps its alignment in a
     # column where another row has text, ex: "inactive"
-    for row in rows:
-        line = "  ".join([
-            cell.rjust(widths[i]) if cell.isdigit() else cell.ljust(widths[i])
-            for i, cell in enumerate(row)
-        ])
+    def aligned(i, cell):
+        return cell.rjust(widths[i]) if cell.isdigit() else cell.ljust(widths[i])
+
+    # styled after alignment, escape codes would count in the widths
+    def styled(i, cell, text):
+        style = style_of_cell(i, cell) if feedback.is_colored(output) else None
+        return text if style is None else style(text)
+
+    print("  ".join(aligned(i, cell) for i, cell in enumerate(rows[0])).rstrip(), file=output)
+    for row in rows[1:]:
+        line = "  ".join(styled(i, cell, aligned(i, cell)) for i, cell in enumerate(row))
         print(line.rstrip(), file=output)
 
 
@@ -1354,11 +1362,15 @@ class Cli:
             # for reporting, ex: rsync summary
             self.yielded_task_keys = set()
             self.yielded_ignored_task_keys = set()
+            self.ignored_children_keys_by_array = {}
             task_generator = pipeline.task_generator
 
             def without_ignored_array_children(task):
                 if task.is_slurm_parent:
                     children_tasks = task.inputs.children_tasks
+                    self.ignored_children_keys_by_array[task.key] = {
+                        t.key for t in children_tasks.value if self._is_ignored(t.key)
+                    }
                     children_tasks.value = [t for t in children_tasks.value if not self._is_ignored(t.key)]
                     if len(children_tasks.value) == 0:
                         raise InvalidTaskSet(
@@ -2285,7 +2297,10 @@ class Cli:
 
         m = self._array_manage()        
         self._array_squeue(m)
-        self._dump_state_step_counts(m.children_task_keys())
+        self._dump_state_step_counts(
+            m.children_task_keys(),
+            excluded_keys=lambda: self.ignored_children_keys_by_array.get(self.parsed_args.task_key, set())
+        )
 
     def list_states(self):
 
@@ -3201,10 +3216,10 @@ class Cli:
     def summary(self):
         self._dump_state_step_counts()
 
-    def _print_table(self, rows):
-        print_table(rows, self.output)
+    def _print_table(self, rows, style_of_cell=lambda column_index, cell: None):
+        print_table(rows, self.output, style_of_cell)
 
-    def _dump_state_step_counts(self, key_universe=None):
+    def _dump_state_step_counts(self, key_universe=None, excluded_keys=None):
 
         all = [
             (state, step, key)
@@ -3223,8 +3238,24 @@ class Cli:
                 step = "" if step is None else step
                 #print(f"{state}\t{step}\t{cnt}", file=self.output)
                 yield [state, str(step), str(cnt)]
+            if self.task_set is not None:
+                excluded = self.yielded_ignored_task_keys if excluded_keys is None else excluded_keys()
+                yield ["excluded", "", str(len(excluded))]
 
-        self._print_table(list(rows()))
+        def style_of_state(column_index, cell):
+            if column_index != 0:
+                return None
+            if cell in ("waiting", "excluded"):
+                return feedback.context
+            if cell in ("_step-started", "step-started", "step-completed"):
+                return feedback.in_progress
+            if cell == "completed":
+                return feedback.done
+            if cell in STATE_GROUPS["unhealthy"]:
+                return feedback.error
+            return None
+
+        self._print_table(list(rows()), style_of_state)
 
 
     def status_db(self):

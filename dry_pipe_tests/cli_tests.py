@@ -548,6 +548,39 @@ class CliArraySubmitFilterFromTests(BasePipelineTest):
         self.assertEqual(completed_children, ['t02', 't05'])
 
 
+class CliSummaryExcludedTests(BasePipelineTest):
+
+    generator = 'dry_pipe_tests.cli_tests:simple_array_pipeline'
+
+    def test_run_pipeline(self):
+        pass
+
+    def _summary(self, d, *args):
+        c = create_cli(self, *args, f'--pipeline-instance-dir={d.sandbox_dir}', f'--generator={self.generator}')
+        c.output = io.StringIO()
+        c.invoke()
+        return c.output.getvalue().splitlines()[-1].split()
+
+    def _prepare_with_task_set(self, rules):
+        d = TestSandboxDir(self)
+        test_cli(self, 'prepare', f'--pipeline-instance-dir={d.sandbox_dir}', f'--generator={self.generator}')
+        Path(d.sandbox_dir, "drypipe-task-set.rules").write_text(rules)
+        return d
+
+    def test_summary_counts_excluded_tasks(self):
+        d = self._prepare_with_task_set("- t02\n- t05\n- t07\n")
+        self.assertEqual(self._summary(d, 'summary'), ["excluded", "3"])
+
+    def test_array_summary_counts_excluded_children(self):
+        d = self._prepare_with_task_set("- t02\n- t05\n")
+        self.assertEqual(self._summary(d, 'array-summary', '--task-key=ap'), ["excluded", "2"])
+
+    def test_summary_without_task_set_has_no_excluded_row(self):
+        d = TestSandboxDir(self)
+        test_cli(self, 'prepare', f'--pipeline-instance-dir={d.sandbox_dir}', f'--generator={self.generator}')
+        self.assertNotEqual(self._summary(d, 'summary')[0], "excluded")
+
+
 class CliArraySubmitConfirmationTests(BasePipelineTest):
 
     generator = 'dry_pipe_tests.cli_tests:simple_array_pipeline'

@@ -26,6 +26,11 @@ warning = _style("33", "39")
 error = _style("31", "39")
 danger = _style("31", "39")
 done = _style("32", "39")
+in_progress = _style("36", "39")
+
+
+def is_colored(stream):
+    return stream.isatty() and not os.environ.get("NO_COLOR") and os.environ.get("TERM") != "dumb"
 
 
 class CliFeedback:
@@ -46,7 +51,7 @@ class CliFeedback:
     def is_colored(self):
         if self._color is not None:
             return self._color
-        return self.stream.isatty() and not os.environ.get("NO_COLOR") and os.environ.get("TERM") != "dumb"
+        return is_colored(self.stream)
 
     def _write(self, message, end="\n"):
         text = str(message)
