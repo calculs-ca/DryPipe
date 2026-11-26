@@ -37,7 +37,6 @@ Each array the loop submits is a normal array submit, it shows up in `array-sque
 | `--margin=N`           | 10                                           | free slots left unused, for jobs submitted by other means while the loop runs |
 | `--min-batch=N`        | 10% of `--max-queued`                        | smallest array the loop submits                                             |
 | `--sleep-interval=M`   | 5                                            | minutes between two checks of the queue                                     |
-| `--abandon-loop`       |                                              | abandon an interrupted loop, see below                                      |
 
 Your limit is shown by `sacctmgr show assoc user=$USER format=Account%30,MaxSubmitJobs`, ask your cluster's
 support if it shows none.
@@ -63,30 +62,39 @@ survives the loss of your ssh session.
 
 ## Interrupted loops
 
-If the loop is killed, or your session ends, run `array-submit --loop` again, without `--where` options. It
-resumes where it stopped, with the tasks it had not submitted yet:
+If the loop is killed, or your session ends, `loop-status` shows how many of its tasks are left to submit, and
+asks whether to quit or continue it:
 
-    cli array-submit --task-key=my-array --loop
+    cli loop-status --task-key=my-array
+
+    loop 2: 1840 of 5000 tasks left to submit
+    saved options: --max-queued=1000 --min-batch=100
+    quit or continue the loop ? [q/c/N]
+
+`loop-continue` resumes it where it stopped, with the tasks it had not submitted yet, and `loop-quit`
+abandons it:
+
+    cli loop-continue --task-key=my-array
+    cli loop-quit --task-key=my-array
 
 The loop saves its options in its loop file, each time it is started or resumed, and a resumed loop uses the
-last ones saved. An option given again replaces the saved one, ex: resume with a larger batch:
+last ones saved. To change one, resume with `array-submit --loop`, without `--where` options, and give the
+option again, ex: resume with a larger batch:
 
     cli array-submit --task-key=my-array --loop --min-batch=300
 
 The saved options are `--max-queued`, `--max-queued-account`, `--margin`, `--min-batch`, `--sleep-interval`,
 `--sbatch-options`, `--tasks-per-job`, `--stop-after-step` and `--slurm-max-jobs`.
 
-To start a new loop on the same array instead, abandon the interrupted one first:
-
-    cli array-submit --task-key=my-array --abandon-loop
+To start a new loop on the same array instead, abandon the interrupted one first with `loop-quit`.
 
 While a loop is unfinished, `array-submit --loop` with `--where` options refuses to start a new loop, and
 `array-submit` without `--loop` warns that the loop will submit some tasks later.
 
 ## One loop per array
 
-Only one loop can run on an array at a time. If a loop is already running, `array-submit --loop` exits and
-prints how to stop it:
+Only one loop can run on an array at a time. If a loop is already running, `array-submit --loop`,
+`loop-continue` and `loop-quit` exit and print how to stop it, `loop-status` prints it instead of asking:
 
     loop 3 is being run by pid 41237 on login2 (user maxl), started 2026-10-24 09:12
     to stop it:  ssh login2 kill 41237

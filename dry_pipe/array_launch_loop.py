@@ -98,6 +98,17 @@ class LoopLock:
         f.flush()
         self.file = f
 
+    def running_message(self):
+        """the message of LoopIsRunning when a process holds the lock, None otherwise"""
+        if not self.path.exists():
+            return None
+        with open(self.path) as f:
+            try:
+                fcntl.lockf(f, fcntl.LOCK_SH | fcntl.LOCK_NB)
+            except OSError:
+                return self._running_message(f.read().strip())
+        return None
+
     def release(self):
         if self.file is not None:
             # deleted before closing: deleting it after the lock is released could delete another process's lock

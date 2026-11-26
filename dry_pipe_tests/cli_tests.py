@@ -1079,6 +1079,9 @@ class CliArraySubmitLoopTests(BasePipelineTest):
         )
         return sleeps
 
+    def array_task_manager_of_sandbox(self):
+        return TaskProcess(self.array_control_dir.__str__(), test_mode=True).create_array_task_manager()
+
     def array_keys(self, array_n):
         return Path(self.array_control_dir, f"array.{array_n}.tsv").read_text().split()
 
@@ -1202,13 +1205,54 @@ class CliArraySubmitLoopTests(BasePipelineTest):
         lock.release()
         self.assertFalse(lock_path.exists())
 
-    def test_abandon_loop(self):
+    def loop_command(self, command, answer="", global_args=()):
+        generator_args = [] if command == 'loop-quit' else [f'--generator={self.generator}']
+        err = io.StringIO()
+        with unittest.mock.patch('sys.stdin', io.StringIO(answer)), contextlib.redirect_stderr(err):
+            test_cli(
+                self, *global_args, command, f'--pipeline-instance-dir={self.sandbox_dir}', '--task-key=ap',
+                *generator_args
+            )
+        return err.getvalue()
+
+    def test_loop_quit(self):
         atm = self.prepare()
         LaunchLoop.create(atm, self.all_children)
-        self.cli('--abandon-loop')
+        self.loop_command('loop-quit')
         self.assertTrue(self.loop_file(1, "abandoned").exists())
         self.assertIsNone(LaunchLoop.unfinished(atm))
         self.assertEqual(LaunchLoop.create(atm, self.all_children).number(), 2)
+
+    def test_loop_commands_require_an_unfinished_loop(self):
+        self.prepare()
+        for command in ['loop-status', 'loop-continue', 'loop-quit']:
+            with self.subTest(command), self.assertRaisesRegex(CliUserError, "array ap has no unfinished loop"):
+                self.loop_command(command)
+
+    def test_loop_continue_resumes_with_the_saved_options(self):
+        launch_loop = LaunchLoop.create(self.prepare(), self.all_children)
+        launch_loop.append_options(["--max-queued=50", "--margin=4"])
+        out = self.loop_command('loop-continue', global_args=['--dry-run'])
+        self.assertIn("Will resume loop 1, 11 tasks left, account dummy-account, --max-queued=50 --margin=4", out)
+
+    def test_loop_status_then_quit(self):
+        launch_loop = LaunchLoop.create(self.prepare(), self.all_children)
+        launch_loop.append_options(["--max-queued=50"])
+        out = self.loop_command('loop-status', answer="q\n")
+        self.assertIn("loop 1: 11 of 11 tasks left to submit", out)
+        self.assertIn("saved options: --max-queued=50", out)
+        self.assertTrue(self.loop_file(1, "abandoned").exists())
+
+    def test_loop_status_then_continue(self):
+        LaunchLoop.create(self.prepare(), self.all_children)
+        out = self.loop_command('loop-status', answer="c\n", global_args=['--dry-run'])
+        self.assertIn("Will resume loop 1, 11 tasks left", out)
+
+    def test_loop_status_does_nothing_by_default(self):
+        LaunchLoop.create(self.prepare(), self.all_children)
+        out = self.loop_command('loop-status', answer="\n")
+        self.assertNotIn("Will resume", out)
+        self.assertTrue(self.loop_file(1, "running").exists())
 
     def test_max_queued_defaults_to_1000(self):
         self.prepare()
@@ -1283,6 +1327,12 @@ class CliArraySubmitLoopTests(BasePipelineTest):
             holder.stdout.readline()
             with self.assertRaisesRegex(CliUserError, "pid 41237 on otherhost .*\n.*ssh otherhost kill 41237"):
                 self.cli('--loop', '--max-queued=10', '--yes', '--where-key=t0*')
+            LaunchLoop.create(self.array_task_manager_of_sandbox(), self.all_children)
+            status = self.loop_command('loop-status', answer="q\n")
+            self.assertIn("ssh otherhost kill 41237", status)
+            self.assertNotIn("quit or continue", status)
+            with self.assertRaisesRegex(CliUserError, "ssh otherhost kill 41237"):
+                self.loop_command('loop-quit')
         finally:
             holder.kill()
             holder.wait()

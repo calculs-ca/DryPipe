@@ -1022,17 +1022,18 @@ class Cli:
                 metavar='MINUTES',
                 help="with --loop, minutes between two checks of the queue, default: 5"
             )
-            parser.add_argument(
-                '--abandon-loop',
-                action='store_true',
-                default=False,
-                help="abandon the unfinished loop of the array"
-            )
 
         yield Command('array-submit',
                       task_key, regen, generator_optional, tail, wait, include_all_incompleted_tasks,
                       sbatch_options, env_overrides, reset, tasks_per_job, slurm_max_jobs, stop_after_step, yes, loop, task_selection,
                       help="submit array, after a confirmation (see --yes)")
+
+        yield Command('loop-status', task_key, generator_optional,
+                      help="the unfinished launch loop of the array, then asks whether to quit or continue it")
+        yield Command('loop-continue', task_key, generator_optional, yes,
+                      help="resume the unfinished launch loop of the array, with its saved options")
+        yield Command('loop-quit', task_key,
+                      help="abandon the unfinished launch loop of the array")
 
         yield Command('array-upload', task_key, help="upload array task to remote location")
         yield Command('array-download', task_key, help="download all array tasks results (rsync or Globus fetch all __task_output_dir of child tasks)")
@@ -1668,7 +1669,7 @@ class Cli:
             self.parsed_args.slurm_max_jobs, instance_logger=self.instance_logger
         )
 
-        if self.parsed_args.loop or self.parsed_args.abandon_loop:
+        if self.parsed_args.loop:
             self._array_submit_loop(pipeline_instance)
             return
 
@@ -1914,22 +1915,12 @@ class Cli:
 
         unfinished_loop = LaunchLoop.unfinished(atm)
 
-        if args.abandon_loop:
-            if unfinished_loop is None:
-                raise CliUserError("the array has no unfinished loop")
-            if args.dry_run:
-                self.feedback.dry_run(f"loop {unfinished_loop.number()} not abandoned")
-                return
-            unfinished_loop.abandon()
-            self.feedback.done(f"loop {unfinished_loop.number()} abandoned, {unfinished_loop.path}")
-            return
-
         def task_keys_to_submit():
             if unfinished_loop is not None:
                 if self.has_selection():
                     raise CliUserError(
-                        f"loop {unfinished_loop.number()} is unfinished, resume it with --loop without --where options "
-                        f"options, or abandon it with --abandon-loop"
+                        f"loop {unfinished_loop.number()} is unfinished, resume it with loop-continue, "
+                        f"or abandon it with loop-quit"
                     )
                 return unfinished_loop.remaining_keys()
             if not self.has_selection():
@@ -2010,6 +2001,76 @@ class Cli:
             submits_of=submits_of
         )
 
+
+    def _unfinished_loop_of_array(self):
+        launch_loop = LaunchLoop.unfinished(self._array_manage())
+        if launch_loop is None:
+            raise CliUserError(f"array {self.parsed_args.task_key} has no unfinished loop")
+        return launch_loop
+
+    def loop_status(self):
+        launch_loop = self._unfinished_loop_of_array()
+
+        self.feedback.info(
+            f"loop {launch_loop.number()}: {focal(len(launch_loop.remaining_keys()))} of "
+            f"{len(launch_loop.task_keys())} tasks left to submit"
+        )
+        saved_options = LaunchLoop.saved_options(self._control_dir())
+        self.feedback.context(f"saved options: {shlex.join(f'{o}={v}' for o, v in saved_options.items())}")
+
+        running_message = LoopLock(self._control_dir()).running_message()
+        if running_message is not None:
+            self.feedback.info(running_message)
+            return
+
+        answer = self.feedback.ask(f"{focal('quit or continue the loop ?')} [q/c/N] ").lower()
+        if answer in ("q", "quit"):
+            self.loop_quit()
+        elif answer in ("c", "continue"):
+            self._continue_loop(yes=True)
+
+    def loop_continue(self):
+        self._continue_loop(yes=self.parsed_args.yes)
+
+    def _continue_loop(self, yes):
+        """array-submit --loop, without --where options, resumes the unfinished loop"""
+        args = self.parsed_args
+
+        def array_submit_args():
+            if args.dry_run:
+                yield "--dry-run"
+            yield from ["array-submit", "--loop", f"--pipeline-instance-dir={args.pipeline_instance_dir}"]
+            yield f"--task-key={args.task_key}"
+            if args.generator is not None:
+                yield f"--generator={args.generator}"
+            if args.task_set is not None:
+                yield f"--task-set={args.task_set}"
+            if yes:
+                yield "--yes"
+
+        self._unfinished_loop_of_array()
+        self.parsed_args = self.parser.parse_args(list(array_submit_args()))
+        self.array_submit()
+
+    def loop_quit(self):
+        launch_loop = self._unfinished_loop_of_array()
+
+        if self.parsed_args.dry_run:
+            self.feedback.dry_run(f"loop {launch_loop.number()} not abandoned")
+            return
+
+        lock = LoopLock(self._control_dir())
+        try:
+            lock.acquire()
+        except LoopIsRunning as e:
+            raise CliUserError(str(e))
+
+        try:
+            launch_loop.abandon()
+        finally:
+            lock.release()
+
+        self.feedback.done(f"loop {launch_loop.number()} abandoned, {launch_loop.path}")
 
     def array_submit_from_remote(self):
         control_dir = self._control_dir()
