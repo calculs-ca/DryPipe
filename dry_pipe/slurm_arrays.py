@@ -486,11 +486,13 @@ class ArrayTaskManager:
                 if line != "":
                     yield line
 
-    def sample_child_task_conf(self):
+    def sample_child_task_conf(self, task_keys):
+        """the conf of the first child in task-keys.tsv that is in task_keys, the tasks being submitted"""
         def pick_first():
             for task_key in self._children_task_keys():
-                return task_key
-            raise Exception(f"No task key found in {self.task_keys_file()}")
+                if task_key in task_keys:
+                    return task_key
+            raise Exception(f"none of the {len(task_keys)} task keys are in {self.task_keys_file()}")
 
         sample_child_task_key = pick_first()
 
@@ -568,7 +570,10 @@ class ArrayTaskManager:
 
     def group_by_sbatch_options(self, task_keys):
 
-        step_invocations_of_children_tasks = self.sample_child_task_conf().step_invocations
+        if len(task_keys) == 0:
+            return []
+
+        step_invocations_of_children_tasks = self.sample_child_task_conf(task_keys).step_invocations
 
         def get_sbatch_options_or_none(step_invocation):
             so = step_invocation.get("sbatch_options")

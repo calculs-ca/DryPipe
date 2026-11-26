@@ -977,6 +977,34 @@ class CliArraySubmitRegenTests(BasePipelineTest):
 
         self.assertEqual(regenerated_keys, ["t02", "t04", "ap"])
 
+    def test_array_submit_without_prepare_of_children_not_including_the_first(self):
+        d = TestSandboxDir(self)
+
+        test_cli(
+            self, 'array-submit', '--yes', f'-pid={d.sandbox_dir}', f'--generator={self.generator}', '-k=ap',
+            '--where-key=t0[25]', '--wait'
+        )
+
+        tasks_by_keys = Pipeline.load_from_module_func(self.generator).create_pipeline_instance(
+            d.sandbox_dir, instance_log_level=self.instance_log_level()
+        ).query_all_tasks_by_key()
+
+        completed_children = sorted(
+            key for key, task in tasks_by_keys.items() if key != "ap" and task.is_completed()
+        )
+        self.assertEqual(completed_children, ["t02", "t05"])
+        self.assertFalse(Path(d.sandbox_dir, ".drypipe", "t01").exists())
+
+    def test_array_submit_without_prepare_of_no_matching_children(self):
+        d = TestSandboxDir(self)
+
+        test_cli(
+            self, 'array-submit', '--yes', f'-pid={d.sandbox_dir}', f'--generator={self.generator}', '-k=ap',
+            '--where-key=no-such-key'
+        )
+
+        self.assertEqual(list(Path(d.sandbox_dir, ".drypipe", "ap").glob("array.*")), [])
+
 
 class CliArraySubmitLoopTests(BasePipelineTest):
     """

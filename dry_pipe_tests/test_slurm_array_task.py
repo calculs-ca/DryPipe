@@ -27,7 +27,7 @@ class ArrayTaskScenario(TestWithDirectorySandbox):
             "sbatch_options": ["--time=1:00"]
         })
 
-    def sample_child_task_conf(self):
+    def sample_child_task_conf(self, task_keys):
         return TaskConf(fields_from_json={
             "step_invocations": [{}]
         })
@@ -58,8 +58,8 @@ class ArrayTaskScenario(TestWithDirectorySandbox):
             def array_task_conf(self):
                 return s.array_task_conf()
 
-            def sample_child_task_conf(self):
-                return s.sample_child_task_conf()
+            def sample_child_task_conf(self, task_keys):
+                return s.sample_child_task_conf(task_keys)
 
             def is_debug(self):
                 return True
