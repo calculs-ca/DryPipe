@@ -20,5 +20,6 @@ DryPipe
 
    ng/running-pipelines/selecting-tasks
    ng/running-pipelines/launch-groups
+   ng/multi-cluster-pipeline-execution
    array-launch-loop
    key-lists

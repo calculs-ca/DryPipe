@@ -52,7 +52,7 @@ class CliCompletionTests(unittest.TestCase):
 
     def test_choices(self):
         self.assertEqual(
-            self.completed("drypipe rsync-push --include-drypipe-files "), ["all ", "minimal ", "none "]
+            self.completed("drypipe rsync-push --drypipe-files "), ["all ", "logs ", "none ", "state "]
         )
 
     def test_key_list_files_keep_the_at_sign(self):

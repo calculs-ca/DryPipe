@@ -116,4 +116,4 @@ Tags can be assigned to produced output files, for bulk operations, ex:
 
 ```
 
-drypipe rsync-push --tags=keepers,for-debug --to=my-host:/a/b/my-pipeline/ --where-state=completed --include-drypipe-files
+drypipe rsync-push --tags=keepers,for-debug --to=my-host:/a/b/my-pipeline/ --where-state=completed --drypipe-files=all

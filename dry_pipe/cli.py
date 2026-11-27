@@ -1167,16 +1167,26 @@ class Cli:
                 env=self.env
             )
 
-        def include_drypipe_files(parser):
+        def outputs(parser):
             parser.add_argument(
-                '--include-drypipe-files',
-                help="adds drypipe working files to the selected files: (all files in .drypipe/<task-key>/*). If given 'minimal' as value, will only include out.log, drypipe.log and the tasks state files (default: %(default)s)",
-                nargs='?',
-                const='all',
-                choices=['all', 'minimal', 'none'],
+                '--outputs',
+                help="which files of output/<task-key>/ are selected: "
+                     "declared: the files declared as task outputs, filtered by --tags or --exclude-tags, "
+                     "all: every file, declared or not, none: no file (default: %(default)s)",
+                choices=['declared', 'all', 'none'],
+                default='declared'
+            )
+
+        def drypipe_files(parser):
+            parser.add_argument(
+                '--drypipe-files',
+                help="which drypipe working files of .drypipe/<task-key>/ are selected, each level includes the previous one: "
+                     "none, state: the task state file, logs: out.log, drypipe.log and drypipe-remote.log, "
+                     "all: every file (default: %(default)s)",
+                choices=['none', 'state', 'logs', 'all'],
                 default='none'
             )
-        
+
 
         def no_confirm(parser):
             parser.add_argument(
@@ -1194,15 +1204,6 @@ class Cli:
                 default=False
             )
 
-        def exhaustive(parser):
-            parser.add_argument(
-                '--exhaustive',
-                action='store_true',
-                default=False,
-                help="select everything of matching tasks: all files in output/<task-key>/ (declared outputs or not) "
-                     "and in .drypipe/<task-key>/, cannot be combined with --tags, --exclude-tags or --include-drypipe-files"
-            )
-
         def chown(parser):
             parser.add_argument(
                 '--chown',
@@ -1214,8 +1215,8 @@ class Cli:
                 required=False
             )
 
-        yield Command('rsync-push', pipeline_instance_dir, generator, tags, rsync_to, include_drypipe_files, exhaustive, no_confirm, info_progress2, chown, task_selection,
-                      help="rsync output files having at least one of the --tags, of matching tasks, to --to")
+        yield Command('rsync-push', pipeline_instance_dir, generator, outputs, tags, exclude_tags, drypipe_files, rsync_to, no_confirm, info_progress2, chown, task_selection,
+                      help="rsync the files of matching tasks selected by --outputs and --drypipe-files, to --to")
 
         def rsync_from(parser):
             parser.add_argument(
@@ -1227,19 +1228,8 @@ class Cli:
                 env=self.env
             )
 
-        def state_files_only(parser):
-            parser.add_argument(
-                '--state-files-only',
-                action='store_true',
-                default=False,
-                help="only pull the state files of matching tasks, local state files are renamed according to remote ones, "
-                     "cannot be combined with --tags, --include-drypipe-files or --exhaustive"
-            )
-
-        yield Command('rsync-pull', pipeline_instance_dir, generator, tags, rsync_from, include_drypipe_files, exhaustive, state_files_only, no_confirm, info_progress2, task_selection,
-                      help="rsync output files having at least one of the --tags, of matching tasks, from --from"
-                      " note: unless --include-drypipe-files or --state-files-only option, only output (task produces) files get rsynced."
-                )
+        yield Command('rsync-pull', pipeline_instance_dir, generator, outputs, tags, exclude_tags, drypipe_files, rsync_from, no_confirm, info_progress2, task_selection,
+                      help="rsync the files of matching tasks selected by --outputs and --drypipe-files, from --from")
 
         def import_into(parser):
             parser.add_argument(
@@ -1282,9 +1272,9 @@ class Cli:
                      "ex: 'tar --zstd -cf {archive} .', 'zip -qr {archive} .' (default: '%(default)s')"
             )
 
-        yield Command('archive', pipeline_instance_dir, generator, tags, exclude_tags, include_drypipe_files, exhaustive,
+        yield Command('archive', pipeline_instance_dir, generator, outputs, tags, exclude_tags, drypipe_files,
                       archive_name, archive_command, no_confirm, task_selection,
-                      help="archive output files having at least one of the --tags (or none of the --exclude-tags), of matching tasks, with --archive-command")
+                      help="archive the files of matching tasks selected by --outputs and --drypipe-files, with --archive-command")
 
         yield Command('purge-outputs', pipeline_instance_dir, generator, tags, exclude_tags, no_confirm, task_selection,
                       help="deletes output files having at least one of the --tags (or none of the --exclude-tags), of matching tasks, warning: purging files can break some pipelines")
@@ -2673,68 +2663,48 @@ class Cli:
 
         ensure_rsync_version_at_least((3, 2, 7))
 
-        include_drypipe_files = self.parsed_args.include_drypipe_files
+        outputs = self.parsed_args.outputs
+        drypipe_files = self.parsed_args.drypipe_files
 
-        exhaustive = self.parsed_args.exhaustive
+        if outputs != "declared" and self._selected_tags() != (None, None):
+            raise CliUsageError("--tags and --exclude-tags can only be used with --outputs declared")
 
-        if exhaustive and (
-            self.parsed_args.tags is not None or getattr(self.parsed_args, "exclude_tags", None) is not None or
-            include_drypipe_files != "none"
-        ):
-            raise CliUsageError("--exhaustive cannot be combined with --tags, --exclude-tags or --include-drypipe-files")
-
-        state_files_only = getattr(self.parsed_args, "state_files_only", False)
-
-        if state_files_only and (self.parsed_args.tags is not None or include_drypipe_files != "none" or exhaustive):
-            raise CliUsageError("--state-files-only cannot be combined with --tags, --include-drypipe-files or --exhaustive")
+        if outputs == "none" and drypipe_files == "none":
+            raise CliUsageError("--outputs none --drypipe-files none selects nothing")
 
         tasks_and_file_outputs = self._tasks_and_selected_file_outputs()
 
-        if state_files_only:
-            self.feedback.info(f"state files of {len(tasks_and_file_outputs)} tasks")
-        else:
+        if outputs == "declared":
             self._print_file_outputs_summary(tasks_and_file_outputs, *summary_headings)
-        if include_drypipe_files != "none":
-            self.feedback.info(f"drypipe files ({include_drypipe_files}) of {len(tasks_and_file_outputs)} tasks")
-        if exhaustive:
-            self.feedback.info(f"exhaustive: all files of {len(tasks_and_file_outputs)} tasks")
+        else:
+            self.feedback.info(f"tasks: {len(tasks_and_file_outputs)}")
+            self.feedback.info(f"output files: {outputs}")
+        self.feedback.info(f"drypipe files: {drypipe_files}")
         self._print_ignored_tasks_summary()
         self.feedback.info(transfer_description)
 
         if not self.parsed_args.no_confirm and not self.feedback.confirm("continue ?"):
             return False
 
-        def control_dirs():
-            for task, _ in tasks_and_file_outputs:
-                yield f".drypipe/{task.key}"
-
-        def output_and_control_dirs():
-            for task, _ in tasks_and_file_outputs:
-                yield f"output/{task.key}"
-                yield f".drypipe/{task.key}"
-
-        def tagged_files_and_control_dirs():
+        def selected_paths():
             for task, file_outputs in tasks_and_file_outputs:
-                for o in file_outputs:
-                    yield task.outputs.rsync_path(o)
-                if include_drypipe_files != "none":
+                if outputs == "all":
+                    # listed as a dir, so that --delete removes files absent from the source
+                    yield f"output/{task.key}"
+                elif outputs == "declared":
+                    for o in file_outputs:
+                        yield task.outputs.rsync_path(o)
+                if drypipe_files != "none":
                     # listed as a dir, so that --delete removes stale state files at dest
                     yield f".drypipe/{task.key}"
 
-        def selected_paths():
-            if state_files_only:
-                return control_dirs()
-            elif exhaustive:
-                return output_and_control_dirs()
-            else:
-                return tagged_files_and_control_dirs()
-
         def drypipe_files_filters():
             # excluded files are also protected from --delete
-            if include_drypipe_files == "minimal":
+            if drypipe_files == "logs":
                 yield "--include=/.drypipe/*/out.log"
                 yield "--include=/.drypipe/*/drypipe.log"
-            if include_drypipe_files == "minimal" or state_files_only:
+                yield "--include=/.drypipe/*/drypipe-remote.log"
+            if drypipe_files in ("state", "logs"):
                 yield "--include=/.drypipe/*/state.*"
                 yield "--exclude=/.drypipe/*/*"
 

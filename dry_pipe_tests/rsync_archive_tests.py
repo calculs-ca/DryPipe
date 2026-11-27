@@ -315,21 +315,22 @@ class RsyncDrypipeFilesTests(RsyncArchiveTestCase):
 
     def add_extra_control_files(self, key):
         control_dir = self.control_dir(key)
-        for name in ["out.log", "drypipe.log", "steps.sh", "output_vars"]:
+        for name in ["out.log", "drypipe.log", "drypipe-remote.log", "steps.sh", "output_vars"]:
             (control_dir / name).write_text(name)
         (control_dir / "sub").mkdir()
         (control_dir / "sub" / "nested.txt").write_text("nested")
 
-    def test_minimal_copies_only_logs_and_state_file(self):
+    def test_logs_copies_only_logs_and_state_file(self):
         self.prepare()
         self.complete(["t01"])
         self.add_extra_control_files("t01")
-        self.rsync("--tags=keepers", "--where-key=t01", "--include-drypipe-files=minimal")
+        self.rsync("--tags=keepers", "--where-key=t01", "--drypipe-files=logs")
         self.assertEqual(
             self.dest_files(),
             output_paths(["t01"], keepers) | {
                 ".drypipe/t01/out.log",
                 ".drypipe/t01/drypipe.log",
+                ".drypipe/t01/drypipe-remote.log",
                 ".drypipe/t01/state.completed",
             }
         )
@@ -338,23 +339,23 @@ class RsyncDrypipeFilesTests(RsyncArchiveTestCase):
         self.prepare()
         self.complete(["t01"])
         self.add_extra_control_files("t01")
-        self.rsync("--tags=keepers", "--where-key=t01", "--include-drypipe-files")
+        self.rsync("--tags=keepers", "--where-key=t01", "--drypipe-files=all")
         self.assertEqual(
             self.dest_files(),
             output_paths(["t01"], keepers) | {
                 f".drypipe/t01/{name}"
                 for name in [
-                    "out.log", "drypipe.log", "steps.sh", "output_vars", "sub/nested.txt",
+                    "out.log", "drypipe.log", "drypipe-remote.log", "steps.sh", "output_vars", "sub/nested.txt",
                     "state.completed", "task-conf.json"
                 ]
             }
         )
 
-    def test_minimal_rules_do_not_apply_to_output_files(self):
+    def test_logs_rules_do_not_apply_to_output_files(self):
         self.generator = "drypipe_lookalike_names_dag"
         self.prepare()
         self.complete(["l"], names=lambda _: ["out.log", "task-conf.json", "state.completed"])
-        self.rsync("--include-drypipe-files=minimal")
+        self.rsync("--drypipe-files=logs")
         self.assertEqual(
             self.dest_output_files(),
             {"output/l/out.log", "output/l/task-conf.json", "output/l/state.completed"}
@@ -365,12 +366,12 @@ class RsyncDrypipeFilesTests(RsyncArchiveTestCase):
         (self.pid / "output" / key / "scratch").mkdir(exist_ok=True)
         (self.pid / "output" / key / "scratch" / "partial.tsv").write_text("partial")
 
-    def test_exhaustive_copies_every_file_of_output_and_control_dirs(self):
+    def test_all_outputs_and_drypipe_files_copy_every_file_of_output_and_control_dirs(self):
         self.prepare()
         self.complete(["t01"])
         self.add_extra_control_files("t01")
         self.add_undeclared_output_files("t01")
-        self.rsync("--where-key=t01", "--exhaustive")
+        self.rsync("--where-key=t01", "--outputs=all", "--drypipe-files=all")
         self.assertEqual(
             self.dest_files(),
             {
@@ -379,18 +380,42 @@ class RsyncDrypipeFilesTests(RsyncArchiveTestCase):
             } | {
                 f".drypipe/t01/{name}"
                 for name in [
-                    "out.log", "drypipe.log", "steps.sh", "output_vars", "sub/nested.txt",
+                    "out.log", "drypipe.log", "drypipe-remote.log", "steps.sh", "output_vars", "sub/nested.txt",
                     "state.completed", "task-conf.json"
                 ]
             }
         )
 
-    def test_exhaustive_cannot_be_combined_with_tags_or_drypipe_files(self):
+    def test_no_outputs_copies_only_drypipe_files(self):
         self.prepare()
-        for args in [["--tags=keepers"], ["--include-drypipe-files"], ["--include-drypipe-files=minimal"]]:
-            with self.subTest(args=args):
-                with self.assertRaisesRegex(Exception, "--exhaustive cannot be combined"):
-                    self.rsync("--exhaustive", *args)
+        self.complete(["t01"])
+        self.add_extra_control_files("t01")
+        self.rsync("--where-key=t01", "--outputs=none", "--drypipe-files=logs")
+        self.assertEqual(
+            self.dest_files(),
+            {".drypipe/t01/out.log", ".drypipe/t01/drypipe.log", ".drypipe/t01/drypipe-remote.log", ".drypipe/t01/state.completed"}
+        )
+
+    def test_state_copies_only_the_state_file(self):
+        self.prepare()
+        self.complete(["t01"])
+        self.add_extra_control_files("t01")
+        self.rsync("--where-key=t01", "--outputs=none", "--drypipe-files=state")
+        self.assertEqual(self.dest_files(), {".drypipe/t01/state.completed"})
+
+    def test_tags_can_only_be_used_with_declared_outputs(self):
+        self.prepare()
+        for outputs in ["all", "none"]:
+            for tag_arg in ["--tags=keepers", "--exclude-tags=heavy"]:
+                with self.subTest(outputs=outputs, tag_arg=tag_arg):
+                    with self.assertRaisesRegex(Exception, "can only be used with --outputs declared"):
+                        self.rsync(f"--outputs={outputs}", "--drypipe-files=all", tag_arg)
+        self.assertFalse(self.dest.exists())
+
+    def test_no_outputs_and_no_drypipe_files_is_rejected(self):
+        self.prepare()
+        with self.assertRaisesRegex(Exception, "selects nothing"):
+            self.rsync("--outputs=none")
         self.assertFalse(self.dest.exists())
 
 
@@ -453,8 +478,8 @@ class RsyncSummaryTests(RsyncArchiveTestCase):
 
     def test_summary_mentions_drypipe_files(self):
         self.prepare()
-        out = self.rsync("--include-drypipe-files=minimal")
-        self.assertIn("drypipe files (minimal) of 6 tasks\n", out)
+        out = self.rsync("--drypipe-files=logs")
+        self.assertIn("drypipe files: logs\n", out)
 
     def test_answer_no_transfers_nothing(self):
         self.prepare()
@@ -552,20 +577,20 @@ class RsyncOptionsTests(RsyncArchiveTestCase):
     def test_dry_run_transfers_nothing(self):
         self.prepare()
         self.complete(KEYS)
-        self.rsync("--include-drypipe-files", global_args=["--dry-run"])
+        self.rsync("--drypipe-files=all", global_args=["--dry-run"])
         self.assertFalse(self.dest.exists())
 
 
 class RsyncStateFileTests(RsyncArchiveTestCase):
 
     def test_state_transitions_between_syncs_leave_a_single_state_file(self):
-        for mode in ["minimal", "all"]:
+        for mode in ["logs", "all"]:
             with self.subTest(mode=mode):
                 self.setUp()
                 self.prepare()
                 for state in ["failed.2", "ready", "running", "completed"]:
                     self.set_state("t01", state)
-                    self.rsync("--where-key=t01", f"--include-drypipe-files={mode}")
+                    self.rsync("--where-key=t01", f"--drypipe-files={mode}")
                     self.assert_single_state_file_equal_to_source("t01")
 
     def test_duplicate_state_files_already_at_dest_are_repaired(self):
@@ -575,22 +600,22 @@ class RsyncStateFileTests(RsyncArchiveTestCase):
         dest_control_dir.mkdir(parents=True)
         (dest_control_dir / "state.failed.1").touch()
         (dest_control_dir / "state.running").touch()
-        self.rsync("--where-key=t01", "--include-drypipe-files=minimal")
+        self.rsync("--where-key=t01", "--drypipe-files=logs")
         self.assertEqual(self.state_files("t01", self.dest), ["state.completed"])
 
-    def test_full_then_minimal_keeps_a_single_state_file_and_excluded_files(self):
+    def test_all_then_logs_keeps_a_single_state_file_and_excluded_files(self):
         self.prepare()
         self.set_state("t01", "failed.1")
-        self.rsync("--where-key=t01", "--include-drypipe-files")
+        self.rsync("--where-key=t01", "--drypipe-files=all")
         self.set_state("t01", "completed")
-        self.rsync("--where-key=t01", "--include-drypipe-files=minimal")
+        self.rsync("--where-key=t01", "--drypipe-files=logs")
         self.assert_single_state_file_equal_to_source("t01")
         self.assertTrue((self.control_dir("t01", self.dest) / "task-conf.json").exists())
 
     def test_sync_without_drypipe_files_leaves_dest_drypipe_untouched(self):
         self.prepare()
         self.set_state("t01", "failed.1")
-        self.rsync("--where-key=t01", "--include-drypipe-files=minimal")
+        self.rsync("--where-key=t01", "--drypipe-files=logs")
         drypipe_files_before = {f for f in self.dest_files() if f.startswith(".drypipe/")}
         self.set_state("t01", "completed")
         self.rsync("--where-key=t01")
@@ -601,9 +626,9 @@ class RsyncStateFileTests(RsyncArchiveTestCase):
         self.prepare()
         self.complete(["t01"])
         self.set_state("t02", "failed.1")
-        self.rsync("--include-drypipe-files=minimal")
+        self.rsync("--drypipe-files=logs")
         self.set_state("t02", "running")
-        self.rsync("--where-state=completed", "--include-drypipe-files=minimal")
+        self.rsync("--where-state=completed", "--drypipe-files=logs")
         self.assertEqual(self.state_files("t02", self.dest), ["state.failed.1"])
 
     def test_delete_spares_everything_but_the_listed_control_dirs(self):
@@ -622,7 +647,7 @@ class RsyncStateFileTests(RsyncArchiveTestCase):
             (self.dest / f).parent.mkdir(parents=True, exist_ok=True)
             (self.dest / f).write_text("dest only")
 
-        self.rsync("--where-key=t01", "--include-drypipe-files=minimal")
+        self.rsync("--where-key=t01", "--drypipe-files=logs")
 
         self.assertTrue(set(dest_only_files) <= self.dest_files())
         self.assertEqual(self.state_files("t01", self.dest), ["state.completed"])
@@ -636,7 +661,7 @@ class RsyncStateFileTests(RsyncArchiveTestCase):
             f'[ "$1" = "--version" ] || mv {control_dir}/state.running {control_dir}/state.completed\n'
             f'exec {real_rsync} "$@"'
         ):
-            self.rsync("--where-key=t01", "--include-drypipe-files=minimal")
+            self.rsync("--where-key=t01", "--drypipe-files=logs")
         self.assertEqual(self.state_files("t01", self.dest), ["state.completed"])
 
 
@@ -650,13 +675,13 @@ class RsyncIgnoredTasksTests(RsyncArchiveTestCase):
         }
 
     def test_newly_ignored_task_is_left_untouched_at_dest(self):
-        for mode in ["minimal", "all"]:
+        for mode in ["logs", "all"]:
             with self.subTest(mode=mode):
                 self.setUp()
                 self.prepare()
                 self.complete(KEYS)
                 self.set_state("t02", "failed.1")
-                self.rsync(f"--include-drypipe-files={mode}")
+                self.rsync(f"--drypipe-files={mode}")
                 t02_at_dest_before = self.dest_files_with_contents("t02")
 
                 self.ignore("t02")
@@ -664,7 +689,7 @@ class RsyncIgnoredTasksTests(RsyncArchiveTestCase):
                 self.write_outputs("t02", ["t02_report.txt"])
                 (self.pid / "output" / "t02" / "t02_report.txt").write_text("changed after being ignored")
                 (self.pid / "output" / "t02" / "both.tsv").unlink()
-                self.rsync(f"--include-drypipe-files={mode}")
+                self.rsync(f"--drypipe-files={mode}")
 
                 self.assertEqual(self.dest_files_with_contents("t02"), t02_at_dest_before)
                 self.assertEqual(self.state_files("t02", self.dest), ["state.failed.1"])
@@ -723,7 +748,7 @@ class RsyncRoundTripTests(RsyncArchiveTestCase):
         self.complete(["t01", "t02", "t03"])
         self.set_state("t04", "failed.2")
         self.set_state("t05", "ready")
-        self.rsync("--include-drypipe-files=minimal")
+        self.rsync("--drypipe-files=logs")
         self.assertEqual(self.list_tasks(self.dest), self.list_tasks(self.pid))
 
 
@@ -743,11 +768,11 @@ class RsyncPullTests(RsyncArchiveTestCase):
             output_paths(KEYS, keepers)
         )
 
-    def test_state_files_only_renames_local_state_files_according_to_remote(self):
+    def test_pulled_state_files_replace_local_ones(self):
         self.prepare()
         self.complete(["t01", "t02"])
         self.set_state("t03", "failed.2")
-        self.rsync("--include-drypipe-files=minimal")
+        self.rsync("--drypipe-files=logs")
 
         puller_pid = self.sandbox / "puller"
         self.cli("prepare", pid=puller_pid)
@@ -759,16 +784,26 @@ class RsyncPullTests(RsyncArchiveTestCase):
 
         other_local_files = non_state_files()
 
-        self.cli("rsync-pull", f"--from={self.dest}/", "--state-files-only", "--no-confirm", pid=puller_pid)
+        self.cli("rsync-pull", f"--from={self.dest}/", "--outputs=none", "--drypipe-files=state", "--no-confirm", pid=puller_pid)
 
         for key in KEYS:
             self.assertEqual(self.state_files(key, puller_pid), self.state_files(key, self.dest))
         self.assertEqual(non_state_files(), other_local_files)
         self.assertEqual(local_log.read_text(), "local")
 
-    def test_state_files_only_cannot_be_combined_with_tags(self):
-        with self.assertRaises(Exception):
-            self.cli("rsync-pull", f"--from={self.dest}/", "--state-files-only", "--tags=keepers", "--no-confirm")
+    def test_pulls_files_having_none_of_the_excluded_tags(self):
+        self.prepare()
+        self.complete(KEYS)
+        self.rsync()
+
+        puller_pid = self.sandbox / "puller"
+        self.cli("prepare", pid=puller_pid)
+        self.cli("rsync-pull", f"--from={self.dest}/", "--exclude-tags=keepers", "--no-confirm", pid=puller_pid)
+
+        self.assertEqual(
+            {f for f in self.dest_files(puller_pid) if f.startswith("output/")},
+            output_paths(KEYS, all_outputs) - output_paths(KEYS, keepers)
+        )
 
 
 class ArchiveTests(RsyncArchiveTestCase):
@@ -788,10 +823,10 @@ class ArchiveTests(RsyncArchiveTestCase):
     def staging_dirs(self):
         return list((self.pid / ".drypipe").glob("archive-staging-*"))
 
-    def test_archives_selected_files_and_minimal_drypipe_files(self):
+    def test_archives_selected_files_and_logs_drypipe_files(self):
         self.prepare()
         self.complete(KEYS)
-        out = self.archive("--tags=keepers", "--where-key=t01", "--include-drypipe-files=minimal")
+        out = self.archive("--tags=keepers", "--where-key=t01", "--drypipe-files=logs")
         self.extract()
         self.assertEqual(self.dest_files(), output_paths(["t01"], keepers) | {".drypipe/t01/state.completed"})
         self.assertIn(f"archive: {self.archive_file}\n", out)
@@ -836,11 +871,11 @@ class ArchiveTests(RsyncArchiveTestCase):
         self.assertIn(f"DRY RUN tar -czf {self.archive_file} .\n", out)
         self.assertFalse(self.archive_file.exists())
 
-    def test_exhaustive_archives_undeclared_outputs_and_control_files(self):
+    def test_all_outputs_and_drypipe_files_archive_undeclared_outputs_and_control_files(self):
         self.prepare()
         self.complete(KEYS)
         (self.pid / "output" / "t01" / "undeclared.txt").write_text("undeclared")
-        self.archive("--where-key=t01", "--exhaustive")
+        self.archive("--where-key=t01", "--outputs=all", "--drypipe-files=all")
         self.extract()
         self.assertEqual(
             self.dest_files(),
@@ -880,11 +915,11 @@ class ArchiveTests(RsyncArchiveTestCase):
         self.assertIn("output files to archive: 2\n", out)
         self.assertIn("output files not archived: 2\n", out)
 
-    def test_exclude_tags_cannot_be_combined_with_tags_or_exhaustive(self):
+    def test_exclude_tags_cannot_be_combined_with_tags_or_all_outputs(self):
         self.prepare()
         for args, expected_error in [
             (["--tags=keepers"], "--tags cannot be combined with --exclude-tags"),
-            (["--exhaustive"], "--exhaustive cannot be combined"),
+            (["--outputs=all"], "can only be used with --outputs declared"),
         ]:
             with self.subTest(args=args):
                 with self.assertRaisesRegex(Exception, expected_error):
@@ -1001,8 +1036,8 @@ class ArchiveThenPurgeRoundTripTests(RsyncArchiveTestCase):
             (["--exclude-tags=keepers"], [], output_paths(KEYS, all_outputs) - output_paths(KEYS, keepers)),
             (["--exclude-tags=heavy,for-debug"], [], output_paths(KEYS, lambda key: [f"{key}_report.txt", "plain.tsv"])),
             (["--tags=heavy", "--where-key=t01"], [], output_paths(["t01"], heavy)),
-            (["--tags=keepers"], ["--include-drypipe-files=minimal"], output_paths(KEYS, keepers)),
-            ([], ["--exhaustive"], output_paths(KEYS, all_outputs)),
+            (["--tags=keepers"], ["--drypipe-files=logs"], output_paths(KEYS, keepers)),
+            ([], ["--outputs=all", "--drypipe-files=all"], output_paths(KEYS, all_outputs)),
         ]:
             with self.subTest(selection_args=selection_args, archive_args=archive_args):
                 self.setUp()
@@ -1056,7 +1091,7 @@ class RsyncRemoteDestTests(RsyncArchiveTestCase):
             self.set_state("t01", state)
             self.cli(
                 "rsync-push", f"--to={remote_dest}/", "--no-confirm",
-                "--where-key=t01", "--include-drypipe-files=minimal"
+                "--where-key=t01", "--drypipe-files=logs"
             )
             self.assertEqual(self.remote_state_files(user_at_host, remote_dir, "t01"), [f"state.{state}"])
 
@@ -1170,7 +1205,7 @@ class RsyncScaleTests(RsyncArchiveTestCase):
         self.complete(keys, names=lambda key: [f"{key}_report.txt", "report-all.tsv"])
 
         start = time.time()
-        out = self.rsync("--tags=keepers", "--where-state=completed", "--include-drypipe-files=minimal")
+        out = self.rsync("--tags=keepers", "--where-state=completed", "--drypipe-files=logs")
         print(f"rsync of {SCALE_TASK_COUNT} tasks: {time.time() - start:.1f}s")
 
         self.assertIn(f"  keepers: {SCALE_TASK_COUNT}\n", out)
