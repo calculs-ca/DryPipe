@@ -1159,10 +1159,41 @@ class CliArraySubmitLoopTests(BasePipelineTest):
 
         self.assertEqual(LaunchLoop.unfinished(atm).remaining_keys(), self.all_children[2:])
 
-    def test_new_loop_without_filters_is_refused(self):
+    def mark_array_as_submitted(self):
+        Path(self.array_control_dir, "array.0.tsv").write_text("t01\n")
+        Path(self.array_control_dir, "array.0.job.1000").write_text("sbatch\n")
+
+    def test_new_loop_without_filters_is_refused_when_the_array_was_submitted(self):
         self.prepare()
-        with self.assertRaisesRegex(CliUserError, "no unfinished loop to resume"):
+        self.mark_array_as_submitted()
+        with self.assertRaisesRegex(CliUserError, "the array was already submitted, .* completed ones, .* second job"):
             self.cli('--loop', '--max-queued=10', '--yes')
+
+    def test_new_loop_without_filters_selects_all_the_tasks_of_a_new_array(self):
+        self.prepare()
+        self.assertIn("Will start a loop with 11 tasks", self.dry_run_output('--max-queued=100'))
+
+    def test_loop_without_filters_does_not_resume(self):
+        LaunchLoop.create(self.prepare(), self.all_children)
+        with self.assertRaisesRegex(CliUserError, "loop 1 is unfinished, resume it with loop-continue"):
+            self.cli('--loop', '--max-queued=10', '--yes')
+
+    def new_loop_with_answer(self, answer):
+        err = io.StringIO()
+        with unittest.mock.patch('sys.stdin', io.StringIO(answer)), contextlib.redirect_stderr(err):
+            self.cli('--loop', '--max-queued=100', '--where-key=t0*')
+        return err.getvalue()
+
+    def test_new_loop_exits_by_default_when_one_is_unfinished(self):
+        LaunchLoop.create(self.prepare(), self.all_children)
+        self.assertIn("nothing submitted", self.new_loop_with_answer("\n"))
+        self.assertTrue(self.loop_file(1, "running").exists())
+
+    def test_new_loop_quits_the_unfinished_one(self):
+        LaunchLoop.create(self.prepare(), self.all_children)
+        out = self.new_loop_with_answer("q\nn\n")
+        self.assertTrue(self.loop_file(1, "abandoned").exists())
+        self.assertIn("Will start a loop with 9 tasks", out)
 
     def test_new_loop_is_refused_when_one_is_unfinished(self):
         LaunchLoop.create(self.prepare(), self.all_children)
@@ -1179,7 +1210,8 @@ class CliArraySubmitLoopTests(BasePipelineTest):
 
     def test_lock_file_is_deleted_when_the_loop_ends(self):
         self.prepare()
-        with self.assertRaisesRegex(CliUserError, "no unfinished loop to resume"):
+        self.mark_array_as_submitted()
+        with self.assertRaisesRegex(CliUserError, "select the tasks of the new loop"):
             self.cli('--loop', '--max-queued=100', '--yes')
         self.assertFalse(Path(self.array_control_dir, "loop.lock").exists())
 
@@ -1205,13 +1237,13 @@ class CliArraySubmitLoopTests(BasePipelineTest):
         lock.release()
         self.assertFalse(lock_path.exists())
 
-    def loop_command(self, command, answer="", global_args=()):
+    def loop_command(self, command, answer="", global_args=(), args=()):
         generator_args = [] if command == 'loop-quit' else [f'--generator={self.generator}']
         err = io.StringIO()
         with unittest.mock.patch('sys.stdin', io.StringIO(answer)), contextlib.redirect_stderr(err):
             test_cli(
                 self, *global_args, command, f'--pipeline-instance-dir={self.sandbox_dir}', '--task-key=ap',
-                *generator_args
+                *generator_args, *args
             )
         return err.getvalue()
 
@@ -1245,8 +1277,40 @@ class CliArraySubmitLoopTests(BasePipelineTest):
 
     def test_loop_status_then_continue(self):
         LaunchLoop.create(self.prepare(), self.all_children)
-        out = self.loop_command('loop-status', answer="c\n", global_args=['--dry-run'])
+        out = self.loop_command('loop-status', answer="c\n\n\ny\n", global_args=['--dry-run'])
         self.assertIn("Will resume loop 1, 11 tasks left", out)
+
+    def test_loop_status_continue_not_confirmed(self):
+        LaunchLoop.create(self.prepare(), self.all_children)
+        out = self.loop_command('loop-status', answer="c\n--margin=4\n\nn\n")
+        self.assertIn(f"drypipe loop-continue --pipeline-instance-dir={self.sandbox_dir} --task-key=ap", out)
+        self.assertIn("--margin=4", out)
+        self.assertNotIn("Will resume", out)
+        self.assertTrue(self.loop_file(1, "running").exists())
+
+    def test_loop_status_then_continue_with_overriding_options(self):
+        launch_loop = LaunchLoop.create(self.prepare(), self.all_children)
+        launch_loop.append_options(["--max-queued=50", "--min-batch=5", "--sbatch-options=--mem=1G --time=1:00"])
+        out = self.loop_command(
+            'loop-status', answer="c\n--margin=4 --min-batch 7\n--time=2:00 --cpus-per-task=2\ny\n", global_args=['--dry-run']
+        )
+        self.assertIn("--min-batch  (saved: 5)", out)
+        self.assertIn("saved sbatch options: --mem=1G --time=1:00", out)
+        self.assertIn("--max-queued=50 --margin=4 --min-batch=7", out)
+        self.assertIn("'--sbatch-options=--mem=1G --time=2:00 --cpus-per-task=2'", out)
+
+    def test_loop_status_asks_again_until_the_options_are_valid(self):
+        LaunchLoop.create(self.prepare(), self.all_children)
+        out = self.loop_command(
+            'loop-status', answer="c\n--where-key=t0*\n--margin=x\n--margin\n--margin=4\n--time\n--time=2:00\ny\n",
+            global_args=['--dry-run']
+        )
+        self.assertIn("--where-key can't be overridden", out)
+        self.assertIn("invalid value for --margin: x", out)
+        self.assertIn("--margin has no value", out)
+        self.assertIn("not NAME=VALUE: --time", out)
+        self.assertIn("--margin=4 --min-batch=100", out)
+        self.assertIn("saved in the loop file: --margin=4 --sbatch-options=--time=2:00", out)
 
     def test_loop_status_does_nothing_by_default(self):
         LaunchLoop.create(self.prepare(), self.all_children)
@@ -1285,17 +1349,20 @@ class CliArraySubmitLoopTests(BasePipelineTest):
         launch_loop.append_options(["--max-queued=50", "--margin=4", "--sbatch-options=--mem=1G --time=1:00"])
         launch_loop.append_options(["--max-queued=100", "--margin=5", "--sbatch-options=--mem=1G --time=1:00"])
 
-        out = self.dry_run_output('--margin=7')
+        out = self.loop_command('loop-continue', global_args=['--dry-run'], args=['--margin=7', '--sbatch-options=--time=2:00'])
 
         self.assertIn("--max-queued=100 --margin=7 --min-batch=10", out)
-        self.assertIn("options saved in the loop file: --max-queued=100 --margin=7 '--sbatch-options=--mem=1G --time=1:00'", out)
+        self.assertIn("options saved in the loop file: --max-queued=100 --margin=7 '--sbatch-options=--mem=1G --time=2:00'", out)
         self.assertEqual(launch_loop.remaining_keys(), self.all_children)
 
     def test_resume_uses_the_saved_env(self):
         launch_loop = LaunchLoop.create(self.prepare(), self.all_children)
         launch_loop.append_options(["--max-queued=50", "--env=JVM_MEM=12g JVM_STACK=8m"])
 
-        self.assertIn("options saved in the loop file: --max-queued=50 '--env=JVM_MEM=12g JVM_STACK=8m'", self.dry_run_output())
+        self.assertIn(
+            "options saved in the loop file: --max-queued=50 '--env=JVM_MEM=12g JVM_STACK=8m'",
+            self.loop_command('loop-continue', global_args=['--dry-run'])
+        )
 
     def test_account_of_sbatch_options(self):
         self.assertEqual(account_of_sbatch_options(["--account=a1", "--time=1:00", "-A", "a2"]), "a2")

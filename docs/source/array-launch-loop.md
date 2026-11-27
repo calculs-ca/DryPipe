@@ -14,7 +14,8 @@ a long time in the queue as a result.
 ## How it works
 
 1. When the loop starts, it selects the tasks with the `--where` options, in the order of the array's tasks,
-   and saves that list. The list never changes after that, so a task that fails while the loop runs is not
+   and saves that list. Without `--where` options, it selects all the tasks, but only if the array was never
+   submitted, since all the tasks would include the completed and queued ones. The list never changes after that, so a task that fails while the loop runs is not
    submitted again.
 2. Every `--sleep-interval` minutes, it counts your jobs in the queue on the array's slurm account, all of them,
    not only this pipeline's, since the limit applies to all your jobs on the account. The array must have a
@@ -78,18 +79,37 @@ abandons it:
     cli loop-quit --task-key=my-array
 
 The loop saves its options in its loop file, each time it is started or resumed, and a resumed loop uses the
-last ones saved. To change one, resume with `array-submit --loop`, without `--where` options, and give the
-option again, ex: resume with a larger batch:
+last ones saved. To change one, give it to `loop-continue`, ex: resume with a larger batch:
 
-    cli array-submit --task-key=my-array --loop --min-batch=300
+    cli loop-continue --task-key=my-array --min-batch=300
 
 The saved options are `--max-queued`, `--max-queued-account`, `--margin`, `--min-batch`, `--sleep-interval`,
-`--sbatch-options`, `--tasks-per-job`, `--stop-after-step` and `--slurm-max-jobs`.
+`--sbatch-options`, `--env`, `--tasks-per-job`, `--stop-after-step` and `--slurm-max-jobs`. A given option
+replaces the saved one, except `--sbatch-options`: each `NAME=VALUE` given is added to the saved ones, or replaces
+the one with the same `NAME`.
 
-To start a new loop on the same array instead, abandon the interrupted one first with `loop-quit`.
+When you choose to continue in `loop-status`, it asks for the options to change, first the drypipe ones, then
+the sbatch ones:
 
-While a loop is unfinished, `array-submit --loop` with `--where` options refuses to start a new loop, and
-`array-submit` without `--loop` warns that the loop will submit some tasks later.
+    drypipe options that can be overridden:
+      --max-queued  (saved: 1000)
+      --max-queued-account
+      --margin
+      --min-batch  (saved: 100)
+      ...
+    drypipe options, ex: --max-queued=500, empty to keep the saved ones: --min-batch=300
+    saved sbatch options: --mem=4G --time=1:00:00
+    sbatch options, NAME=VALUE, added to the saved ones or replacing those with the same NAME, ex: --time=2:00:00 --mem=4G, empty to keep the saved ones: --time=3:00:00
+    drypipe loop-continue --pipeline-instance-dir=. --task-key=my-array --min-batch=300 --sbatch-options=--time=3:00:00
+    run ? [y/N]
+
+An invalid answer is asked again. The sbatch options are only checked to be `NAME=VALUE`, they are passed to
+sbatch as given, make sure they are valid. The `loop-continue` command printed before `run ?` does the same,
+it can be run later instead.
+
+While a loop is unfinished, `array-submit --loop` asks whether to quit it and start the new loop, continue it
+instead, or exit. With `--yes` or `--dry-run`, it refuses to start the new loop. `array-submit` without `--loop`
+warns that the loop will submit some tasks later.
 
 ## One loop per array
 

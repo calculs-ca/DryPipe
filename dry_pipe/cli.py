@@ -208,6 +208,20 @@ def _cleanup_args(args):
         return args
 
 
+def merged_sbatch_options(options, overriding_options):
+    """sbatch options are NAME=VALUE, the overriding ones replace those with the same NAME"""
+
+    def options_dict(options):
+        def name_values():
+            for o in options:
+                k, v = o.split("=")
+                yield k.strip(), v.strip()
+
+        return dict(name_values())
+
+    return [f"{k}={v}" for k, v in {**options_dict(options), **options_dict(overriding_options)}.items()]
+
+
 def _load_task_keys(file):
     """one task key per line, first column of a tsv, other columns ignored, keys can't contain spaces, # starts a comment line"""
 
@@ -985,20 +999,22 @@ class Cli:
                 action='store_true',
                 default=False,
                 help="submit the selected tasks in small arrays, each time the queue has room for them, "
-                     "without --where options: resume the unfinished loop"
+                     "selecting with --where options is required, unless the array was never submitted"
             )
+
+        def loop_options(parser):
             parser.add_argument(
                 '--max-queued',
                 type=int,
                 default=None,
                 metavar='N',
-                help="with --loop, maximum number of your jobs in the queue, ex: your MaxSubmitJobs limit, default: 1000"
+                help="maximum number of your jobs in the queue, ex: your MaxSubmitJobs limit, default: 1000"
             )
             parser.add_argument(
                 '--max-queued-account',
                 default=None,
                 metavar='ACCOUNT',
-                help="with --loop, the slurm account whose queued jobs count against --max-queued, defaults to the "
+                help="the slurm account whose queued jobs count against --max-queued, defaults to the "
                      "account the arrays are submitted with, ex: rrg-abc_cpu, on clusters that add a suffix to accounts"
             )
             parser.add_argument(
@@ -1006,32 +1022,35 @@ class Cli:
                 type=int,
                 default=None,
                 metavar='N',
-                help="with --loop, free slots left unused, for jobs submitted by other means, default: 10"
+                help="free slots left unused, for jobs submitted by other means, default: 10"
             )
             parser.add_argument(
                 '--min-batch',
                 type=int,
                 default=None,
                 metavar='N',
-                help="with --loop, smallest array submitted, default: 10%% of --max-queued"
+                help="smallest array submitted, default: 10%% of --max-queued"
             )
             parser.add_argument(
                 '--sleep-interval',
                 type=float,
                 default=None,
                 metavar='MINUTES',
-                help="with --loop, minutes between two checks of the queue, default: 5"
+                help="minutes between two checks of the queue, default: 5"
             )
 
         yield Command('array-submit',
                       task_key, regen, generator_optional, tail, wait, include_all_incompleted_tasks,
-                      sbatch_options, env_overrides, reset, tasks_per_job, slurm_max_jobs, stop_after_step, yes, loop, task_selection,
+                      sbatch_options, env_overrides, reset, tasks_per_job, slurm_max_jobs, stop_after_step, yes, loop, loop_options,
+                      task_selection,
                       help="submit array, after a confirmation (see --yes)")
 
         yield Command('loop-status', task_key, generator_optional,
                       help="the unfinished launch loop of the array, then asks whether to quit or continue it")
-        yield Command('loop-continue', task_key, generator_optional, yes,
-                      help="resume the unfinished launch loop of the array, with its saved options")
+        yield Command('loop-continue', task_key, generator_optional, yes, loop_options,
+                      sbatch_options, env_overrides, tasks_per_job, slurm_max_jobs, stop_after_step,
+                      help="resume the unfinished launch loop of the array, with its saved options, "
+                           "the options given override the saved ones, --sbatch-options are merged with the saved ones")
         yield Command('loop-quit', task_key,
                       help="abandon the unfinished launch loop of the array")
 
@@ -1585,33 +1604,11 @@ class Cli:
             task_process.launch_task()
 
     def sbatch_options_overrider_func_if_option_exists(self):
-
-        def func(original_options):
-
-            def options_to_dict(options):
-                def g():
-                    for o in options:
-                        k, v = o.split("=")
-                        yield k.strip(), v.strip()
-
-                return dict(g())
-                
-            d1 = options_to_dict(original_options)
-            d2 = options_to_dict(self.parsed_args.sbatch_options.strip().split(" "))
-
-            res = {** d1, ** d2}
-
-            return [
-                f"{k}={v}"
-                for k, v in res.items()
-            ]
-        
         if self.parsed_args.sbatch_options is None:
             return None
-        else:
-            return func
-                
-
+        return lambda original_options: merged_sbatch_options(
+            original_options, self.parsed_args.sbatch_options.strip().split(" ")
+        )
 
     def env_overrides_of_option(self):
         if self.parsed_args.env_overrides is None:
@@ -1621,12 +1618,14 @@ class Cli:
         except InvalidEnv as e:
             raise CliUsageError(str(e))
 
-    def array_submit(self):
+    def array_submit(self, resume_loop=False):
 
         self._apply_option_lines_of_key_lists()
 
-        if self.parsed_args.loop:
+        if resume_loop:
             self._apply_saved_loop_options()
+        elif self.parsed_args.loop and not self._new_loop_may_start():
+            return
 
         self._check_loop_options()
 
@@ -1670,7 +1669,7 @@ class Cli:
         )
 
         if self.parsed_args.loop:
-            self._array_submit_loop(pipeline_instance)
+            self._array_submit_loop(pipeline_instance, resume_loop)
             return
 
         unfinished_loop = LaunchLoop.unfinished(self.array_task_manager)
@@ -1865,14 +1864,20 @@ class Cli:
         }
 
     def _apply_saved_loop_options(self):
-        """the options saved by the unfinished loop, unless given again"""
+        """
+        the options saved by the unfinished loop, unless given again,
+        --sbatch-options given are merged with the saved ones
+        """
         saved_loop_options = self._saved_loop_options()
         for option, value in LaunchLoop.saved_options(self._control_dir()).items():
             if option not in saved_loop_options:
                 raise CliUserError(f"unknown option {option} in the loop file of {self._control_dir()}")
             dest, option_type = saved_loop_options[option]
-            if getattr(self.parsed_args, dest) is None:
+            given_value = getattr(self.parsed_args, dest)
+            if given_value is None:
                 setattr(self.parsed_args, dest, option_type(value))
+            elif option == "--sbatch-options":
+                setattr(self.parsed_args, dest, " ".join(merged_sbatch_options(value.split(" "), given_value.split(" "))))
 
     def _loop_options_to_save(self):
         for option, (dest, _) in self._saved_loop_options().items():
@@ -1897,7 +1902,40 @@ class Cli:
         elif args.wait or self._tail():
             raise CliUsageError("--loop can't be combined with --wait, --tail or --tail-all")
 
-    def _array_submit_loop(self, pipeline_instance):
+    def _new_loop_may_start(self):
+        """
+        when a new loop is selected while one is unfinished, asks whether to quit the unfinished loop
+        and start the new one, continue the unfinished one instead, or exit
+        """
+        if not self.has_selection() or self.parsed_args.yes or self.parsed_args.dry_run:
+            return True
+
+        if not os.path.isdir(self._control_dir()):
+            return True
+
+        unfinished_loop = LaunchLoop.unfinished(self._array_manage())
+        if unfinished_loop is None:
+            return True
+
+        self.feedback.warn(
+            f"loop {unfinished_loop.number()} is unfinished, "
+            f"{focal(len(unfinished_loop.remaining_keys()))} tasks left to submit"
+        )
+        self.feedback.info(f"  q) quit loop {unfinished_loop.number()}, and start the new loop")
+        self.feedback.info(f"  c) continue loop {unfinished_loop.number()}, the new selection is ignored")
+        self.feedback.info("  e) exit (default)")
+        answer = self.feedback.ask("choice ? [q/c/E] ").lower()
+
+        if answer in ("q", "quit"):
+            self.loop_quit()
+            return True
+        if answer in ("c", "continue"):
+            self._continue_loop(yes=False)
+        else:
+            self.feedback.info("nothing submitted")
+        return False
+
+    def _array_submit_loop(self, pipeline_instance, resume_loop):
         lock = LoopLock(self.array_task_manager.array_task_control_dir())
         try:
             lock.acquire()
@@ -1905,11 +1943,11 @@ class Cli:
             raise CliUserError(str(e))
 
         try:
-            self._array_submit_loop_holding_lock(pipeline_instance)
+            self._array_submit_loop_holding_lock(pipeline_instance, resume_loop)
         finally:
             lock.release()
 
-    def _array_submit_loop_holding_lock(self, pipeline_instance):
+    def _array_submit_loop_holding_lock(self, pipeline_instance, resume_loop):
 
         args = self.parsed_args
         atm = self.array_task_manager
@@ -1917,16 +1955,29 @@ class Cli:
         unfinished_loop = LaunchLoop.unfinished(atm)
 
         def task_keys_to_submit():
-            if unfinished_loop is not None:
-                if self.has_selection():
-                    raise CliUserError(
-                        f"loop {unfinished_loop.number()} is unfinished, resume it with loop-continue, "
-                        f"or abandon it with loop-quit"
-                    )
+            if resume_loop:
+                if unfinished_loop is None:
+                    raise CliUserError(f"array {args.task_key} has no unfinished loop")
                 return unfinished_loop.remaining_keys()
-            if not self.has_selection():
-                raise CliUserError("the array has no unfinished loop to resume, select the tasks of a new loop with --where options")
-            return [key for key, _, _, _ in self.filter_key_state_step(atm.children_task_keys())]
+            if unfinished_loop is not None:
+                raise CliUserError(
+                    f"loop {unfinished_loop.number()} is unfinished, resume it with loop-continue, "
+                    f"or abandon it with loop-quit"
+                )
+            if self.has_selection():
+                return [key for key, _, _, _ in self.filter_key_state_step(atm.children_task_keys())]
+
+            def array_was_submitted():
+                return len(list(atm.submitted_arrays_files())) > 0
+
+            if array_was_submitted():
+                raise CliUserError(
+                    "the array was already submitted, without --where options the loop would select all its tasks, "
+                    "it would submit again the completed ones, and those still queued or running would get a "
+                    "second job, select the tasks of the new loop with --where options, "
+                    "ex: --where-state-not=completed"
+                )
+            return list(atm.children_task_keys())
 
         task_keys = task_keys_to_submit()
 
@@ -2028,13 +2079,101 @@ class Cli:
         if answer in ("q", "quit"):
             self.loop_quit()
         elif answer in ("c", "continue"):
-            self._continue_loop(yes=True)
+            self._confirm_loop_continue(list(self._ask_overriding_loop_options(saved_options)))
+
+    def _confirm_loop_continue(self, overriding_options):
+        """prints the loop-continue command with the overriding options, and runs it when confirmed"""
+        args = self.parsed_args
+
+        def loop_continue_args():
+            if args.dry_run:
+                yield "--dry-run"
+            yield from ["loop-continue", f"--pipeline-instance-dir={args.pipeline_instance_dir}", f"--task-key={args.task_key}"]
+            if args.generator is not None:
+                yield f"--generator={args.generator}"
+            if args.task_set is not None:
+                yield f"--task-set={args.task_set}"
+            yield from overriding_options
+
+        command_args = list(loop_continue_args())
+        self.feedback.info(shlex.join([self.parser.prog, *command_args]))
+        if not self.feedback.confirm("run ?"):
+            self.feedback.info("nothing submitted")
+            return
+
+        self.parsed_args = self.parser.parse_args([*command_args, "--yes"])
+        self.loop_continue()
+
+    def _ask_overriding_loop_options(self, saved_options):
+        """
+        --option=value of the options to override, the drypipe ones from a closed set, the sbatch ones open,
+        asks again until the answer is valid
+        """
+
+        drypipe_option_types = {
+            option: option_type
+            for option, (_, option_type) in self._saved_loop_options().items()
+            if option != "--sbatch-options"
+        }
+
+        def print_drypipe_options():
+            self.feedback.info("drypipe options that can be overridden:")
+            for option in drypipe_option_types:
+                saved = saved_options.get(option)
+                self.feedback.info(f"  {option}" + ("" if saved is None else f"  (saved: {saved})"))
+
+        def parsed_drypipe_options(text):
+            """ValueError when an option can't be overridden, or its value is invalid"""
+            tokens = iter(shlex.split(text))
+            for token in tokens:
+                option, has_value, value = token.partition("=")
+                if option not in drypipe_option_types:
+                    raise ValueError(f"{option} can't be overridden")
+                if not has_value:
+                    value = next(tokens, "")
+                if value == "":
+                    raise ValueError(f"{option} has no value")
+                try:
+                    drypipe_option_types[option](value)
+                except ValueError:
+                    raise ValueError(f"invalid value for {option}: {value}")
+                yield f"{option}={value}"
+
+        def parsed_sbatch_options(text):
+            """ValueError when an option isn't NAME=VALUE"""
+            options = text.split()
+            invalid = [option for option in options if option.count("=") != 1]
+            if len(invalid) > 0:
+                raise ValueError(f"not NAME=VALUE: {' '.join(invalid)}")
+            return " ".join(options)
+
+        def ask_until_valid(prompt, parse):
+            while True:
+                try:
+                    return parse(self.feedback.ask(prompt))
+                except ValueError as e:
+                    self.feedback.warn(str(e))
+
+        print_drypipe_options()
+        yield from ask_until_valid(
+            f"{focal('drypipe options')}, ex: --max-queued=500, empty to keep the saved ones: ",
+            lambda text: list(parsed_drypipe_options(text))
+        )
+
+        self.feedback.info(f"saved sbatch options: {saved_options.get('--sbatch-options', 'none')}")
+        sbatch_options = ask_until_valid(
+            f"{focal('sbatch options')}, NAME=VALUE, added to the saved ones or replacing those with the same NAME, "
+            f"ex: --time=2:00:00 --mem=4G, empty to keep the saved ones: ",
+            parsed_sbatch_options
+        )
+        if sbatch_options != "":
+            yield f"--sbatch-options={sbatch_options}"
 
     def loop_continue(self):
-        self._continue_loop(yes=self.parsed_args.yes)
+        self._continue_loop(yes=self.parsed_args.yes, overriding_options=list(self._loop_options_to_save()))
 
-    def _continue_loop(self, yes):
-        """array-submit --loop, without --where options, resumes the unfinished loop"""
+    def _continue_loop(self, yes, overriding_options=()):
+        """overriding_options: --option=value, they replace the saved ones, --sbatch-options are merged"""
         args = self.parsed_args
 
         def array_submit_args():
@@ -2048,10 +2187,11 @@ class Cli:
                 yield f"--task-set={args.task_set}"
             if yes:
                 yield "--yes"
+            yield from overriding_options
 
         self._unfinished_loop_of_array()
         self.parsed_args = self.parser.parse_args(list(array_submit_args()))
-        self.array_submit()
+        self.array_submit(resume_loop=True)
 
     def loop_quit(self):
         launch_loop = self._unfinished_loop_of_array()
