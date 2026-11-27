@@ -1784,8 +1784,9 @@ class Cli:
             if self.parsed_args.yes or self.parsed_args.dry_run:
                 self.feedback.info("they are excluded from the array")
                 return "1"
-            self.feedback.info("  1) exclude them from the array (default)")
-            self.feedback.info("  2) submit them anyway")
+            remaining_count = len(task_keys) - len(task_keys_with_missing_input_files)
+            self.feedback.info(f"  1) exclude them from the array, submit {focal(remaining_count)} tasks (default)")
+            self.feedback.info(f"  2) submit them anyway, submit {focal(len(task_keys))} tasks")
             self.feedback.info("  3) exit")
             return self.feedback.ask("choice ? [1/2/3] ") or "1"
 
